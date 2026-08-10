@@ -148,6 +148,32 @@ def _validate_reflected_tool_name(tool_name: str) -> None:
         raise GrpcServiceError(f"Reflected tool name '{tool_name}' rejected: {exc}") from exc
 
 
+def _expected_input_schema(method: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the input schema a reflected method would produce as an MCP tool.
+
+    Merges the protobuf-derived JSON schema with the ``x-grpc-*`` transport hints
+    so the Tool Sync Preview matches what ``_sync_tools_from_reflection`` writes.
+
+    Args:
+        method: A catalog method entry (``input_type``, ``output_type``,
+            streaming flags, ``input_schema``, ``request_example``).
+
+    Returns:
+        The normalized input schema dict.
+    """
+    schema = dict(method.get("input_schema") or {"type": "object", "properties": {}})
+    schema.update(
+        {
+            "x-grpc-input-type": method.get("input_type", ""),
+            "x-grpc-output-type": method.get("output_type", ""),
+            "x-grpc-client-streaming": method.get("client_streaming", False),
+            "x-grpc-server-streaming": method.get("server_streaming", False),
+            "examples": [method.get("request_example", {})],
+        }
+    )
+    return schema
+
+
 class GrpcServiceNotFoundError(GrpcServiceError):
     """Raised when a requested gRPC service is not found."""
 
@@ -890,16 +916,7 @@ class GrpcService:
                 try:
                     _validate_reflected_tool_name(tool_name)
                     description = f"gRPC method {tool_name}"
-                    input_schema = dict(method.get("input_schema") or {"type": "object", "properties": {}})
-                    input_schema.update(
-                        {
-                            "x-grpc-input-type": method.get("input_type", ""),
-                            "x-grpc-output-type": method.get("output_type", ""),
-                            "x-grpc-client-streaming": method.get("client_streaming", False),
-                            "x-grpc-server-streaming": method.get("server_streaming", False),
-                            "examples": [method.get("request_example", {})],
-                        }
-                    )
+                    input_schema = _expected_input_schema(method)
                     output_schema = method.get("output_schema")
 
                     existing_tool = existing_tools_map.get(tool_name)

@@ -27,7 +27,10 @@ from mcpgateway.schemas import (
     GrpcRegistrySchemaViewRead,
     GrpcRegistryServiceRead,
     GrpcRegistryViewRead,
+    GrpcToolSyncPreview,
 )
+from mcpgateway.services.grpc_service import _expected_input_schema
+from mcpgateway.utils.grpc_validation import GrpcServiceError
 
 
 class GrpcRegistryService:
@@ -273,4 +276,138 @@ class GrpcRegistryService:
             created_at=artifact.created_at,
             activated_at=artifact.activated_at,
             methods=method_views,
+        )
+
+    @staticmethod
+    def _catalog_methods(catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        """Flatten a catalog into ``{Service.Method: method_entry}``, skipping underscore keys."""
+        result: dict[str, dict[str, Any]] = {}
+        for svc_name, svc_desc in (catalog or {}).items():
+            if svc_name.startswith("_"):
+                continue
+            for method in svc_desc.get("methods", []):
+                result[f"{svc_name}.{method['name']}"] = method
+        return result
+
+    @staticmethod
+    def _signature_key(method: dict[str, Any]) -> tuple:
+        """Signature facets that trigger re-approval when changed."""
+        return (
+            method.get("input_type", ""),
+            method.get("output_type", ""),
+            method.get("input_schema"),
+            method.get("output_schema"),
+            bool(method.get("client_streaming", False)),
+            bool(method.get("server_streaming", False)),
+        )
+
+    @staticmethod
+    def build_sync_preview(
+        db: Session,
+        service_id: str,
+        candidate_artifact_id: str,
+    ) -> GrpcToolSyncPreview:
+        """Preview what tool synchronization would do for a candidate schema.
+
+        Read-only: mirrors ``GrpcService._sync_tools_from_reflection`` without
+        mutating the Tool table, activating anything, or committing. Returns the
+        would-be added/modified/disabled tools and the methods whose signature
+        changed between the active and candidate schema (re-approval).
+
+        Args:
+            db: Database session.
+            service_id: Owning gRPC service ID.
+            candidate_artifact_id: Candidate schema artifact to preview.
+
+        Returns:
+            The sync preview. Empty candidate catalogs over published tools
+            produce a warning instead of a mass-disable plan.
+
+        Raises:
+            GrpcServiceError: If the service is missing or the artifact does not
+                belong to it.
+        """
+        service = db.get(DbGrpcService, service_id)
+        if service is None:
+            raise GrpcServiceError(f"gRPC service with ID '{service_id}' not found")
+        candidate = db.get(GrpcSchemaArtifact, candidate_artifact_id)
+        if candidate is None or candidate.grpc_service_id != service_id:
+            raise GrpcServiceError("Schema artifact not found for this service")
+
+        candidate_methods = GrpcRegistryService._catalog_methods((candidate.source_info or {}).get("catalog", {}))
+        current_methods = GrpcRegistryService._catalog_methods(service.discovered_services or {})
+
+        existing_tools = db.execute(select(DbTool).where(DbTool.grpc_service_id == service.id)).scalars().all()
+        existing_map = {tool.original_name: tool for tool in existing_tools}
+
+        # Mirror the sync's last-line defense: an empty candidate over published
+        # tools would soft-disable everything, so report instead of planning it.
+        if not candidate_methods and existing_tools:
+            return GrpcToolSyncPreview(
+                service_id=service_id,
+                candidate_artifact_id=candidate_artifact_id,
+                warning=(
+                    f"Candidate schema defines no methods; activating it would disable "
+                    f"{len(existing_tools)} existing tools. Synchronization skipped."
+                ),
+            )
+
+        added: list[str] = []
+        modified: list[str] = []
+        disabled: list[str] = []
+        reapproval: list[str] = []
+
+        for tool_name, method in sorted(candidate_methods.items()):
+            existing = existing_map.get(tool_name)
+            if method.get("client_streaming"):
+                # Catalogued but never an executable tool; an existing row would
+                # be disabled (same branch as the sync's streaming guard).
+                if existing is not None and tool_name not in disabled:
+                    disabled.append(tool_name)
+                continue
+            if existing is None:
+                added.append(tool_name)
+                continue
+
+            # Would-be update checks, mirroring _sync_tools_from_reflection.
+            expected_schema = _expected_input_schema(method)
+            description = f"gRPC method {tool_name}"
+            changed = False
+            if existing.original_description != description:
+                changed = True
+            if existing.input_schema != expected_schema:
+                changed = True
+            if existing.output_schema != method.get("output_schema"):
+                changed = True
+            if existing.url != service.target:
+                changed = True
+            if existing.visibility != service.visibility:
+                changed = True
+            if existing.team_id != service.team_id:
+                changed = True
+            if existing.owner_email != service.owner_email:
+                changed = True
+            if not existing.enabled or existing.deprecated or not existing.reachable:
+                changed = True
+            if changed:
+                modified.append(tool_name)
+
+            # Re-approval: present on both sides with a changed signature.
+            current = current_methods.get(tool_name)
+            if current is not None and GrpcRegistryService._signature_key(current) != GrpcRegistryService._signature_key(method):
+                reapproval.append(tool_name)
+
+        # Disabled: existing tools whose method vanished from the candidate catalog.
+        expected_names = set(candidate_methods)
+        for tool_name in sorted(existing_map):
+            if tool_name not in expected_names and tool_name not in disabled:
+                disabled.append(tool_name)
+
+        return GrpcToolSyncPreview(
+            service_id=service_id,
+            candidate_artifact_id=candidate_artifact_id,
+            added_tools=sorted(added),
+            modified_tools=sorted(modified),
+            disabled_tools=sorted(disabled),
+            methods_needing_reapproval=sorted(reapproval),
         )

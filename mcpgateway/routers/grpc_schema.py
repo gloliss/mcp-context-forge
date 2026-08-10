@@ -23,7 +23,7 @@ from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import GrpcRegistrySchemaViewRead, GrpcRegistryServiceRead, GrpcRegistryViewRead, GrpcSchemaArtifactRead, GrpcSchemaDiff
+from mcpgateway.schemas import GrpcRegistrySchemaViewRead, GrpcRegistryServiceRead, GrpcRegistryViewRead, GrpcSchemaArtifactRead, GrpcSchemaDiff, GrpcToolSyncPreview
 from mcpgateway.services.grpc_registry_service import GrpcRegistryService
 from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNotFoundError
 from mcpgateway.services.grpc_monitoring_service import get_grpc_monitoring_service
@@ -169,6 +169,24 @@ async def diff_schemas(
     _require_service_access(request, user, db, service_id)
     try:
         return await grpc_service.diff_schemas(db, service_id, from_artifact_id, to_artifact_id)
+    except GrpcServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/{service_id}/schemas/{artifact_id}/preview", response_model=GrpcToolSyncPreview)
+@require_permission("admin.grpc", allow_admin_bypass=False)
+async def preview_tool_sync(
+    service_id: str,
+    artifact_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Preview tool synchronization for a candidate schema without mutating anything."""
+    _require_grpc_enabled()
+    _require_service_access(request, user, db, service_id)
+    try:
+        return GrpcRegistryService.build_sync_preview(db, service_id, artifact_id)
     except GrpcServiceError as exc:
         raise _http_error(exc) from exc
 

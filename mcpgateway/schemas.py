@@ -8139,6 +8139,29 @@ class GrpcSchemaDiff(BaseModel):
     changed_methods: List[str] = Field(default_factory=list)
 
 
+class GrpcToolSyncPreview(BaseModel):
+    """Read-only preview of what tool synchronization would do for a candidate schema.
+
+    Computed against the candidate artifact without mutating the Tool table or
+    activating anything. The four lists classify the would-be sync outcomes:
+    - added_tools: methods in the candidate catalog with no current Tool row
+    - modified_tools: methods whose Tool row would be updated (description,
+      schemas, url, or parent token-scoping fields)
+    - disabled_tools: current tools whose method vanished or became
+      client-streaming (soft-disable triad)
+    - methods_needing_reapproval: methods present on both sides whose
+      signature (I/O types, schemas, or streaming flags) changed
+    """
+
+    service_id: str
+    candidate_artifact_id: str
+    added_tools: List[str] = Field(default_factory=list)
+    modified_tools: List[str] = Field(default_factory=list)
+    disabled_tools: List[str] = Field(default_factory=list)
+    methods_needing_reapproval: List[str] = Field(default_factory=list)
+    warning: Optional[str] = None
+
+
 class GrpcRegistrySchemaVersionRead(BaseModel):
     """One schema version in the registry view, without descriptor bytes."""
 
