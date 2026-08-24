@@ -1710,7 +1710,7 @@ class TestToolService:
         )
 
     @pytest.mark.asyncio
-    async def test_get_tool(self, tool_service, mock_tool, test_db):
+    async def test_get_tool(self, tool_service, mock_tool, test_db, mock_logging_services):
         """Test getting a tool by ID."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
@@ -1761,7 +1761,34 @@ class TestToolService:
 
         # Verify result
         assert result == tool_read
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None)
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool,
+            requesting_user_email=None,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles=None,
+            include_metrics=False,
+        )
+        assert mock_logging_services["structured_logger"].log.call_args.kwargs["custom_fields"]["include_metrics"] is False
+
+    @pytest.mark.asyncio
+    async def test_get_tool_includes_metrics_when_requested(self, tool_service, mock_tool, test_db, mock_logging_services):
+        """get_tool forwards the metrics flag and records the requested behavior."""
+        test_db.get = Mock(return_value=mock_tool)
+        tool_read = MagicMock()
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
+
+        result = await tool_service.get_tool(test_db, 1, include_metrics=True)
+
+        assert result == tool_read
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool,
+            requesting_user_email=None,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles=None,
+            include_metrics=True,
+        )
+        mock_logging_services["structured_logger"].log.assert_called_once()
+        assert mock_logging_services["structured_logger"].log.call_args.kwargs["custom_fields"]["include_metrics"] is True
 
     @pytest.mark.asyncio
     async def test_get_tool_not_found(self, tool_service, test_db):

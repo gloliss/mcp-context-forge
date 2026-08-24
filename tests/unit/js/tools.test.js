@@ -66,6 +66,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   getCurrentTeamId: vi.fn(() => null),
   handleFetchError: vi.fn((e) => e.message),
   isInactiveChecked: vi.fn(() => false),
+  makeCopyIdButton: vi.fn(() => document.createElement("button")),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
   showSuccessMessage: vi.fn(),
@@ -1011,6 +1012,45 @@ describe("viewTool - enhanced", () => {
 
     await viewTool("t1");
     expect(details.innerHTML).toContain("Custom Headers");
+    consoleSpy.mockRestore();
+  });
+
+  test("preserves zero values and uses N/A only for missing metrics", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const details = document.createElement("div");
+    details.id = "tool-details";
+    document.body.appendChild(details);
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "t-zero",
+          name: "zero-metrics-tool",
+          description: "",
+          inputSchema: {},
+          metrics: {
+            totalExecutions: 0,
+            successfulExecutions: 0,
+            failedExecutions: 0,
+            failureRate: 0,
+            minResponseTime: 0,
+            maxResponseTime: null,
+          },
+        }),
+    });
+
+    await viewTool("t-zero");
+
+    expect(details.querySelector(".metric-total").textContent).toBe("0");
+    expect(details.querySelector(".metric-success").textContent).toBe("0");
+    expect(details.querySelector(".metric-failed").textContent).toBe("0");
+    expect(details.querySelector(".metric-failure-rate").textContent).toBe("0");
+    expect(details.querySelector(".metric-min-time").textContent).toBe("0");
+    expect(details.querySelector(".metric-max-time").textContent).toBe("N/A");
+    expect(details.querySelector(".tool-description").textContent).toBe("");
     consoleSpy.mockRestore();
   });
 });

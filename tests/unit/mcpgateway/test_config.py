@@ -42,6 +42,8 @@ def test_protocol_timeouts_must_be_positive(field_name):
     """Every protocol-specific invocation deadline fails fast on zero."""
     with pytest.raises(ValidationError):
         Settings(**{field_name: 0}, environment="development", _env_file=None)
+
+
 def test_root_policy_configuration_validation():
     with pytest.raises(ValidationError):
         Settings(root_allow_file_scheme=True, root_allowed_file_prefixes=[], _env_file=None)
@@ -555,6 +557,11 @@ def test_settings_default_values():
         assert settings.metrics_cleanup_interval_hours == 1
         assert settings.metrics_retention_days == 7
         assert settings.metrics_rollup_late_data_hours == 1
+        assert settings.observability_enabled is True
+        assert settings.observability_sample_rate == 1.0
+        assert settings.observability_trace_retention_days == 7
+        assert settings.observability_max_traces == 100000
+        assert settings.otel_enable_observability is False
 
 
 def test_api_key_property():

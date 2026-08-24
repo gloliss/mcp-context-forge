@@ -5,12 +5,14 @@ import { mainLayout } from './components/main-layout.js';
 import { overflowMenu } from './components/overflow-menu.js';
 import { teamSelector } from './components/team-selector.js';
 import { maintenancePanel } from './components/maintenance-panel.js';
+import { apiMetricsDashboard } from './components/api-metrics-dashboard.js';
 
 Alpine.data('appRoot', appRoot);
 Alpine.data('mainLayout', mainLayout);
 Alpine.data('overflowMenu', overflowMenu);
 Alpine.data('teamSelector', teamSelector);
 Alpine.data('maintenancePanel', maintenancePanel);
+Alpine.data('apiMetricsDashboard', apiMetricsDashboard);
 
 Alpine.magic('syncCheckbox', function () {
   return syncCheckboxFromUrl;

@@ -475,13 +475,6 @@
           </div>
           {% endif %}
 
-            <a href="#api-metrics" id="tab-api-metrics"
-               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-               :class="{ 'justify-center': sidebarCollapsed }"
-               data-action-click="showTab" data-arg0="api-metrics">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📈</span>
-              <span x-show="!sidebarCollapsed">API Metrics</span>
-            </a>
           {% if 'plugins' not in hidden_sections %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">

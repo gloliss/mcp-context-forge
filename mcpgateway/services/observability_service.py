@@ -50,19 +50,22 @@ Examples:
 # Standard
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import re
+import threading
+import time
 import traceback
 from typing import Any, Dict, Generator, List, Optional, Pattern, Tuple
 import uuid
 
 # Third-Party
-from sqlalchemy import desc
+from sqlalchemy import and_, desc, or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import ObservabilityEvent, ObservabilityMetric, ObservabilitySpan, ObservabilityTrace, SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -252,6 +255,15 @@ class ObservabilityService:
         >>> traces = service.get_traces(db, limit=10)  # doctest: +SKIP
     """
 
+    _TRACE_MAINTENANCE_INTERVAL_SECONDS = 60.0
+    _TRACE_MAINTENANCE_INTERVAL_TRACES = 100
+
+    def __init__(self) -> None:
+        """Initialize process-local trace-storage maintenance state."""
+        self._trace_maintenance_lock = threading.Lock()
+        self._last_trace_maintenance = 0.0
+        self._traces_since_maintenance = 0
+
     def _safe_commit(self, db: Session, context: str) -> bool:
         """Commit and rollback on failure without raising.
 
@@ -272,6 +284,136 @@ class ObservabilityService:
             except SQLAlchemyError as rollback_exc:
                 logger.debug("Observability rollback failed (%s): %s", context, rollback_exc)
             return False
+
+    def _trace_maintenance_due(self) -> bool:
+        """Return whether automatic retention and count maintenance should run.
+
+        Table scans are amortized because tracing may be enabled at a 100% sample
+        rate. A pass runs on the first trace, then at least once per minute or
+        per 100 newly recorded traces. Each pass trims to a low-water mark so a
+        single worker's next batch remains within the configured cap. Concurrent
+        workers may temporarily exceed it, but every pass converges the shared
+        table back to the low-water mark by evicting globally oldest traces.
+
+        Returns:
+            ``True`` when the caller should run a maintenance pass.
+        """
+        now = time.monotonic()
+        with self._trace_maintenance_lock:
+            self._traces_since_maintenance += 1
+            due = (
+                self._last_trace_maintenance == 0.0
+                or self._traces_since_maintenance >= self._TRACE_MAINTENANCE_INTERVAL_TRACES
+                or now - self._last_trace_maintenance >= self._TRACE_MAINTENANCE_INTERVAL_SECONDS
+            )
+            if due:
+                self._last_trace_maintenance = now
+                self._traces_since_maintenance = 0
+            return due
+
+    @classmethod
+    def _trace_maintenance_target(cls, max_traces: int) -> int:
+        """Return the low-water trace count used by automatic maintenance."""
+        reserve = min(cls._TRACE_MAINTENANCE_INTERVAL_TRACES, max_traces - 1)
+        return max(1, max_traces - reserve)
+
+    @staticmethod
+    def _delete_expired_traces(obs_db: Session, retention_days: int) -> int:
+        """Delete traces older than ``retention_days`` in the current transaction."""
+        cutoff = utc_now() - timedelta(days=retention_days)
+        deleted = obs_db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time < cutoff).delete(synchronize_session=False)
+        return int(deleted or 0)
+
+    @staticmethod
+    def _delete_excess_traces(obs_db: Session, max_traces: int) -> int:
+        """Delete all but the newest ``max_traces`` rows in the transaction."""
+        # Find the oldest row that should remain, then bulk-delete everything
+        # strictly older. This avoids materializing every overflow trace ID in
+        # application memory when cleaning an existing oversized database.
+        boundary = (
+            obs_db.query(ObservabilityTrace.start_time, ObservabilityTrace.trace_id).order_by(desc(ObservabilityTrace.start_time), desc(ObservabilityTrace.trace_id)).offset(max_traces - 1).first()
+        )
+        if boundary is None:
+            return 0
+
+        deleted = (
+            obs_db.query(ObservabilityTrace)
+            .filter(
+                or_(
+                    ObservabilityTrace.start_time < boundary.start_time,
+                    and_(ObservabilityTrace.start_time == boundary.start_time, ObservabilityTrace.trace_id < boundary.trace_id),
+                )
+            )
+            .delete(synchronize_session=False)
+        )
+        return int(deleted or 0)
+
+    def _enforce_trace_limits(
+        self,
+        obs_db: Session,
+        retention_days: Optional[int] = None,
+        max_traces: Optional[int] = None,
+    ) -> int:
+        """Delete expired traces and traces beyond the configured count limit.
+
+        The newest ``max_traces`` rows are retained. Ordering by trace ID as a
+        secondary key makes eviction deterministic when timestamps are equal.
+
+        Args:
+            obs_db: Independent observability session owned by the caller.
+            retention_days: Optional retention override, primarily for maintenance callers.
+            max_traces: Optional count-limit override, primarily for maintenance callers.
+
+        Returns:
+            Number of deleted traces, or zero when the maintenance commit fails.
+        """
+        effective_retention_days = retention_days if retention_days is not None else getattr(settings, "observability_trace_retention_days", 7)
+        effective_max_traces = max_traces if max_traces is not None else getattr(settings, "observability_max_traces", 100000)
+        if effective_retention_days < 1:
+            raise ValueError("retention_days must be at least 1")
+        if effective_max_traces < 1:
+            raise ValueError("max_traces must be at least 1")
+
+        expired_deleted = self._delete_expired_traces(obs_db, effective_retention_days)
+        excess_deleted = self._delete_excess_traces(obs_db, effective_max_traces)
+
+        if not self._safe_commit(obs_db, "enforce_trace_limits"):
+            return 0
+
+        deleted = expired_deleted + excess_deleted
+        if deleted:
+            logger.info(
+                "Deleted %s observability traces outside retention/count limits (retention_days=%s, max_traces=%s)",
+                deleted,
+                effective_retention_days,
+                effective_max_traces,
+            )
+        return deleted
+
+    def enforce_trace_limits(self, retention_days: Optional[int] = None, max_traces: Optional[int] = None) -> int:
+        """Run trace retention and count-limit maintenance immediately.
+
+        Creates an independent observability session and commits best-effort,
+        matching the transaction semantics of the other observability writes.
+
+        Args:
+            retention_days: Optional trace retention override in days.
+            max_traces: Optional maximum retained trace count.
+
+        Returns:
+            Number of deleted traces, or zero when the commit fails.
+        """
+        obs_db = None
+        owned = False
+        try:
+            obs_db, owned = _get_or_create_observability_session()
+            return self._enforce_trace_limits(obs_db, retention_days=retention_days, max_traces=max_traces)
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     # ==============================
     # Trace Management
@@ -351,7 +493,27 @@ class ObservabilityService:
                 created_at=utc_now(),
             )
             obs_db.add(trace)
+            retention_deleted = 0
+            excess_deleted = 0
+            if self._trace_maintenance_due():
+                try:
+                    # Include the pending trace in this maintenance pass while
+                    # keeping the normal request path to one commit. Trimming to
+                    # a low-water mark leaves room for the next amortized batch.
+                    obs_db.flush()
+                    retention_deleted = self._delete_expired_traces(obs_db, getattr(settings, "observability_trace_retention_days", 7))
+                    max_traces = getattr(settings, "observability_max_traces", 100000)
+                    excess_deleted = self._delete_excess_traces(obs_db, self._trace_maintenance_target(max_traces))
+                except SQLAlchemyError as maintenance_error:
+                    logger.warning("Automatic observability trace cleanup failed: %s", maintenance_error)
+                    try:
+                        obs_db.rollback()
+                    except SQLAlchemyError as rollback_error:
+                        logger.debug("Observability trace cleanup rollback failed: %s", rollback_error)
+                    return trace_id
             self._safe_commit(obs_db, "start_trace")
+            if retention_deleted or excess_deleted:
+                logger.info("Deleted %s observability traces outside retention/count limits", retention_deleted + excess_deleted)
             logger.debug("Started trace %s: %s", trace_id, name)
             return trace_id
         finally:

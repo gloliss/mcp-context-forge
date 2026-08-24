@@ -906,7 +906,13 @@
               "type": "string"
             },
             "OBSERVABILITY_ENABLED": {
-              "type": "string"
+              "type": "string",
+              "description": "Enable internal observability tracing and metrics",
+              "default": "true",
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "OTEL_ENABLE_OBSERVABILITY": {
               "type": "string"

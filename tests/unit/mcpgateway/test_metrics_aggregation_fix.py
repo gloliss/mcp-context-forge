@@ -16,6 +16,7 @@ import pytest
 
 # First-Party
 from mcpgateway.db import Tool, ToolMetric, ToolMetricsHourly
+from mcpgateway.services.tool_service import ToolService
 
 
 @pytest.fixture
@@ -58,6 +59,28 @@ def test_metrics_summary_with_only_raw_metrics(test_db, test_tool):
     assert summary["min_response_time"] == 0.1
     assert summary["max_response_time"] == 0.3
     assert abs(summary["avg_response_time"] - 0.2) < 0.01  # (0.1 + 0.2 + 0.3) / 3
+
+
+@pytest.mark.asyncio
+async def test_get_tool_returns_persisted_metrics_when_requested(test_db, test_tool):
+    """The detail service returns persisted metrics when explicitly requested."""
+    now = datetime.now(timezone.utc)
+    test_db.add_all(
+        [
+            ToolMetric(tool_id=test_tool.id, response_time=0.1, is_success=True, timestamp=now),
+            ToolMetric(tool_id=test_tool.id, response_time=0.3, is_success=False, timestamp=now),
+        ]
+    )
+    test_db.commit()
+    test_db.expire_all()
+
+    result = await ToolService().get_tool(test_db, test_tool.id, include_metrics=True)
+
+    assert result.execution_count == 2
+    assert result.metrics is not None
+    assert result.metrics.total_executions == 2
+    assert result.metrics.successful_executions == 1
+    assert result.metrics.failed_executions == 1
 
 
 def test_metrics_summary_with_only_hourly_metrics(test_db, test_tool):

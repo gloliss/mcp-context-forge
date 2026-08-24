@@ -466,6 +466,8 @@ def _resolve_tool_timeout(tool_payload: Mapping[str, Any], timeout_override: Opt
     if not math.isfinite(protocol_timeout) or protocol_timeout <= 0:
         raise ToolInvocationError("Configured protocol timeout must be a positive number")
     return protocol_timeout
+
+
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
@@ -3503,6 +3505,7 @@ class ToolService(BaseService):
         requesting_user_is_admin: bool = False,
         requesting_user_team_roles: Optional[Dict[str, str]] = None,
         token_teams: Optional[List[str]] = None,
+        include_metrics: bool = False,
     ) -> ToolRead:
         """
         Retrieve a tool by its ID with access control.
@@ -3519,6 +3522,8 @@ class ToolService(BaseService):
                 ``[]`` means public-only scope. ``[...]`` means team-scoped.
                 This is kept separate from ``requesting_user_team_roles`` to avoid the Layer 1
                 visibility check silently widening a scoped token to full DB team membership.
+            include_metrics (bool): Whether to include aggregated execution metrics in the
+                response. Defaults to False.
 
         Returns:
             ToolRead: The tool object.
@@ -3575,6 +3580,7 @@ class ToolService(BaseService):
             requesting_user_email=requesting_user_email,
             requesting_user_is_admin=requesting_user_is_admin,
             requesting_user_team_roles=requesting_user_team_roles,
+            include_metrics=include_metrics,
         )
 
         structured_logger.log(
@@ -3587,7 +3593,7 @@ class ToolService(BaseService):
             resource_id=str(tool.id),
             custom_fields={
                 "tool_name": tool.name,
-                "include_metrics": bool(getattr(tool_read, "metrics", {})),
+                "include_metrics": include_metrics,
             },
         )
 

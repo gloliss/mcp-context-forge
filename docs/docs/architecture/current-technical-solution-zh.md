@@ -823,8 +823,8 @@ HA PostgreSQL，不能在高可用数据库前新增单点代理。
 
 ## 10. 可观测与运维
 
-源码严格默认下，数据库 Audit Trail、Security Logging、内部 Observability、结构化日志数据库落盘和 Metrics
-均为关闭状态；Compose/Helm 会覆盖其中部分开关。未显式启用并验证前，不存在相应数据库证据链。
+源码严格默认下，内部 Observability 已开启；数据库 Audit Trail、Security Logging、结构化日志数据库落盘和 Metrics
+仍为关闭状态。Compose/Helm 也默认开启内部 Observability，部署可显式设置 `OBSERVABILITY_ENABLED=false` 关闭。
 SIEM 也默认关闭且采用异步 best-effort 交付。
 
 ### 10.1 三类信号
@@ -970,7 +970,7 @@ RPO/RTO 必须由业务分级确定并通过恢复演练证明。只验证“备
 | Direct Proxy Gateway | 默认关闭的高级模式 | 只有完成独立缓存、认证和调用路径验证后启用 |
 | Plugins | 默认关闭 | 供应链、安全和性能评审后逐个启用 |
 | Audit / Security Logging | 源码默认关闭 | 合规需要时显式开启、验证递归脱敏与可靠交付 |
-| Internal Observability / DB Structured Logs | 源码默认关闭 | 评估数据库写放大、保留和敏感载荷后启用 |
+| Internal Observability / DB Structured Logs | Internal Observability 源码默认开启，DB Structured Logs 默认关闭 | 按容量调整采样率和保留期，高敏或高吞吐场景可显式关闭 |
 | Metrics | 源码默认关闭，发布清单常覆盖开启 | 私网抓取并修补 Prometheus 端点 RBAC 缺口 |
 | Dynamic Client Registration | 当前源码默认开启且空 issuer 列表不收窄 | 不使用时关闭；使用时设精确 issuer 白名单 |
 | Redis Cache | 不是源码默认，但为多副本推荐 | 生产多副本使用 `CACHE_TYPE=redis` |

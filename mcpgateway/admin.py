@@ -11952,6 +11952,7 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
             requesting_user_is_admin=_is_admin,
             requesting_user_team_roles=_team_roles,
             token_teams=auth_token_teams,
+            include_metrics=True,
         )
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
@@ -18427,7 +18428,18 @@ async def get_api_metrics_partial(request: Request, _user=Depends(get_current_us
         HTMLResponse: Rendered API metrics dashboard template
     """
     root_path = _resolve_root_path(request)
-    return request.app.state.templates.TemplateResponse(request, "api_metrics_dashboard.html", {"request": request, "root_path": root_path})
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "api_metrics_dashboard.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "observability_enabled": settings.observability_enabled,
+            "trace_http_requests": settings.observability_trace_http_requests,
+            "observability_sample_rate": settings.observability_sample_rate,
+        },
+    )
+
 
 @admin_router.get("/observability/stats")
 @require_permission("admin.system_config", allow_admin_bypass=False)

@@ -344,7 +344,7 @@ export const viewTool = async function (toolId) {
       const setTextSafely = (selector, value) => {
         const element = toolDetailsDiv.querySelector(selector);
         if (element) {
-          element.textContent = value || "N/A";
+          element.textContent = value ?? "N/A";
         }
       };
 

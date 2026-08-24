@@ -10,9 +10,13 @@ Direct unit tests for container release contracts and docker-entrypoint.sh.
 from __future__ import annotations
 
 # Standard
+import json
 from pathlib import Path
 import stat
 import subprocess
+
+# Third-Party
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT = REPO_ROOT / "docker-entrypoint.sh"
@@ -103,6 +107,24 @@ def test_intranet_release_defaults_are_baked_into_release_artifacts() -> None:
         assert f"- {name}=${{{name}:-{expected}}}" in embedded_compose
         assert f'    {name}: "{expected}"' in chart_values
         assert example_env.get(name) == expected
+
+
+def test_internal_observability_default_is_consistent_across_release_artifacts() -> None:
+    """Internal tracing defaults on while external OpenTelemetry remains opt-in."""
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    chart_dir = REPO_ROOT / "charts" / "mcp-stack"
+    chart_values = yaml.safe_load((chart_dir / "values.yaml").read_text(encoding="utf-8"))
+    chart_schema = json.loads((chart_dir / "values.schema.json").read_text(encoding="utf-8"))
+    example_env = _read_active_env(REPO_ROOT / ".env.example")
+
+    config = chart_values["mcpContextForge"]["config"]
+    config_schema = chart_schema["properties"]["mcpContextForge"]["properties"]["config"]["properties"]
+
+    assert "- OBSERVABILITY_ENABLED=${OBSERVABILITY_ENABLED:-true}" in compose
+    assert example_env["OBSERVABILITY_ENABLED"] == "true"
+    assert config["OBSERVABILITY_ENABLED"] == "true"
+    assert config["OTEL_ENABLE_OBSERVABILITY"] == "false"
+    assert config_schema["OBSERVABILITY_ENABLED"]["default"] == "true"
 
 
 def test_print_mcp_runtime_mode_warns_when_rust_enabled(tmp_path: Path) -> None:

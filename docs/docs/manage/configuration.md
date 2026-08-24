@@ -930,7 +930,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 | Setting                              | Description                                           | Default                                              | Options          |
 | ------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------- | ---------------- |
-| `OBSERVABILITY_ENABLED`              | Enable internal observability tracing and metrics     | `false`                                              | bool             |
+| `OBSERVABILITY_ENABLED`              | Enable internal observability tracing and metrics     | `true`                                               | bool             |
 | `OBSERVABILITY_TRACE_HTTP_REQUESTS`  | Automatically trace HTTP requests                     | `true`                                               | bool             |
 | `OBSERVABILITY_TRACE_RETENTION_DAYS` | Number of days to retain trace data                   | `7`                                                  | int (≥ 1)        |
 | `OBSERVABILITY_MAX_TRACES`           | Maximum number of traces to retain                    | `100000`                                             | int (≥ 1000)     |

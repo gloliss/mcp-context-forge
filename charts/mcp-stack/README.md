@@ -345,7 +345,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.METRICS_ROLLUP_LATE_DATA_HOURS | string | `"1"` |  |
 | mcpContextForge.config.METRICS_ROLLUP_RETENTION_DAYS | string | `"365"` |  |
 | mcpContextForge.config.METRICS_SUBSYSTEM | string | `""` |  |
-| mcpContextForge.config.OBSERVABILITY_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.OBSERVABILITY_ENABLED | string | `"true"` | internal observability is enabled by default; set false to opt out |
 | mcpContextForge.config.OBSERVABILITY_EVENTS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.OBSERVABILITY_EXCLUDE_PATHS | string | `"[\"/health\", \"/healthz\", \"/ready\", \"/metrics\", \"/static/.*\"]"` |  |
 | mcpContextForge.config.OBSERVABILITY_INCLUDE_PATHS | string | `"[\"^/rpc/?$\", \"^/sse$\", \"^/message$\", \"^/mcp(?:/|$)\", \"^/servers/[^/]+/mcp/?$\", \"^/servers/[^/]+/sse$\", \"^/servers/[^/]+/message$\", \"^/a2a(?:/|$)\"]"` |  |
@@ -607,7 +607,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.OTEL_BSP_MAX_QUEUE_SIZE | string | `"2048"` |  |
 | mcpContextForge.config.OTEL_BSP_MAX_EXPORT_BATCH_SIZE | string | `"512"` |  |
 | mcpContextForge.config.OTEL_BSP_SCHEDULE_DELAY | string | `"5000"` |  |
-| mcpContextForge.config.OBSERVABILITY_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.OBSERVABILITY_ENABLED | string | `"true"` | internal observability is enabled by default; set false to opt out |
 | mcpContextForge.config.OBSERVABILITY_TRACE_HTTP_REQUESTS | string | `"true"` |  |
 | mcpContextForge.config.OBSERVABILITY_TRACE_RETENTION_DAYS | string | `"7"` |  |
 | mcpContextForge.config.OBSERVABILITY_MAX_TRACES | string | `"100000"` |  |
