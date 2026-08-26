@@ -18541,68 +18541,60 @@ async def get_observability_traces(
     Returns:
         HTMLResponse: Rendered traces list template
     """
-    db = next(get_db())
-    try:
-        # Parse time range
-        time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
-        hours = time_map.get(time_range, 24)
-        cutoff_time = datetime.now() - timedelta(hours=hours)
+    # Parse time range
+    time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
+    hours = time_map.get(time_range, 24)
+    cutoff_time = datetime.now() - timedelta(hours=hours)
 
-        query = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time >= cutoff_time)
+    query = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time >= cutoff_time)
 
-        # Apply status filter
-        if status_filter != "all":
-            query = query.filter(ObservabilityTrace.status == status_filter)
+    # Apply status filter
+    if status_filter != "all":
+        query = query.filter(ObservabilityTrace.status == status_filter)
 
-        # Apply duration filters
-        if min_duration is not None:
-            query = query.filter(ObservabilityTrace.duration_ms >= min_duration)
-        if max_duration is not None:
-            query = query.filter(ObservabilityTrace.duration_ms <= max_duration)
+    # Apply duration filters
+    if min_duration is not None:
+        query = query.filter(ObservabilityTrace.duration_ms >= min_duration)
+    if max_duration is not None:
+        query = query.filter(ObservabilityTrace.duration_ms <= max_duration)
 
-        # Apply HTTP method filter
-        if http_method:
-            query = query.filter(ObservabilityTrace.http_method == http_method)
+    # Apply HTTP method filter
+    if http_method:
+        query = query.filter(ObservabilityTrace.http_method == http_method)
 
-        # Apply user email filter
-        if user_email:
-            query = query.filter(ObservabilityTrace.user_email.ilike(f"%{user_email}%"))
+    # Apply user email filter
+    if user_email:
+        query = query.filter(ObservabilityTrace.user_email.ilike(f"%{user_email}%"))
 
-        # Apply name search
-        if name_search:
-            query = query.filter(ObservabilityTrace.name.ilike(f"%{name_search}%"))
+    # Apply name search
+    if name_search:
+        query = query.filter(ObservabilityTrace.name.ilike(f"%{name_search}%"))
 
-        # Apply attribute search
-        if attribute_search:
-            # Escape special characters for SQL LIKE
-            safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
-            query = query.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
+    # Apply attribute search
+    if attribute_search:
+        # Escape special characters for SQL LIKE
+        safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
+        query = query.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
 
-        # Apply tool name filter (join with spans to find traces that invoked a specific tool)
-        if tool_name:
-            # Subquery to find trace_ids that have tool invocations matching the tool name
-            tool_trace_ids = (
-                db.query(ObservabilitySpan.trace_id)
-                .filter(
-                    ObservabilitySpan.name == "tool.invoke",
-                    extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),
-                )
-                .distinct()
-                .subquery()
+    # Apply tool name filter (join with spans to find traces that invoked a specific tool)
+    if tool_name:
+        # Subquery to find trace_ids that have tool invocations matching the tool name
+        tool_trace_ids = (
+            db.query(ObservabilitySpan.trace_id)
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),
             )
-            query = query.filter(ObservabilityTrace.trace_id.in_(select(tool_trace_ids.c.trace_id)))
+            .distinct()
+            .subquery()
+        )
+        query = query.filter(ObservabilityTrace.trace_id.in_(select(tool_trace_ids.c.trace_id)))
 
-        # Get traces ordered by most recent
-        traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
+    # Get traces ordered by most recent
+    traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
 
-        root_path = _resolve_root_path(request)
-        return request.app.state.templates.TemplateResponse(request, "observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(request, "observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
 
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
@@ -18622,21 +18614,13 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
     Raises:
         HTTPException: 404 if trace not found
     """
-    db = next(get_db())
-    try:
-        trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
+    trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
 
-        if not trace:
-            raise HTTPException(status_code=404, detail="Trace not found")
+    if not trace:
+        raise HTTPException(status_code=404, detail="Trace not found")
 
-        root_path = _resolve_root_path(request)
-        return request.app.state.templates.TemplateResponse(request, "observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(request, "observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
 
 
 @admin_router.post("/observability/queries", response_model=dict)
@@ -18667,10 +18651,8 @@ async def save_observability_query(
     Raises:
         HTTPException: 400 if validation fails
     """
-    db = next(get_db())
     try:
-        # Get user email from authenticated user
-        user_email = user.email if hasattr(user, "email") else "unknown"
+        user_email = get_user_email(user)
 
         # Create new saved query
         query = ObservabilitySavedQuery(name=name, description=description, user_email=user_email, filter_config=filter_config, is_shared=is_shared)
@@ -18682,14 +18664,8 @@ async def save_observability_query(
         return {"id": query.id, "name": query.name, "description": query.description, "filter_config": query.filter_config, "is_shared": query.is_shared, "created_at": query.created_at.isoformat()}
     except Exception as e:
         db.rollback()
-        LOGGER.error(f"Failed to save query: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+        LOGGER.exception("Failed to save observability query")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @admin_router.get("/observability/queries", response_model=list)
@@ -18707,38 +18683,30 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
     Returns:
         list: List of saved query dictionaries
     """
-    db = next(get_db())
-    try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+    user_email = get_user_email(user)
 
-        # Get user's own queries + shared queries
-        queries = (
-            db.query(ObservabilitySavedQuery)
-            .filter(or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True))
-            .order_by(desc(ObservabilitySavedQuery.created_at))
-            .all()
-        )
+    # Get user's own queries + shared queries
+    queries = (
+        db.query(ObservabilitySavedQuery)
+        .filter(or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared.is_(True)))
+        .order_by(desc(ObservabilitySavedQuery.created_at))
+        .all()
+    )
 
-        return [
-            {
-                "id": q.id,
-                "name": q.name,
-                "description": q.description,
-                "filter_config": q.filter_config,
-                "is_shared": q.is_shared,
-                "user_email": q.user_email,
-                "created_at": q.created_at.isoformat(),
-                "last_used_at": q.last_used_at.isoformat() if q.last_used_at else None,
-                "use_count": q.use_count,
-            }
-            for q in queries
-        ]
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    return [
+        {
+            "id": q.id,
+            "name": q.name,
+            "description": q.description,
+            "filter_config": q.filter_config,
+            "is_shared": q.is_shared,
+            "user_email": q.user_email,
+            "created_at": q.created_at.isoformat(),
+            "last_used_at": q.last_used_at.isoformat() if q.last_used_at else None,
+            "use_count": q.use_count,
+        }
+        for q in queries
+    ]
 
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
@@ -18758,35 +18726,25 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
     Raises:
         HTTPException: 404 if query not found or unauthorized
     """
-    db = next(get_db())
-    try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+    user_email = get_user_email(user)
 
-        # Can only access own queries or shared queries
-        query = (
-            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True)).first()
-        )
+    # Can only access own queries or shared queries
+    query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared.is_(True))).first()
 
-        if not query:
-            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+    if not query:
+        raise HTTPException(status_code=404, detail="Query not found or unauthorized")
 
-        return {
-            "id": query.id,
-            "name": query.name,
-            "description": query.description,
-            "filter_config": query.filter_config,
-            "is_shared": query.is_shared,
-            "user_email": query.user_email,
-            "created_at": query.created_at.isoformat(),
-            "last_used_at": query.last_used_at.isoformat() if query.last_used_at else None,
-            "use_count": query.use_count,
-        }
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    return {
+        "id": query.id,
+        "name": query.name,
+        "description": query.description,
+        "filter_config": query.filter_config,
+        "is_shared": query.is_shared,
+        "user_email": query.user_email,
+        "created_at": query.created_at.isoformat(),
+        "last_used_at": query.last_used_at.isoformat() if query.last_used_at else None,
+        "use_count": query.use_count,
+    }
 
 
 @admin_router.put("/observability/queries/{query_id}", response_model=dict)
@@ -18819,9 +18777,8 @@ async def update_observability_query(
     Raises:
         HTTPException: 404 if query not found, 403 if unauthorized
     """
-    db = next(get_db())
     try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+        user_email = get_user_email(user)
 
         # Can only update own queries
         query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, ObservabilitySavedQuery.user_email == user_email).first()
@@ -18854,14 +18811,8 @@ async def update_observability_query(
         raise
     except Exception as e:
         db.rollback()
-        LOGGER.error(f"Failed to update query: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+        LOGGER.exception("Failed to update observability query")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
@@ -18878,9 +18829,8 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
     Raises:
         HTTPException: 404 if query not found, 403 if unauthorized
     """
-    db = next(get_db())
     try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+        user_email = get_user_email(user)
 
         # Can only delete own queries
         query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, ObservabilitySavedQuery.user_email == user_email).first()
@@ -18890,12 +18840,12 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
 
         db.delete(query)
         db.commit()
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        LOGGER.exception("Failed to delete observability query")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
@@ -18915,13 +18865,12 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
     Raises:
         HTTPException: 404 if query not found or unauthorized
     """
-    db = next(get_db())
     try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+        user_email = get_user_email(user)
 
         # Can track usage for own queries or shared queries
         query = (
-            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True)).first()
+            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared.is_(True))).first()
         )
 
         if not query:
@@ -18939,14 +18888,8 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         raise
     except Exception as e:
         db.rollback()
-        LOGGER.error(f"Failed to track query usage: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+        LOGGER.exception("Failed to track observability query usage")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @admin_router.get("/observability/metrics/percentiles", response_model=dict)

@@ -16192,7 +16192,7 @@ async def test_catalog_partial_disabled_raises_404(monkeypatch, mock_request, mo
 
 
 @pytest.mark.asyncio
-async def test_get_observability_traces_with_filters(monkeypatch, mock_request, mock_db, allow_permission):
+async def test_get_observability_traces_with_filters(mock_request, mock_db, allow_permission):
     trace_query = MagicMock()
     trace_query.filter.return_value = trace_query
     trace_query.order_by.return_value = trace_query
@@ -16208,8 +16208,6 @@ async def test_get_observability_traces_with_filters(monkeypatch, mock_request, 
     span_query.subquery.return_value = SimpleNamespace(c=SimpleNamespace(trace_id=column("trace_id")))
 
     mock_db.query.side_effect = [trace_query, span_query]
-    monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_db]))
-
     response = await get_observability_traces(
         mock_request,
         time_range="1h",
@@ -16223,9 +16221,12 @@ async def test_get_observability_traces_with_filters(monkeypatch, mock_request, 
         attribute_search="attr",
         tool_name="tool",
         _user={"email": "admin@example.com", "db": mock_db},
+        db=mock_db,
     )
 
     assert isinstance(response, HTMLResponse)
+    mock_db.commit.assert_not_called()
+    mock_db.close.assert_not_called()
 
 
 def _mock_top_query_result(result):
@@ -18078,6 +18079,112 @@ async def test_get_plugins_partial_error(monkeypatch):
     assert response.status_code == 500
 
 
+@pytest.fixture
+def observability_saved_query_db():
+    """Create an isolated SQLite session for saved-query authorization tests."""
+    # Third-Party
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # First-Party
+    from mcpgateway.db import ObservabilitySavedQuery
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ObservabilitySavedQuery.__table__.create(bind=engine)
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_observability_saved_queries_enforce_private_ownership_and_shared_visibility(observability_saved_query_db, allow_permission):
+    """Another user sees shared presets but cannot read or mutate private presets."""
+    # First-Party
+    from mcpgateway.db import ObservabilitySavedQuery
+
+    db = observability_saved_query_db
+    request = MagicMock(spec=Request)
+    owner = {"email": "owner@example.com", "sub": "ignored@example.com", "db": db}
+    other_user = {"email": "other@example.com", "db": db}
+
+    private_result = await save_observability_query(
+        request=request,
+        name="Private preset",
+        description="owner only",
+        filter_config={"status": "error"},
+        is_shared=False,
+        user=owner,
+        db=db,
+    )
+    shared_result = await save_observability_query(
+        request=request,
+        name="Shared preset",
+        description="visible to other observability users",
+        filter_config={"status": "ok"},
+        is_shared=True,
+        user=owner,
+        db=db,
+    )
+
+    private_id = private_result["id"]
+    shared_id = shared_result["id"]
+    assert db.get(ObservabilitySavedQuery, private_id).user_email == "owner@example.com"
+
+    listed = await list_observability_queries(request=request, user=other_user, db=db)
+    assert [query["id"] for query in listed] == [shared_id]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_observability_query(request=request, query_id=private_id, user=other_user, db=db)
+    assert exc_info.value.status_code == 404
+
+    with pytest.raises(HTTPException) as exc_info:
+        await update_observability_query(
+            request=request,
+            query_id=private_id,
+            name="unauthorized update",
+            description=None,
+            filter_config=None,
+            is_shared=None,
+            user=other_user,
+            db=db,
+        )
+    assert exc_info.value.status_code == 404
+
+    with pytest.raises(HTTPException) as exc_info:
+        await track_query_usage(request=request, query_id=private_id, user=other_user, db=db)
+    assert exc_info.value.status_code == 404
+
+    with pytest.raises(HTTPException) as exc_info:
+        await delete_observability_query(request=request, query_id=private_id, user=other_user, db=db)
+    assert exc_info.value.status_code == 404
+
+    shared_detail = await get_observability_query(request=request, query_id=shared_id, user=other_user, db=db)
+    assert shared_detail["id"] == shared_id
+    assert db.get(ObservabilitySavedQuery, private_id).name == "Private preset"
+
+
+@pytest.mark.asyncio
+async def test_observability_saved_queries_deny_before_database_access_without_permission(monkeypatch, mock_db):
+    """A caller lacking system-config permission is rejected before querying rows."""
+    deny_service = MagicMock()
+    deny_service.check_permission = AsyncMock(return_value=False)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: deny_service)
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await list_observability_queries(request=MagicMock(spec=Request), user={"email": "viewer@example.com", "db": mock_db}, db=mock_db)
+
+    assert exc_info.value.status_code == 403
+    deny_service.check_permission.assert_awaited_once()
+    assert deny_service.check_permission.await_args.kwargs["permission"] == "admin.system_config"
+    assert deny_service.check_permission.await_args.kwargs["allow_admin_bypass"] is False
+    mock_db.query.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_observability_query_crud(monkeypatch, allow_permission):
     now = datetime.now(timezone.utc)
@@ -18085,8 +18192,10 @@ async def test_observability_query_crud(monkeypatch, allow_permission):
     class FakeQuery:
         def __init__(self, results):
             self._results = results
+            self.filters = []
 
         def filter(self, *args, **kwargs):
+            self.filters.extend(args)
             return self
 
         def order_by(self, *args, **kwargs):
@@ -18112,30 +18221,28 @@ async def test_observability_query_crud(monkeypatch, allow_permission):
     )
 
     db = MagicMock()
-    db.query.return_value = FakeQuery([query_row])
-
-    def _get_db():
-        yield db
-
-    monkeypatch.setattr("mcpgateway.admin.get_db", _get_db)
+    fake_query = FakeQuery([query_row])
+    db.query.return_value = fake_query
     user = {"email": "user@example.com", "db": db}
 
-    result = await list_observability_queries(request=MagicMock(spec=Request), user=user)
+    result = await list_observability_queries(request=MagicMock(spec=Request), user=user, db=db)
     assert result[0]["id"] == 1
+    assert "is_shared" in str(fake_query.filters[0])
 
-    result = await get_observability_query(request=MagicMock(spec=Request), query_id=1, user=user)
+    result = await get_observability_query(request=MagicMock(spec=Request), query_id=1, user=user, db=db)
     assert result["name"] == "Q1"
 
-    updated = await update_observability_query(request=MagicMock(spec=Request), query_id=1, name="Q2", description="new", filter_config={"y": 2}, is_shared=False, user=user)
+    updated = await update_observability_query(request=MagicMock(spec=Request), query_id=1, name="Q2", description="new", filter_config={"y": 2}, is_shared=False, user=user, db=db)
     assert updated["name"] == "Q2"
 
     monkeypatch.setattr("mcpgateway.admin.utc_now", lambda: now)
-    usage = await track_query_usage(request=MagicMock(spec=Request), query_id=1, user=user)
+    usage = await track_query_usage(request=MagicMock(spec=Request), query_id=1, user=user, db=db)
     assert usage["use_count"] == 2
+    db.close.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_observability_query_not_found(monkeypatch, allow_permission):
+async def test_observability_query_not_found(allow_permission):
     class EmptyQuery:
         def filter(self, *args, **kwargs):
             return self
@@ -18146,19 +18253,15 @@ async def test_observability_query_not_found(monkeypatch, allow_permission):
     db = MagicMock()
     db.query.return_value = EmptyQuery()
 
-    def _get_db():
-        yield db
-
-    monkeypatch.setattr("mcpgateway.admin.get_db", _get_db)
     user = {"email": "user@example.com", "db": db}
 
     with pytest.raises(HTTPException) as exc:
-        await get_observability_query(request=MagicMock(spec=Request), query_id=99, user=user)
+        await get_observability_query(request=MagicMock(spec=Request), query_id=99, user=user, db=db)
     assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_update_and_track_observability_query_error_paths(monkeypatch, allow_permission):
+async def test_update_and_track_observability_query_error_paths(allow_permission):
     """Cover HTTPException passthrough and generic exception rollback paths."""
 
     class EmptyQuery:
@@ -18170,10 +18273,6 @@ async def test_update_and_track_observability_query_error_paths(monkeypatch, all
 
     db = MagicMock()
 
-    def _get_db():
-        yield db
-
-    monkeypatch.setattr("mcpgateway.admin.get_db", _get_db)
     user = {"email": "user@example.com", "db": db}
 
     db.query.return_value = EmptyQuery()
@@ -18181,11 +18280,11 @@ async def test_update_and_track_observability_query_error_paths(monkeypatch, all
     db.close = MagicMock()
 
     with pytest.raises(HTTPException) as exc:
-        await update_observability_query(request=MagicMock(spec=Request), query_id=99, name="x", user=user)
+        await update_observability_query(request=MagicMock(spec=Request), query_id=99, name="x", user=user, db=db)
     assert exc.value.status_code == 404
 
     with pytest.raises(HTTPException) as exc:
-        await track_query_usage(request=MagicMock(spec=Request), query_id=99, user=user)
+        await track_query_usage(request=MagicMock(spec=Request), query_id=99, user=user, db=db)
     assert exc.value.status_code == 404
 
     query_row = SimpleNamespace(
@@ -18210,17 +18309,16 @@ async def test_update_and_track_observability_query_error_paths(monkeypatch, all
     db.query.return_value = SingleQuery()
     db.rollback = MagicMock()
     db.refresh = MagicMock()
-    # Fail the first commit in each handler, but allow the final commit in the `finally` blocks.
-    db.commit = MagicMock(side_effect=[RuntimeError("commit-failed"), None, RuntimeError("commit-failed"), None])
+    db.commit = MagicMock(side_effect=[RuntimeError("commit-failed"), RuntimeError("commit-failed")])
 
     with pytest.raises(HTTPException) as exc:
-        await update_observability_query(request=MagicMock(spec=Request), query_id=1, name="Q2", user=user)
+        await update_observability_query(request=MagicMock(spec=Request), query_id=1, name="Q2", user=user, db=db)
     assert exc.value.status_code == 400
     assert db.rollback.called
 
     db.rollback.reset_mock()
     with pytest.raises(HTTPException) as exc:
-        await track_query_usage(request=MagicMock(spec=Request), query_id=1, user=user)
+        await track_query_usage(request=MagicMock(spec=Request), query_id=1, user=user, db=db)
     assert exc.value.status_code == 400
     assert db.rollback.called
 
@@ -20680,14 +20778,12 @@ class TestObservability:
         mock_session.close.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_get_observability_trace_detail_success(self, monkeypatch, allow_permission):
+    async def test_get_observability_trace_detail_success(self, allow_permission):
         mock_trace = MagicMock()
         mock_session = MagicMock()
         mock_session.query.return_value.filter_by.return_value.options.return_value.first.return_value = mock_trace
         mock_session.commit = MagicMock()
         mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
-
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
         request.app = MagicMock()
@@ -20696,19 +20792,21 @@ class TestObservability:
 
         result = await get_observability_trace_detail(request, trace_id="abc-123", _user={"email": "admin@test.com"}, db=mock_session)
         assert isinstance(result, HTMLResponse)
+        mock_session.commit.assert_not_called()
+        mock_session.close.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_get_observability_trace_detail_not_found(self, monkeypatch, allow_permission):
+    async def test_get_observability_trace_detail_not_found(self, allow_permission):
         mock_session = MagicMock()
         mock_session.query.return_value.filter_by.return_value.options.return_value.first.return_value = None
         mock_session.commit = MagicMock()
         mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
-
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
             await get_observability_trace_detail(request, trace_id="missing", _user={"email": "admin@test.com"}, db=mock_session)
         assert exc_info.value.status_code == 404
+        mock_session.commit.assert_not_called()
+        mock_session.close.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_save_observability_query(self, monkeypatch, allow_permission):
@@ -20725,15 +20823,23 @@ class TestObservability:
         mock_session.commit = MagicMock()
         mock_session.refresh = MagicMock(side_effect=lambda q: setattr(q, "id", 1))
         mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         # Patch so that the created ObservabilitySavedQuery picks up our attrs
-        monkeypatch.setattr("mcpgateway.admin.ObservabilitySavedQuery", lambda **kw: mock_query)
+        created_query_fields = {}
+
+        def _saved_query(**kwargs):
+            created_query_fields.update(kwargs)
+            return mock_query
+
+        monkeypatch.setattr("mcpgateway.admin.ObservabilitySavedQuery", _saved_query)
 
         request = MagicMock(spec=Request)
         user = {"email": "admin@test.com"}
         result = await save_observability_query(request, name="test-query", description="desc", filter_config={"status": "error"}, is_shared=False, user=user, db=mock_session)
         assert result["name"] == "test-query"
+        assert created_query_fields["user_email"] == "admin@test.com"
+        mock_session.commit.assert_called_once()
+        mock_session.close.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_save_observability_query_failure_rolls_back(self, monkeypatch, allow_permission):
@@ -20748,9 +20854,8 @@ class TestObservability:
         mock_session = MagicMock()
         mock_session.add = MagicMock()
         mock_session.rollback = MagicMock()
-        mock_session.commit = MagicMock(side_effect=[RuntimeError("commit-failed"), None])
+        mock_session.commit = MagicMock(side_effect=RuntimeError("commit-failed"))
         mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         monkeypatch.setattr("mcpgateway.admin.ObservabilitySavedQuery", lambda **kw: mock_query)
 
@@ -20760,35 +20865,39 @@ class TestObservability:
             await save_observability_query(request, name="test-query", description="desc", filter_config={"status": "error"}, is_shared=False, user=user, db=mock_session)
         assert exc_info.value.status_code == 400
         assert mock_session.rollback.called
+        mock_session.commit.assert_called_once()
+        mock_session.close.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_delete_observability_query_success(self, monkeypatch, allow_permission):
+    async def test_delete_observability_query_success(self, allow_permission):
         mock_query = MagicMock()
         mock_session = MagicMock()
         mock_session.query.return_value.filter.return_value.first.return_value = mock_query
         mock_session.delete = MagicMock()
         mock_session.commit = MagicMock()
         mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         request = MagicMock(spec=Request)
         user = {"email": "admin@test.com"}
         result = await delete_observability_query(request, query_id=1, user=user, db=mock_session)
         assert result is None  # 204 no content
+        mock_session.commit.assert_called_once()
+        mock_session.close.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_delete_observability_query_not_found(self, monkeypatch, allow_permission):
+    async def test_delete_observability_query_not_found(self, allow_permission):
         mock_session = MagicMock()
         mock_session.query.return_value.filter.return_value.first.return_value = None
         mock_session.commit = MagicMock()
         mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         request = MagicMock(spec=Request)
         user = {"email": "admin@test.com"}
         with pytest.raises(HTTPException) as exc_info:
             await delete_observability_query(request, query_id=999, user=user, db=mock_session)
         assert exc_info.value.status_code == 404
+        mock_session.commit.assert_not_called()
+        mock_session.close.assert_not_called()
 
 
 # ============================================================================ #
@@ -21816,13 +21925,12 @@ class TestObservabilityTraces:
     """Tests for get_observability_traces endpoint (lines 14310-14400)."""
 
     @pytest.mark.asyncio
-    async def test_traces_default_empty(self, monkeypatch, allow_permission):
+    async def test_traces_default_empty(self, allow_permission):
         mock_session = MagicMock()
         mock_query = mock_session.query.return_value.filter.return_value
         mock_query.order_by.return_value.limit.return_value.all.return_value = []
         mock_session.commit = MagicMock()
         mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
         template_resp = MagicMock()
@@ -21846,16 +21954,17 @@ class TestObservabilityTraces:
         request.app.state.templates.TemplateResponse.assert_called_once()
         call_args = request.app.state.templates.TemplateResponse.call_args
         assert call_args[0][1] == "observability_traces_list.html"
+        mock_session.commit.assert_not_called()
+        mock_session.close.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_traces_with_status_filter(self, monkeypatch, allow_permission):
+    async def test_traces_with_status_filter(self, allow_permission):
         mock_session = MagicMock()
         mock_query = mock_session.query.return_value.filter.return_value
         # status filter adds another .filter()
         mock_query.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
         mock_session.commit = MagicMock()
         mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
         template_resp = MagicMock()
@@ -21876,6 +21985,8 @@ class TestObservabilityTraces:
             db=mock_session,
         )
         assert result == template_resp
+        mock_session.commit.assert_not_called()
+        mock_session.close.assert_not_called()
 
 
 class TestObservabilityPartials:

@@ -12,6 +12,9 @@ window.createMetricsController = function() {
     error: null,
     autoRefreshInterval: null,
     visibilityHandler: null,
+    leaveHandler: null,
+    beforeUnloadHandler: null,
+    active: true,
 
     /**
      * Destroy all Chart.js instances to prevent canvas reuse errors
@@ -22,60 +25,85 @@ window.createMetricsController = function() {
       this.charts = {};
     },
 
+    isActiveView() {
+      const panel = document.getElementById('observability-panel');
+      const container = document.getElementById('metrics-container');
+      return Boolean(
+        this.active &&
+        panel &&
+        !panel.classList.contains('hidden') &&
+        container &&
+        container.style.display !== 'none'
+      );
+    },
+
     /**
      * Initialize the metrics dashboard with proper cleanup
      */
     async init() {
+      this.active = true;
+
       // Clean up any existing charts first
       this.destroyAllCharts();
 
-      // Load initial data
-      await this.loadAllMetrics();
-
-      // Start auto-refresh
-      this.startAutoRefresh();
-
-      // Handle visibility changes to pause updates when tab is hidden
-      this.visibilityHandler = () => {
-        if (document.hidden) {
-          this.stopAutoRefresh();
-        } else {
-          // Check if we're still on the observability tab
-          const panel = document.getElementById('observability-panel');
-          if (panel && !panel.classList.contains('hidden')) {
-            this.startAutoRefresh();
-            // Refresh data when tab becomes visible
-            if (!this.loading) {
-              this.loadAllMetrics();
-            }
-          }
-        }
-      };
-      document.addEventListener('visibilitychange', this.visibilityHandler);
-
-      // Listen for tab leave event to stop auto-refresh and cleanup
+      // Register cleanup before the initial request so a quick tab switch
+      // cannot leave this controller polling in the background.
       this.leaveHandler = () => {
         console.log('Metrics: received observability:leave event, stopping auto-refresh');
         this.cleanup();
       };
       document.addEventListener('observability:leave', this.leaveHandler);
 
-      // Cleanup on page unload as fallback
-      window.addEventListener('beforeunload', () => this.cleanup());
+      this.beforeUnloadHandler = () => this.cleanup();
+      window.addEventListener('beforeunload', this.beforeUnloadHandler);
+
+      // Load initial data
+      await this.loadAllMetrics();
+
+      if (!this.active) return;
+
+      // Handle visibility changes to pause updates when tab is hidden
+      this.visibilityHandler = () => {
+        if (document.hidden) {
+          this.stopAutoRefresh();
+        } else if (this.isActiveView()) {
+          this.startAutoRefresh();
+          // Refresh data when the active view becomes visible again.
+          if (!this.loading) {
+            this.loadAllMetrics();
+          }
+        }
+      };
+      document.addEventListener('visibilitychange', this.visibilityHandler);
+
+      if (this.isActiveView() && !document.hidden) {
+        this.startAutoRefresh();
+      }
     },
 
     /**
      * Cleanup resources on component destroy
      */
     cleanup() {
+      this.active = false;
       this.destroyAllCharts();
       this.stopAutoRefresh();
       if (this.visibilityHandler) {
         document.removeEventListener('visibilitychange', this.visibilityHandler);
+        this.visibilityHandler = null;
       }
       if (this.leaveHandler) {
         document.removeEventListener('observability:leave', this.leaveHandler);
+        this.leaveHandler = null;
       }
+      if (this.beforeUnloadHandler) {
+        window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+        this.beforeUnloadHandler = null;
+      }
+    },
+
+    destroy() {
+      this.cleanup();
     },
     /**
      * Load all metrics with proper guards to prevent concurrent refreshes
@@ -649,7 +677,7 @@ window.createMetricsController = function() {
 };
 </script>
 
-<div class="metrics-dashboard" x-data="createMetricsController()" x-init="init()" @destroy.window="cleanup()">
+<div class="metrics-dashboard" x-data="observabilityMetrics">
   <!-- Controls -->
   <div class="mb-6 p-4 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30">
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4">

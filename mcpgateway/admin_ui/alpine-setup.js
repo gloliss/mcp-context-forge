@@ -6,6 +6,7 @@ import { overflowMenu } from './components/overflow-menu.js';
 import { teamSelector } from './components/team-selector.js';
 import { maintenancePanel } from './components/maintenance-panel.js';
 import { apiMetricsDashboard } from './components/api-metrics-dashboard.js';
+import { observabilityDashboard } from './components/observability-dashboard.js';
 
 Alpine.data('appRoot', appRoot);
 Alpine.data('mainLayout', mainLayout);
@@ -13,6 +14,7 @@ Alpine.data('overflowMenu', overflowMenu);
 Alpine.data('teamSelector', teamSelector);
 Alpine.data('maintenancePanel', maintenancePanel);
 Alpine.data('apiMetricsDashboard', apiMetricsDashboard);
+Alpine.data('observabilityDashboard', observabilityDashboard);
 
 Alpine.magic('syncCheckbox', function () {
   return syncCheckboxFromUrl;
