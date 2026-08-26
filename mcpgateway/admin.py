@@ -1897,6 +1897,7 @@ admin_router = APIRouter(
     dependencies=[Depends(enforce_admin_csrf)],
 )
 
+# First-Party
 # Feature routers inherit the admin prefix, authentication, and CSRF policy.
 # Imported here (after enforce_admin_csrf is defined) to avoid circular imports.
 from mcpgateway.routers.api_debug import router as api_debug_router  # pylint: disable=wrong-import-position  # noqa: E402
@@ -1940,6 +1941,21 @@ def _like_contains(column, value: str):
         A SQLAlchemy binary expression suitable for ``.where()``.
     """
     return column.like("%" + _escape_like(value) + "%", escape="\\")
+
+
+def _like_startswith(column, value: str):
+    """Case-insensitive prefix match with proper LIKE wildcard escaping.
+
+    Args:
+        column: SQLAlchemy column expression (pre-wrapped with ``func.lower``
+            / ``coalesce`` as needed by the caller).
+        value: Raw search term — escaping is applied internally.
+
+    Returns:
+        A SQLAlchemy binary expression suitable for ``.where()`` or relevance
+        ordering.
+    """
+    return column.like(_escape_like(value) + "%", escape="\\")
 
 
 async def _get_user_team_ids(user: dict, db: Session) -> list:
@@ -8954,6 +8970,7 @@ async def admin_tools_partial_html(
         query = query.where(
             or_(
                 _like_contains(func.lower(DbTool.id), search_query),
+                _like_contains(func.lower(DbTool.name), search_query),
                 _like_contains(func.lower(DbTool.original_name), search_query),
                 _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
                 _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
@@ -9251,6 +9268,7 @@ async def admin_get_all_tool_ids(
         if search_query:
             search_conditions = [
                 _like_contains(func.lower(DbTool.id), search_query),
+                _like_contains(func.lower(DbTool.name), search_query),
                 _like_contains(func.lower(DbTool.original_name), search_query),
                 _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
                 _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
@@ -9408,6 +9426,7 @@ async def admin_search_tools(
     if search_query:
         search_conditions = [
             _like_contains(func.lower(DbTool.id), search_query),
+            _like_contains(func.lower(DbTool.name), search_query),
             _like_contains(func.lower(DbTool.original_name), search_query),
             _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
             _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
@@ -9422,12 +9441,14 @@ async def admin_search_tools(
     if search_query:
         query = query.order_by(
             case(
-                (func.lower(DbTool.original_name).startswith(search_query), 1),
-                (func.lower(coalesce(DbTool.custom_name, "")).startswith(search_query), 1),
-                (func.lower(coalesce(DbTool.display_name, "")).startswith(search_query), 1),
+                (func.lower(DbTool.name) == search_query, 0),
+                (_like_startswith(func.lower(DbTool.name), search_query), 1),
+                (_like_startswith(func.lower(DbTool.original_name), search_query), 1),
+                (_like_startswith(func.lower(coalesce(DbTool.custom_name, "")), search_query), 1),
+                (_like_startswith(func.lower(coalesce(DbTool.display_name, "")), search_query), 1),
                 else_=2,
             ),
-            func.lower(DbTool.original_name),
+            func.lower(DbTool.name),
         )
     else:
         query = query.order_by(func.lower(DbTool.original_name))
