@@ -1692,6 +1692,40 @@ class TestAdminToolRoutes:
         assert tool_update.headers == {}
         assert tool_update.input_schema == {"type": "object", "properties": {}}
 
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_source_managed_tool_submits_metadata_only(self, mock_update_tool, mock_request, mock_db):
+        """Source-managed form hints omit generated fields while preserving metadata and revision."""
+        form_data = FakeForm(
+            {
+                "name": "catalog.v1.Catalog.GetItem",
+                "customName": "catalog_get_item",
+                "displayName": "Get catalog item",
+                "url": "dns:///catalog:50051",
+                "description": "Locally enriched description",
+                "requestType": "GET",
+                "integrationType": "gRPC",
+                "headers": "{}",
+                "input_schema": '{"type":"object"}',
+                "annotations": '{"readOnlyHint":true}',
+                "tags": "catalog, grpc",
+                "visibility": "private",
+                "source_managed": "true",
+                "expected_version": "7",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+
+        assert result.status_code == 200
+        submitted = mock_update_tool.call_args.args[2]
+        assert submitted.expected_version == 7
+        assert submitted.custom_name == "catalog_get_item"
+        assert submitted.description == "Locally enriched description"
+        assert submitted.annotations == {"readOnlyHint": True}
+        assert [tag["label"] for tag in submitted.tags] == ["catalog", "grpc"]
+        assert not ({"name", "url", "integration_type", "request_type", "headers", "input_schema", "auth", "visibility"} & submitted.model_fields_set)
+
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_basic_auth(self, mock_register_tool, mock_request, mock_db):
         """Test adding tool with basic authentication - covers auth_type=basic branch."""

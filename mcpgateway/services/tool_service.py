@@ -58,7 +58,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import and_, delete, desc, or_, select
+from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -1142,6 +1142,59 @@ class ToolNameConflictError(ToolError):
 
 class ToolLockConflictError(ToolError):
     """Raised when a tool row is locked by another transaction."""
+
+
+class ToolVersionConflictError(ToolError):
+    """Raised when a caller attempts to update a stale tool version."""
+
+    def __init__(self, tool_id: str, expected_version: int, current_version: int):
+        """Initialize a version conflict with the expected and persisted versions.
+
+        Args:
+            tool_id: Identifier of the tool being updated.
+            expected_version: Version supplied by the caller.
+            current_version: Version currently persisted for the tool.
+        """
+        self.tool_id = tool_id
+        self.expected_version = expected_version
+        self.current_version = current_version
+        super().__init__(f"Tool {tool_id} version conflict: expected {expected_version}, current {current_version}")
+
+
+def _reserve_tool_version(db: Session, tool_id: str, expected_version: int) -> int:
+    """Atomically reserve the next Tool version with compare-and-swap semantics.
+
+    Args:
+        db: Active database session that owns the surrounding Tool update.
+        tool_id: Identifier of the Tool being updated.
+        expected_version: Persisted version required by the caller.
+
+    Returns:
+        The reserved next version.
+
+    Raises:
+        ToolVersionConflictError: If another transaction changed or removed the
+            Tool after the caller read ``expected_version``.
+    """
+    next_version = expected_version + 1
+    with db.no_autoflush:
+        result = db.execute(
+            update(DbTool)
+            .where(DbTool.id == tool_id, DbTool.version == expected_version)
+            .values(version=DbTool.version + 1)
+            .execution_options(synchronize_session=False)
+        )
+
+    # Fail closed when a driver cannot provide an exact matched-row count: the
+    # optimistic-concurrency guarantee is more important than accepting a write
+    # whose compare-and-swap result cannot be proven.
+    affected_rows = getattr(result, "rowcount", None)
+    if type(affected_rows) is not int or affected_rows != 1:
+        with db.no_autoflush:
+            latest_result = db.execute(select(DbTool.version).where(DbTool.id == tool_id)).scalar_one_or_none()
+        latest_version = latest_result if type(latest_result) is int else 0
+        raise ToolVersionConflictError(tool_id, expected_version, latest_version)
+    return next_version
 
 
 class ToolValidationError(ToolError):
@@ -2299,10 +2352,12 @@ class ToolService(BaseService):
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
 
+            requested_custom_name = getattr(tool, "custom_name", None)
+            custom_name = requested_custom_name if isinstance(requested_custom_name, str) and requested_custom_name else tool.name
             db_tool = DbTool(
                 original_name=tool.name,
-                custom_name=tool.name,
-                custom_name_slug=slugify(tool.name),
+                custom_name=custom_name,
+                custom_name_slug=slugify(custom_name),
                 display_name=tool.displayName or tool.name,
                 title=tool.title,
                 url=str(tool.url),
@@ -2772,41 +2827,71 @@ class ToolService(BaseService):
                 if conflict_strategy == "skip":
                     return {"status": "skip"}
                 if conflict_strategy == "update":
+                    semantic_changed = False
+
+                    def set_semantic_field(attribute: str, value: Any) -> None:
+                        """Assign a bulk-imported field and record a semantic change."""
+                        nonlocal semantic_changed
+                        if getattr(existing_tool, attribute, None) != value:
+                            setattr(existing_tool, attribute, value)
+                            semantic_changed = True
+
                     # Update existing tool
-                    existing_tool.display_name = tool.displayName or tool.name
-                    existing_tool.title = tool.title
-                    existing_tool.url = str(tool.url)
-                    existing_tool.description = tool.description
+                    set_semantic_field("display_name", tool.displayName or tool.name)
+                    set_semantic_field("title", tool.title)
+                    set_semantic_field("url", str(tool.url))
+                    set_semantic_field("description", tool.description)
                     if getattr(existing_tool, "original_description", None) is None:
-                        existing_tool.original_description = tool.description
-                    existing_tool.integration_type = tool.integration_type
-                    existing_tool.request_type = tool.request_type
-                    existing_tool.headers = _protect_tool_headers_for_storage(tool.headers, existing_headers=existing_tool.headers)
-                    existing_tool.input_schema = tool.input_schema
-                    existing_tool.output_schema = tool.output_schema
-                    existing_tool.annotations = tool.annotations
-                    existing_tool.jsonpath_filter = tool.jsonpath_filter
-                    existing_tool.auth_type = auth_type
-                    existing_tool.auth_value = auth_value
-                    existing_tool.tags = tool.tags or []
+                        set_semantic_field("original_description", tool.description)
+                    set_semantic_field("integration_type", tool.integration_type)
+                    set_semantic_field("request_type", tool.request_type)
+
+                    protected_headers = _protect_tool_headers_for_storage(tool.headers, existing_headers=existing_tool.headers)
+                    headers_changed = _decrypt_tool_headers_for_runtime(existing_tool.headers) != _decrypt_tool_headers_for_runtime(protected_headers)
+                    if existing_tool.headers != protected_headers:
+                        existing_tool.headers = protected_headers
+                    semantic_changed = semantic_changed or headers_changed
+
+                    set_semantic_field("input_schema", tool.input_schema)
+                    set_semantic_field("output_schema", tool.output_schema)
+                    set_semantic_field("annotations", tool.annotations)
+                    set_semantic_field("jsonpath_filter", tool.jsonpath_filter)
+                    set_semantic_field("auth_type", auth_type)
+
+                    auth_value_changed = existing_tool.auth_value != auth_value
+                    if auth_value_changed and isinstance(existing_tool.auth_value, str) and isinstance(auth_value, str):
+                        try:
+                            auth_value_changed = decode_auth(existing_tool.auth_value) != decode_auth(auth_value)
+                        except Exception:  # pragma: no cover - defensive fallback for malformed legacy values
+                            pass
+                    if existing_tool.auth_value != auth_value:
+                        existing_tool.auth_value = auth_value
+                    semantic_changed = semantic_changed or auth_value_changed
+
+                    set_semantic_field("tags", tool.tags or [])
+
+                    # Update REST-specific fields if applicable
+                    if tool.integration_type == "REST":
+                        set_semantic_field("base_url", tool.base_url)
+                        set_semantic_field("path_template", tool.path_template)
+                        set_semantic_field("query_mapping", tool.query_mapping)
+                        set_semantic_field("header_mapping", tool.header_mapping)
+                        set_semantic_field("timeout_ms", tool.timeout_ms)
+                        set_semantic_field("expose_passthrough", tool.expose_passthrough if tool.expose_passthrough is not None else True)
+                        set_semantic_field("allowlist", tool.allowlist)
+                        set_semantic_field("plugin_chain_pre", tool.plugin_chain_pre)
+                        set_semantic_field("plugin_chain_post", tool.plugin_chain_post)
+
                     existing_tool.modified_by = created_by
                     existing_tool.modified_from_ip = created_from_ip
                     existing_tool.modified_via = created_via
                     existing_tool.modified_user_agent = created_user_agent
                     existing_tool.updated_at = datetime.now(timezone.utc)
-                    existing_tool.version = (existing_tool.version or 1) + 1
 
-                    # Update REST-specific fields if applicable
-                    if tool.integration_type == "REST":
-                        existing_tool.base_url = tool.base_url
-                        existing_tool.path_template = tool.path_template
-                        existing_tool.query_mapping = tool.query_mapping
-                        existing_tool.header_mapping = tool.header_mapping
-                        existing_tool.timeout_ms = tool.timeout_ms
-                        existing_tool.expose_passthrough = tool.expose_passthrough if tool.expose_passthrough is not None else True
-                        existing_tool.allowlist = tool.allowlist
-                        existing_tool.plugin_chain_pre = tool.plugin_chain_pre
-                        existing_tool.plugin_chain_post = tool.plugin_chain_post
+                    persisted_version = getattr(existing_tool, "version", None)
+                    current_version = persisted_version if type(persisted_version) is int and persisted_version >= 0 else 0
+                    if semantic_changed or current_version == 0:
+                        existing_tool.version = current_version + 1
 
                     return {"status": "update", "tool": existing_tool}
 
@@ -7506,6 +7591,7 @@ class ToolService(BaseService):
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        source_sync: bool = False,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -7519,6 +7605,7 @@ class ToolService(BaseService):
             modified_via (Optional[str]): Modification method (ui, api).
             modified_user_agent (Optional[str]): User agent of modification request.
             user_email (Optional[str]): Email of user performing update (for ownership check).
+            source_sync (bool): Allow a trusted parent-service synchronization to update generated fields.
 
         Returns:
             The updated ToolRead object.
@@ -7528,6 +7615,7 @@ class ToolService(BaseService):
             PermissionError: If user doesn't own the tool.
             IntegrityError: If there is a database integrity error.
             ToolNameConflictError: If a tool with the same name already exists.
+            ToolVersionConflictError: If the caller's expected version is stale.
             ToolError: For other update errors.
 
         Examples:
@@ -7556,17 +7644,90 @@ class ToolService(BaseService):
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
-            old_tool_name = tool.name
-            old_gateway_id = tool.gateway_id
-
-            # Check ownership if user_email provided
-            if user_email:
+            # Trusted parent-service synchronization performs its own
+            # resource-level authorization before calling this method. Keep
+            # the actor identity for audit while avoiding a second child-row
+            # ownership check that would reject legitimate team managers.
+            if user_email and not source_sync:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
                     raise PermissionError("Only the owner can update this tool")
+
+                # Team-role ownership checks can end their read transaction.
+                # Reacquire the Tool lock and refresh the identity before reading
+                # its version or applying changes.
+                tool = get_for_update(db, DbTool, tool_id)
+                if not tool:
+                    raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
+            old_tool_name = tool.name
+            old_gateway_id = tool.gateway_id
+
+            persisted_version = getattr(tool, "version", None)
+            current_version = persisted_version if type(persisted_version) is int and persisted_version >= 0 else 0
+            expected_version = getattr(tool_update, "expected_version", None)
+            # ``type`` is intentional: test doubles can expose arbitrary MagicMock
+            # attributes, and booleans should not be treated as integer versions.
+            if type(expected_version) is int:
+                persisted_version_result = db.execute(select(DbTool.version).where(DbTool.id == tool_id)).scalar_one_or_none()
+                if type(persisted_version_result) is int and persisted_version_result >= 0:
+                    current_version = persisted_version_result
+            if type(expected_version) is int and expected_version != current_version:
+                raise ToolVersionConflictError(str(tool_id), expected_version, current_version)
+
+            fields_set = getattr(tool_update, "model_fields_set", set())
+            provided_fields = set(fields_set) if isinstance(fields_set, (set, frozenset)) else set()
+            source_managed = bool(
+                getattr(tool, "gateway_id", None)
+                or getattr(tool, "grpc_service_id", None)
+                or getattr(tool, "sql_table_id", None)
+                or (getattr(tool, "integration_type", "REST") or "REST") != "REST"
+            )
+            source_managed_fields = {
+                "name",
+                "url",
+                "integration_type",
+                "request_type",
+                "headers",
+                "input_schema",
+                "output_schema",
+                "auth",
+                "auth_headers",
+                "gateway_id",
+                "deprecated",
+                "visibility",
+                "base_url",
+                "path_template",
+                "query_mapping",
+                "header_mapping",
+                "timeout_ms",
+                "expose_passthrough",
+                "allowlist",
+                "plugin_chain_pre",
+                "plugin_chain_post",
+            }
+            blocked_fields = sorted(provided_fields & source_managed_fields) if source_managed and not source_sync else []
+            # Metadata enrichment clients historically echo the immutable Tool
+            # name alongside a changed description. An identical source-owned
+            # value is a no-op, not an attempt to take ownership of the field.
+            if "name" in blocked_fields and tool_update.name == tool.name:
+                blocked_fields.remove("name")
+            if blocked_fields:
+                raise ToolValidationError(
+                    "Generated Tool fields are managed by the source service and cannot be edited directly: " + ", ".join(blocked_fields)
+                )
+
+            semantic_changed = False
+
+            def set_semantic_field(attribute: str, value: Any) -> None:
+                """Assign a persisted Tool field and record a semantic change."""
+                nonlocal semantic_changed
+                if getattr(tool, attribute, None) != value:
+                    setattr(tool, attribute, value)
+                    semantic_changed = True
 
             # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
             # Convert to string to handle both string and non-string inputs
@@ -7614,8 +7775,8 @@ class ToolService(BaseService):
                     custom_name_ref = tool.custom_name  # custom_name stays unchanged
                 self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
-                    tool.custom_name = tool_update.name
-                tool.name = tool_update.name
+                    set_semantic_field("custom_name", tool_update.name)
+                set_semantic_field("name", tool_update.name)
 
             # Check for conflicts when visibility changes without a name change
             if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing:
@@ -7623,45 +7784,82 @@ class ToolService(BaseService):
                 self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
 
             if tool_update.custom_name is not None:
-                tool.custom_name = tool_update.custom_name
+                set_semantic_field("custom_name", tool_update.custom_name)
             if tool_update.displayName is not None:
-                tool.display_name = tool_update.displayName
+                set_semantic_field("display_name", tool_update.displayName)
             if tool_update.url is not None:
-                tool.url = str(tool_update.url)
+                set_semantic_field("url", str(tool_update.url))
             if tool_update.description is not None:
-                tool.description = tool_update.description
+                set_semantic_field("description", tool_update.description)
             if tool_update.title is not None:
-                tool.title = tool_update.title
+                set_semantic_field("title", tool_update.title)
             if tool_update.integration_type is not None:
-                tool.integration_type = tool_update.integration_type
+                set_semantic_field("integration_type", tool_update.integration_type)
             if tool_update.request_type is not None:
-                tool.request_type = tool_update.request_type
+                set_semantic_field("request_type", tool_update.request_type)
             if tool_update.headers is not None:
-                tool.headers = _protect_tool_headers_for_storage(tool_update.headers, existing_headers=tool.headers)
+                protected_headers = _protect_tool_headers_for_storage(tool_update.headers, existing_headers=tool.headers)
+                headers_changed = _decrypt_tool_headers_for_runtime(tool.headers) != _decrypt_tool_headers_for_runtime(protected_headers)
+                if headers_changed:
+                    tool.headers = protected_headers
+                    semantic_changed = True
             if tool_update.input_schema is not None:
-                tool.input_schema = tool_update.input_schema
+                set_semantic_field("input_schema", tool_update.input_schema)
             if tool_update.output_schema is not None:
-                tool.output_schema = tool_update.output_schema
+                set_semantic_field("output_schema", tool_update.output_schema)
             if tool_update.annotations is not None:
-                tool.annotations = tool_update.annotations
+                set_semantic_field("annotations", tool_update.annotations)
             tool_update_extension_metadata = optional_extension_metadata(getattr(tool_update, "extension_metadata", None))
             if tool_update_extension_metadata is not None:
                 validate_extension_metadata(tool_update_extension_metadata)
-                tool.extension_metadata = tool_update_extension_metadata
+                set_semantic_field("extension_metadata", tool_update_extension_metadata)
             if tool_update.jsonpath_filter is not None:
-                tool.jsonpath_filter = tool_update.jsonpath_filter
+                set_semantic_field("jsonpath_filter", tool_update.jsonpath_filter)
             if tool_update.visibility is not None:
-                tool.visibility = tool_update.visibility
+                set_semantic_field("visibility", tool_update.visibility)
 
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
-                    tool.auth_type = tool_update.auth.auth_type
+                    set_semantic_field("auth_type", tool_update.auth.auth_type)
                 if tool_update.auth.auth_value is not None:
-                    tool.auth_value = tool_update.auth.auth_value
+                    auth_value_changed = tool.auth_value != tool_update.auth.auth_value
+                    if auth_value_changed and isinstance(tool.auth_value, str) and isinstance(tool_update.auth.auth_value, str):
+                        try:
+                            auth_value_changed = decode_auth(tool.auth_value) != decode_auth(tool_update.auth.auth_value)
+                        except Exception:  # pragma: no cover - defensive fallback for malformed legacy values
+                            pass
+                    if auth_value_changed:
+                        tool.auth_value = tool_update.auth.auth_value
+                        semantic_changed = True
 
             # Update tags if provided
             if tool_update.tags is not None:
-                tool.tags = tool_update.tags
+                set_semantic_field("tags", tool_update.tags)
+
+            deprecated_value = getattr(tool_update, "deprecated", None)
+            if deprecated_value is not None:
+                set_semantic_field("deprecated", deprecated_value)
+
+            for field_name in (
+                "base_url",
+                "path_template",
+                "query_mapping",
+                "header_mapping",
+                "timeout_ms",
+                "allowlist",
+                "plugin_chain_pre",
+                "plugin_chain_post",
+            ):
+                value = getattr(tool_update, field_name, None)
+                if value is not None:
+                    set_semantic_field(field_name, value)
+            if "expose_passthrough" in provided_fields and tool_update.expose_passthrough is not None:
+                set_semantic_field("expose_passthrough", tool_update.expose_passthrough)
+
+            # A fully identical update is deliberately side-effect free: it does
+            # not rewrite timestamps/metadata, publish events, audit, or flush caches.
+            if not semantic_changed and current_version > 0:
+                return self.convert_tool_to_read(tool, requesting_user_email=getattr(tool, "owner_email", None))
 
             # Update modification metadata
             if modified_by is not None:
@@ -7673,11 +7871,15 @@ class ToolService(BaseService):
             if modified_user_agent is not None:
                 tool.modified_user_agent = modified_user_agent
 
-            # Increment version
-            if hasattr(tool, "version") and tool.version is not None:
-                tool.version += 1
-            else:
-                tool.version = 1
+            # Version tracks persisted semantic changes, not request attempts or
+            # modification metadata updates. When a caller supplied an expected
+            # version, reserve the next revision with a compare-and-swap UPDATE.
+            # This remains correct on SQLite, where SELECT ... FOR UPDATE is not
+            # available, and prevents two matching requests from both succeeding.
+            next_version = current_version + 1
+            if type(expected_version) is int:
+                next_version = _reserve_tool_version(db, str(tool_id), expected_version)
+            tool.version = next_version
             logger.info("Update tool: %s (output_schema: %s)", tool.name, tool.output_schema)
 
             tool.updated_at = datetime.now(timezone.utc)
@@ -7812,6 +8014,25 @@ class ToolService(BaseService):
                 error=tnce,
             )
             raise tnce
+        except ToolVersionConflictError as tvce:
+            db.rollback()
+            logger.warning("Tool version conflict during update: %s", tvce)
+            structured_logger.log(
+                level="WARNING",
+                message="Tool update rejected due to version conflict",
+                event_type="tool_version_conflict",
+                component="tool_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=tvce,
+                custom_fields={
+                    "expected_version": tvce.expected_version,
+                    "current_version": tvce.current_version,
+                },
+            )
+            raise tvce
         except Exception as ex:
             db.rollback()
 
@@ -8262,6 +8483,7 @@ class ToolService(BaseService):
             modified_from_ip=modified_from_ip,
             modified_via=modified_via or "a2a_sync",
             modified_user_agent=modified_user_agent,
+            source_sync=True,
         )
 
     async def delete_tool_from_a2a_agent(self, db: Session, agent: DbA2AAgent, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:

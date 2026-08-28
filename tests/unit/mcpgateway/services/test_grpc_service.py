@@ -640,6 +640,7 @@ class TestGrpcService:
 
     def test_sync_tools_creates_tools_from_discovered_methods(self, service, mock_db, sample_db_service):
         """Test that _sync_tools_from_reflection creates Tool records for discovered methods."""
+        sample_db_service.active_artifact_id = "artifact-current"
         sample_db_service.discovered_services = {
             "test.TestService": {
                 "name": "test.TestService",
@@ -686,6 +687,7 @@ class TestGrpcService:
             tool = call[0][0]
             assert tool.integration_type == "gRPC"
             assert tool.grpc_service_id == sample_db_service.id
+            assert tool.grpc_schema_artifact_id == "artifact-current"
             assert tool.created_via == "grpc-schema-sync"
             assert tool.federation_source == sample_db_service.name
             assert tool.url == sample_db_service.target
@@ -693,6 +695,7 @@ class TestGrpcService:
 
     def test_sync_tools_updates_existing_tools(self, service, mock_db, sample_db_service):
         """Test that _sync_tools_from_reflection updates existing tools when description changes."""
+        sample_db_service.active_artifact_id = "artifact-current"
         sample_db_service.discovered_services = {
             "test.TestService": {
                 "name": "test.TestService",
@@ -720,6 +723,7 @@ class TestGrpcService:
         existing_tool.description = "gRPC method test.TestService.GetItem"
         existing_tool.url = "old-host:50051"
         existing_tool.input_schema = {}
+        existing_tool.grpc_schema_artifact_id = "artifact-previous"
 
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [existing_tool]
@@ -734,9 +738,11 @@ class TestGrpcService:
 
         # Existing tool should have been updated
         assert existing_tool.url == "new-host:50051"
+        assert existing_tool.grpc_schema_artifact_id == "artifact-current"
 
     def test_sync_tools_removes_stale_tools(self, service, mock_db, sample_db_service):
         """Test that _sync_tools_from_reflection disables tools for methods that disappeared."""
+        sample_db_service.active_artifact_id = "artifact-current"
         # Catalog has one method remaining; the other method vanished.
         sample_db_service.discovered_services = {
             "test.TestService": {
@@ -753,6 +759,7 @@ class TestGrpcService:
         stale_tool = MagicMock(spec=DbTool)
         stale_tool.id = "stale-tool-id"
         stale_tool.original_name = "test.TestService.OldMethod"
+        stale_tool.grpc_schema_artifact_id = "artifact-previous"
 
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [stale_tool]
@@ -766,6 +773,85 @@ class TestGrpcService:
         assert stale_tool.enabled is False
         assert stale_tool.deprecated is True
         assert stale_tool.reachable is False
+        assert stale_tool.grpc_schema_artifact_id == "artifact-previous"
+
+    def test_sync_tools_client_streaming_change_binds_active_artifact(self, service, mock_db, sample_db_service):
+        """A method that becomes client-streaming records the artifact that changed it."""
+        sample_db_service.active_artifact_id = "artifact-current"
+        sample_db_service.discovered_services = {
+            "test.TestService": {
+                "name": "test.TestService",
+                "methods": [
+                    {
+                        "name": "UploadItems",
+                        "input_type": ".test.UploadItemsRequest",
+                        "output_type": ".test.UploadItemsResponse",
+                        "client_streaming": True,
+                        "server_streaming": False,
+                    }
+                ],
+            }
+        }
+
+        existing_tool = MagicMock(spec=DbTool)
+        existing_tool.original_name = "test.TestService.UploadItems"
+        existing_tool.enabled = True
+        existing_tool.deprecated = False
+        existing_tool.grpc_schema_artifact_id = "artifact-previous"
+        existing_tool.version = 1
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [existing_tool]
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        assert existing_tool.enabled is False
+        assert existing_tool.deprecated is True
+        assert existing_tool.grpc_schema_artifact_id == "artifact-current"
+        assert existing_tool.version == 2
+
+    def test_sync_tools_rebinds_artifact_when_projected_schema_is_unchanged(self, service, mock_db, sample_db_service):
+        """A new wire descriptor creates a Tool revision even when JSON projection is identical."""
+        method = {
+            "name": "GetItem",
+            "input_type": ".test.GetItemRequest",
+            "output_type": ".test.GetItemResponse",
+            "client_streaming": False,
+            "server_streaming": False,
+            "input_schema": {"type": "object", "properties": {"id": {"type": "string"}}},
+            "output_schema": {"type": "object", "properties": {"value": {"type": "string"}}},
+            "request_example": {"id": ""},
+        }
+        sample_db_service.active_artifact_id = "artifact-current"
+        sample_db_service.discovered_services = {"test.TestService": {"name": "test.TestService", "methods": [method]}}
+
+        existing_tool = MagicMock(spec=DbTool)
+        existing_tool.original_name = "test.TestService.GetItem"
+        existing_tool.original_description = "gRPC method test.TestService.GetItem"
+        existing_tool.description = existing_tool.original_description
+        existing_tool.input_schema = {
+            **method["input_schema"],
+            "x-grpc-input-type": method["input_type"],
+            "x-grpc-output-type": method["output_type"],
+            "x-grpc-client-streaming": False,
+            "x-grpc-server-streaming": False,
+            "examples": [method["request_example"]],
+        }
+        existing_tool.output_schema = method["output_schema"]
+        existing_tool.url = sample_db_service.target
+        existing_tool.visibility = sample_db_service.visibility
+        existing_tool.team_id = sample_db_service.team_id
+        existing_tool.owner_email = sample_db_service.owner_email
+        existing_tool.enabled = True
+        existing_tool.deprecated = False
+        existing_tool.reachable = True
+        existing_tool.grpc_schema_artifact_id = "artifact-previous"
+        existing_tool.version = 7
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [existing_tool]
+
+        changed = service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        assert changed == [existing_tool]
+        assert existing_tool.grpc_schema_artifact_id == "artifact-current"
+        assert existing_tool.version == 8
 
     def test_sync_tools_empty_discovered_services(self, service, mock_db, sample_db_service):
         """Test _sync_tools_from_reflection with empty discovered services and no existing tools."""
@@ -1348,7 +1434,9 @@ class TestReflectionPublicationProtection:
         test_db.refresh(service)
         hash1 = service.active_schema_hash
         artifact1_id = service.active_artifact_id
-        tool_ids = {tool.original_name: tool.id for tool in test_db.query(DbTool).filter_by(grpc_service_id=service.id).all()}
+        original_tools = test_db.query(DbTool).filter_by(grpc_service_id=service.id).all()
+        tool_ids = {tool.original_name: tool.id for tool in original_tools}
+        tool_versions = {tool.original_name: tool.version for tool in original_tools}
         assert set(tool_ids) == {"testpkg.TestService.GetItem", "testpkg.TestService.ListItems"}
         assert test_db.query(GrpcSchemaArtifact).filter_by(grpc_service_id=service.id).count() == 1
 
@@ -1370,6 +1458,8 @@ class TestReflectionPublicationProtection:
         for tool in tools:
             if tool.original_name in tool_ids:
                 assert tool.id == tool_ids[tool.original_name]  # Tool ID stability
+                assert tool.version == tool_versions[tool.original_name] + 1
+            assert tool.grpc_schema_artifact_id == service.active_artifact_id
             assert tool.enabled is True
 
     @pytest.mark.asyncio

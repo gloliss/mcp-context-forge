@@ -1,10 +1,10 @@
 import { AppState } from "./appState.js";
 import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
-import { escapeAttrValue } from "./security.js";
 import { updateEditToolRequestTypes } from "./formFieldHandlers.js";
 import { getSelectedGatewayIds } from "./gateways.js";
 import { closeModal, openModal } from "./modals.js";
 import {
+  escapeAttrValue,
   escapeHtml,
   safeSetInnerHTML,
   validateInputName,
@@ -28,6 +28,787 @@ import {
   updateEditToolUrl,
 } from "./utils.js";
 
+const SOURCE_MANAGED_TOOL_TYPES = new Set(["MCP", "A2A", "GRPC", "SQL"]);
+const TOOL_DOCUMENT_KINDS = new Set(["definition", "source"]);
+const TOOL_PACKAGE_FILE_SUFFIX = ".toolpkg.zip";
+const TOOL_PACKAGE_CONFLICT_STRATEGIES = new Set(["skip", "update", "fail"]);
+const toolDocumentCache = new Map();
+const toolDocumentRequests = new Map();
+let pendingToolPackageFile = null;
+let pendingToolPackagePreview = null;
+let pendingToolPackagePreviewFile = null;
+let toolPackagePreviewRequestVersion = 0;
+
+/**
+ * Return true when the tool definition is generated from another source.
+ * Generated fields must be changed at that source instead of through the
+ * ordinary REST-tool editor.
+ */
+export const isSourceManagedTool = function (tool) {
+  if (!tool || typeof tool !== "object") {
+    return false;
+  }
+
+  const integrationType = String(
+    tool.integrationType || tool.integration_type || ""
+  ).toUpperCase();
+
+  return (
+    SOURCE_MANAGED_TOOL_TYPES.has(integrationType) ||
+    Boolean(
+      tool.gatewayId ||
+        tool.gateway_id ||
+        tool.grpcServiceId ||
+        tool.grpc_service_id ||
+        tool.sqlTableId ||
+        tool.sql_table_id
+    )
+  );
+};
+
+const unwrapToolPayload = function (payload) {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    !payload.id &&
+    payload.tool &&
+    typeof payload.tool === "object"
+  ) {
+    return payload.tool;
+  }
+  return payload;
+};
+
+const getToolDocumentCacheKey = function (toolId, kind) {
+  return `${String(toolId)}:${kind}`;
+};
+
+const clearToolDocumentCache = function (toolId) {
+  TOOL_DOCUMENT_KINDS.forEach((kind) => {
+    const cacheKey = getToolDocumentCacheKey(toolId, kind);
+    toolDocumentCache.delete(cacheKey);
+    toolDocumentRequests.delete(cacheKey);
+  });
+};
+
+const stringifyToolDocument = function (payload) {
+  if (typeof payload === "string") {
+    try {
+      return JSON.stringify(JSON.parse(payload), null, 2);
+    } catch (_error) {
+      return payload;
+    }
+  }
+
+  const serialized = JSON.stringify(payload, null, 2);
+  return serialized === undefined ? "null" : serialized;
+};
+
+const updateToolDocumentPanel = function (
+  container,
+  toolId,
+  kind,
+  status,
+  content = null
+) {
+  if (!container) {
+    return;
+  }
+
+  // A slow response for a previously viewed tool must not overwrite the
+  // currently open tool modal.
+  if (
+    container.dataset.toolId &&
+    container.dataset.toolId !== String(toolId)
+  ) {
+    return;
+  }
+
+  const statusElement = container.querySelector(
+    `[data-tool-document-status="${kind}"]`
+  );
+  const contentElement = container.querySelector(
+    `[data-tool-document-content="${kind}"]`
+  );
+
+  if (statusElement) {
+    statusElement.textContent = status;
+  }
+  if (contentElement && content !== null) {
+    // Source and definition payloads are untrusted data. Keep them as text so
+    // tool files cannot inject markup or scripts into the Admin UI.
+    contentElement.textContent = content;
+  }
+};
+
+/**
+ * Lazily load the canonical definition or source metadata for a tool.
+ */
+export const loadToolDocument = async function (
+  toolId,
+  kind,
+  container = safeGetElement("tool-details")
+) {
+  if (!TOOL_DOCUMENT_KINDS.has(kind)) {
+    throw new Error(`Unsupported tool document kind: ${kind}`);
+  }
+
+  const cacheKey = getToolDocumentCacheKey(toolId, kind);
+  const cached = toolDocumentCache.get(cacheKey);
+  if (cached !== undefined) {
+    updateToolDocumentPanel(container, toolId, kind, "Loaded", cached);
+    return cached;
+  }
+
+  const pendingRequest = toolDocumentRequests.get(cacheKey);
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  updateToolDocumentPanel(container, toolId, kind, "Loading…", "");
+
+  const request = (async () => {
+    try {
+      const response = await fetchWithTimeout(
+        `${window.ROOT_PATH}/admin/tools/${encodeURIComponent(toolId)}/${kind}`
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const content = stringifyToolDocument(await response.json());
+      toolDocumentCache.set(cacheKey, content);
+      updateToolDocumentPanel(container, toolId, kind, "Loaded", content);
+      return content;
+    } catch (error) {
+      console.error(`Error loading tool ${kind}:`, error);
+      updateToolDocumentPanel(
+        container,
+        toolId,
+        kind,
+        `Unable to load ${kind}`,
+        ""
+      );
+      showErrorMessage(handleFetchError(error, `load tool ${kind}`));
+      return null;
+    } finally {
+      toolDocumentRequests.delete(cacheKey);
+    }
+  })();
+
+  toolDocumentRequests.set(cacheKey, request);
+  return request;
+};
+
+/**
+ * Activate a Tool detail tab and lazily fetch its document, if applicable.
+ */
+export const showToolDetailsTab = async function (
+  toolId,
+  tabName,
+  container = safeGetElement("tool-details")
+) {
+  if (!container || !["overview", "definition", "source"].includes(tabName)) {
+    return null;
+  }
+
+  container.querySelectorAll("[data-tool-details-tab]").forEach((button) => {
+    const active = button.dataset.toolDetailsTab === tabName;
+    button.setAttribute("aria-selected", String(active));
+    button.classList.toggle("border-indigo-500", active);
+    button.classList.toggle("text-indigo-600", active);
+    button.classList.toggle("dark:text-indigo-400", active);
+    button.classList.toggle("border-transparent", !active);
+    button.classList.toggle("text-gray-500", !active);
+  });
+
+  container.querySelectorAll("[data-tool-details-panel]").forEach((panel) => {
+    const active = panel.dataset.toolDetailsPanel === tabName;
+    panel.classList.toggle("hidden", !active);
+    panel.setAttribute("aria-hidden", String(!active));
+  });
+
+  if (TOOL_DOCUMENT_KINDS.has(tabName)) {
+    return loadToolDocument(toolId, tabName, container);
+  }
+  return null;
+};
+
+/**
+ * Copy the canonical, secret-free Tool definition to the clipboard.
+ */
+export const copyToolDefinition = async function (
+  toolId,
+  container = safeGetElement("tool-details")
+) {
+  const content = await loadToolDocument(toolId, "definition", container);
+  if (content === null) {
+    return false;
+  }
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content);
+      showSuccessMessage("Tool definition copied to clipboard");
+      return true;
+    } catch (error) {
+      console.warn("Clipboard API copy failed, trying fallback:", error);
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = content;
+  textarea.setAttribute("readonly", "readonly");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    if (typeof document.execCommand === "function" && document.execCommand("copy")) {
+      showSuccessMessage("Tool definition copied to clipboard");
+      return true;
+    }
+  } catch (error) {
+    console.warn("Fallback copy failed:", error);
+  } finally {
+    textarea.remove();
+  }
+
+  showErrorMessage("Unable to copy the Tool definition");
+  return false;
+};
+
+const getToolExportFilename = function (
+  response,
+  toolId,
+  fallback = `tool-${String(toolId)}.json`
+) {
+  const contentDisposition = response.headers?.get?.("Content-Disposition");
+  let filename = fallback;
+
+  if (contentDisposition) {
+    const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/i);
+    const candidate = encodedMatch?.[1] || filenameMatch?.[1];
+    if (candidate) {
+      try {
+        filename = encodedMatch ? decodeURIComponent(candidate) : candidate;
+      } catch (_error) {
+        filename = candidate;
+      }
+    }
+  }
+
+  // Browsers already discard paths for downloads, but normalizing here keeps
+  // server-provided filenames predictable and prevents path-looking names.
+  return filename.replace(/[\\/]/g, "_").trim() || "tool-export.json";
+};
+
+/**
+ * Download the backend-produced Tool export bundle.
+ */
+export const exportTool = async function (toolId) {
+  try {
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/tools/${encodeURIComponent(toolId)}/export`
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = getToolExportFilename(response, toolId);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(objectUrl);
+    showSuccessMessage(`Tool exported as ${anchor.download}`);
+    return true;
+  } catch (error) {
+    console.error("Error exporting tool:", error);
+    showErrorMessage(handleFetchError(error, "export tool"));
+    return false;
+  }
+};
+
+/**
+ * Download one Tool as a dependency-aware package. For gRPC Tools this
+ * includes the immutable descriptor artifact needed to regenerate the Tool.
+ */
+export const exportToolPackage = async function (toolId) {
+  try {
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/tools/export/package`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/zip",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tool_ids: [String(toolId)] }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = getToolExportFilename(
+      response,
+      toolId,
+      `tool-${String(toolId)}.toolpkg.zip`
+    );
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(objectUrl);
+    showSuccessMessage(`Tool package exported as ${anchor.download}`);
+    return true;
+  } catch (error) {
+    console.error("Error exporting Tool package:", error);
+    showErrorMessage(handleFetchError(error, "export Tool package"));
+    return false;
+  }
+};
+
+const setToolPackageStatus = function (message, tone = "info") {
+  const statusElement = document.getElementById("tool-package-status");
+  if (!statusElement) {
+    return;
+  }
+
+  const toneClasses = {
+    error:
+      "border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200",
+    success:
+      "border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200",
+    info: "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200",
+  };
+  statusElement.className = `rounded-md border px-3 py-2 text-sm ${toneClasses[tone] || toneClasses.info}`;
+  statusElement.textContent = message;
+};
+
+const clearToolPackageStatus = function () {
+  const statusElement = document.getElementById("tool-package-status");
+  if (statusElement) {
+    statusElement.className = "hidden";
+    statusElement.textContent = "";
+  }
+};
+
+const setToolPackageButtonBusy = function (button, busy, busyLabel) {
+  if (!button) {
+    return;
+  }
+
+  if (!button.dataset.defaultLabel) {
+    button.dataset.defaultLabel = button.textContent.trim();
+  }
+  button.textContent = busy ? busyLabel : button.dataset.defaultLabel;
+  button.disabled = busy;
+};
+
+const appendToolPackageDetail = function (container, label, value) {
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+
+  const detail = document.createElement("p");
+  detail.className = "text-xs text-gray-600 dark:text-gray-400 break-words";
+  const labelElement = document.createElement("span");
+  labelElement.className = "font-medium text-gray-700 dark:text-gray-300";
+  labelElement.textContent = `${label}: `;
+  detail.appendChild(labelElement);
+  detail.appendChild(document.createTextNode(String(value)));
+  container.appendChild(detail);
+};
+
+const renderToolPackagePreview = function (preview) {
+  const previewElement = document.getElementById("tool-package-preview");
+  if (!previewElement) {
+    return;
+  }
+
+  previewElement.replaceChildren();
+  previewElement.classList.remove("hidden");
+
+  const items = Array.isArray(preview?.items) ? preview.items : [];
+  const summary = document.createElement("div");
+  summary.className =
+    "mb-3 rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+  summary.textContent = `${preview?.ready ? "Ready to import" : "Import blocked"} · ${items.length} item${items.length === 1 ? "" : "s"}`;
+  previewElement.appendChild(summary);
+
+  const itemList = document.createElement("div");
+  itemList.className = "max-h-72 space-y-2 overflow-y-auto";
+
+  items.forEach((item, index) => {
+    const itemElement = document.createElement("article");
+    itemElement.className =
+      "rounded-md border border-gray-200 p-3 dark:border-gray-700";
+
+    const heading = document.createElement("div");
+    heading.className = "mb-1 flex items-start justify-between gap-3";
+    const name = document.createElement("h5");
+    name.className =
+      "min-w-0 break-words text-sm font-medium text-gray-900 dark:text-gray-100";
+    name.textContent = String(item?.name || `Package item ${index + 1}`);
+    const state = document.createElement("span");
+    const blocked = String(item?.status || "").toLowerCase() === "blocked";
+    state.className = blocked
+      ? "shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900 dark:text-red-200"
+      : "shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200";
+    state.textContent = String(item?.status || "ready");
+    heading.append(name, state);
+    itemElement.appendChild(heading);
+
+    appendToolPackageDetail(
+      itemElement,
+      "Type",
+      item?.integrationType || item?.integration_type
+    );
+    appendToolPackageDetail(itemElement, "Action", item?.action);
+    appendToolPackageDetail(itemElement, "Service", item?.serviceName);
+    appendToolPackageDetail(itemElement, "Schema hash", item?.schemaHash);
+    appendToolPackageDetail(itemElement, "Reason", item?.reason);
+
+    if (Array.isArray(item?.generatedTools) && item.generatedTools.length > 0) {
+      appendToolPackageDetail(
+        itemElement,
+        "Generated Tools",
+        item.generatedTools.join(", ")
+      );
+    }
+    if (Array.isArray(item?.warnings) && item.warnings.length > 0) {
+      appendToolPackageDetail(itemElement, "Warnings", item.warnings.join("; "));
+    }
+
+    itemList.appendChild(itemElement);
+  });
+
+  if (items.length === 0) {
+    const emptyMessage = document.createElement("p");
+    emptyMessage.className = "text-sm text-gray-500 dark:text-gray-400";
+    emptyMessage.textContent = "The package preview did not contain any items.";
+    itemList.appendChild(emptyMessage);
+  }
+
+  previewElement.appendChild(itemList);
+};
+
+const renderToolPackageImportResult = function (result) {
+  const resultElement = document.getElementById("tool-package-result");
+  if (!resultElement) {
+    return;
+  }
+
+  resultElement.replaceChildren();
+  resultElement.classList.remove("hidden");
+
+  const heading = document.createElement("h4");
+  heading.className = "mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100";
+  heading.textContent = "Import completed";
+  resultElement.appendChild(heading);
+
+  const statistics = [
+    ["gRPC services", result?.createdServices],
+    ["Synced gRPC Tools", result?.syncedGrpcTools],
+    ["Created Tools", result?.createdTools],
+    ["Updated Tools", result?.updatedTools],
+    ["Skipped Tools", result?.skippedTools],
+  ];
+  const grid = document.createElement("dl");
+  grid.className = "grid grid-cols-2 gap-2 sm:grid-cols-5";
+  statistics.forEach(([label, value]) => {
+    const card = document.createElement("div");
+    card.className =
+      "rounded-md border border-gray-200 bg-white p-2 text-center dark:border-gray-700 dark:bg-gray-900";
+    const count = document.createElement("dd");
+    count.className = "text-lg font-semibold text-indigo-600 dark:text-indigo-400";
+    count.textContent = String(Number.isFinite(Number(value)) ? Number(value) : 0);
+    const term = document.createElement("dt");
+    term.className = "text-xs text-gray-500 dark:text-gray-400";
+    term.textContent = label;
+    card.append(count, term);
+    grid.appendChild(card);
+  });
+  resultElement.appendChild(grid);
+
+  if (result?.bundleHash) {
+    const hash = document.createElement("p");
+    hash.className = "mt-3 break-all text-xs text-gray-500 dark:text-gray-400";
+    hash.textContent = `Bundle hash: ${result.bundleHash}`;
+    resultElement.appendChild(hash);
+  }
+};
+
+const getToolPackageErrorMessage = function (response, payload, action) {
+  const detail = payload?.detail || payload?.message;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+  return `Unable to ${action} package (HTTP ${response.status})`;
+};
+
+const postToolPackage = async function (path, file, action) {
+  const response = await fetchWithTimeout(`${window.ROOT_PATH}${path}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/zip",
+    },
+    body: file,
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_error) {
+    // The status below still gives a useful error if a proxy returned HTML or
+    // another non-JSON response.
+  }
+
+  if (!response.ok) {
+    throw new Error(getToolPackageErrorMessage(response, payload, action));
+  }
+  if (!payload || typeof payload !== "object") {
+    throw new Error(`The ${action} response was not valid JSON`);
+  }
+  return payload;
+};
+
+const refreshToolTableAfterPackageImport = function () {
+  const inactiveToggle = document.getElementById("show-inactive-tools");
+  if (inactiveToggle && window.htmx?.trigger) {
+    window.htmx.trigger(inactiveToggle, "change");
+    return;
+  }
+
+  // Compatibility fallback for older/embedded Admin UI layouts.
+  loadTools();
+};
+
+/** Reset the package-import modal and discard its in-memory preview. */
+export const resetToolPackageImport = function () {
+  toolPackagePreviewRequestVersion += 1;
+  pendingToolPackageFile = null;
+  pendingToolPackagePreview = null;
+  pendingToolPackagePreviewFile = null;
+
+  const fileInput = document.getElementById("tool-package-file");
+  if (fileInput) {
+    fileInput.value = "";
+  }
+  const fileName = document.getElementById("tool-package-file-name");
+  if (fileName) {
+    fileName.textContent = "No package selected";
+  }
+
+  ["tool-package-preview", "tool-package-result"].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) {
+      element.replaceChildren();
+      element.classList.add("hidden");
+    }
+  });
+
+  const previewButton = document.getElementById("tool-package-preview-btn");
+  const importButton = document.getElementById("tool-package-import-btn");
+  if (previewButton) {
+    setToolPackageButtonBusy(previewButton, false, "Previewing…");
+    previewButton.disabled = true;
+  }
+  if (importButton) {
+    setToolPackageButtonBusy(importButton, false, "Importing…");
+    importButton.disabled = true;
+  }
+  clearToolPackageStatus();
+};
+
+/** Open the dedicated `.toolpkg.zip` package import flow. */
+export const openToolPackageImport = function () {
+  resetToolPackageImport();
+  openModal("tool-package-import-modal");
+};
+
+/** Close and clear the package import flow. */
+export const closeToolPackageImport = function () {
+  resetToolPackageImport();
+  closeModal("tool-package-import-modal");
+};
+
+/** Validate and retain the package selected by the delegated file input. */
+export const handleToolPackageFileSelect = function (fileInput) {
+  const file = fileInput?.files?.[0] || null;
+  resetToolPackageImport();
+
+  if (!file) {
+    setToolPackageStatus("Select a .toolpkg.zip package to continue.", "error");
+    return false;
+  }
+  if (!String(file.name || "").toLowerCase().endsWith(TOOL_PACKAGE_FILE_SUFFIX)) {
+    setToolPackageStatus(
+      "Unsupported file. Select a package whose name ends in .toolpkg.zip.",
+      "error"
+    );
+    return false;
+  }
+  if (file.size === 0) {
+    setToolPackageStatus("The selected package is empty.", "error");
+    return false;
+  }
+
+  pendingToolPackageFile = file;
+  const fileName = document.getElementById("tool-package-file-name");
+  if (fileName) {
+    fileName.textContent = file.name;
+  }
+  const previewButton = document.getElementById("tool-package-preview-btn");
+  if (previewButton) {
+    previewButton.disabled = false;
+  }
+  setToolPackageStatus(
+    "Package selected. Preview it before confirming the import.",
+    "info"
+  );
+  return true;
+};
+
+/** Upload the raw ZIP for validation and render a non-mutating preview. */
+export const previewToolPackageImport = async function () {
+  if (!pendingToolPackageFile) {
+    setToolPackageStatus("Select a .toolpkg.zip package first.", "error");
+    return null;
+  }
+
+  const previewFile = pendingToolPackageFile;
+  const requestVersion = ++toolPackagePreviewRequestVersion;
+  const previewButton = document.getElementById("tool-package-preview-btn");
+  const importButton = document.getElementById("tool-package-import-btn");
+  setToolPackageButtonBusy(previewButton, true, "Previewing…");
+  if (importButton) {
+    importButton.disabled = true;
+  }
+  setToolPackageStatus("Validating package contents…", "info");
+
+  try {
+    const preview = await postToolPackage(
+      "/admin/tools/import/package/preview",
+      previewFile,
+      "preview"
+    );
+    if (
+      requestVersion !== toolPackagePreviewRequestVersion ||
+      previewFile !== pendingToolPackageFile
+    ) {
+      return null;
+    }
+    pendingToolPackagePreview = preview;
+    pendingToolPackagePreviewFile = previewFile;
+    renderToolPackagePreview(preview);
+
+    if (preview.ready === true) {
+      if (importButton) {
+        importButton.disabled = false;
+      }
+      setToolPackageStatus(
+        "Preview complete. Review the actions, then confirm the import.",
+        "success"
+      );
+    } else {
+      setToolPackageStatus(
+        "This package has blocked items. Resolve them before importing.",
+        "error"
+      );
+    }
+    return preview;
+  } catch (error) {
+    if (
+      requestVersion !== toolPackagePreviewRequestVersion ||
+      previewFile !== pendingToolPackageFile
+    ) {
+      return null;
+    }
+    console.error("Error previewing Tool package:", error);
+    pendingToolPackagePreview = null;
+    pendingToolPackagePreviewFile = null;
+    setToolPackageStatus(handleFetchError(error, "preview Tool package"), "error");
+    return null;
+  } finally {
+    if (requestVersion === toolPackagePreviewRequestVersion) {
+      setToolPackageButtonBusy(previewButton, false, "Previewing…");
+      if (previewButton) {
+        previewButton.disabled = !pendingToolPackageFile;
+      }
+    }
+  }
+};
+
+/** Confirm the reviewed package and execute the import. */
+export const confirmToolPackageImport = async function () {
+  if (
+    !pendingToolPackageFile ||
+    pendingToolPackagePreview?.ready !== true ||
+    pendingToolPackagePreviewFile !== pendingToolPackageFile
+  ) {
+    setToolPackageStatus(
+      "Preview a valid package before confirming the import.",
+      "error"
+    );
+    return null;
+  }
+
+  const strategyElement = document.getElementById(
+    "tool-package-conflict-strategy"
+  );
+  const selectedStrategy = String(strategyElement?.value || "skip").toLowerCase();
+  const strategy = TOOL_PACKAGE_CONFLICT_STRATEGIES.has(selectedStrategy)
+    ? selectedStrategy
+    : "skip";
+  const importButton = document.getElementById("tool-package-import-btn");
+  const previewButton = document.getElementById("tool-package-preview-btn");
+  setToolPackageButtonBusy(importButton, true, "Importing…");
+  if (previewButton) {
+    previewButton.disabled = true;
+  }
+  setToolPackageStatus("Importing package…", "info");
+
+  let succeeded = false;
+  try {
+    const result = await postToolPackage(
+      `/admin/tools/import/package?conflict_strategy=${encodeURIComponent(strategy)}`,
+      pendingToolPackageFile,
+      "import"
+    );
+    succeeded = true;
+    renderToolPackageImportResult(result);
+    setToolPackageStatus("Tool package imported successfully.", "success");
+    showSuccessMessage("Tool package imported successfully");
+    refreshToolTableAfterPackageImport();
+    return result;
+  } catch (error) {
+    console.error("Error importing Tool package:", error);
+    setToolPackageStatus(handleFetchError(error, "import Tool package"), "error");
+    return null;
+  } finally {
+    setToolPackageButtonBusy(importButton, false, "Importing…");
+    if (importButton) {
+      importButton.disabled = succeeded || pendingToolPackagePreview?.ready !== true;
+    }
+    if (previewButton) {
+      previewButton.disabled = succeeded || !pendingToolPackageFile;
+    }
+  }
+};
+
 // ===================================================================
 // ENHANCED TOOL VIEWING with Secure Display
 // ===================================================================
@@ -47,7 +828,8 @@ export const viewTool = async function (toolId) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const tool = await response.json();
+    const tool = unwrapToolPayload(await response.json());
+    clearToolDocumentCache(toolId);
     // Build auth HTML safely with new styling
     let authHTML = "";
     if (tool.auth?.username && tool.auth?.password) {
@@ -176,6 +958,22 @@ export const viewTool = async function (toolId) {
       // Create structure safely without double-escaping
       const safeHTML = `
         <div class="bg-transparent dark:bg-transparent dark:text-gray-300">
+        <div class="flex flex-wrap items-center gap-2 mb-5 border-b border-gray-200 dark:border-gray-700" role="tablist" aria-label="Tool details">
+            <button type="button" role="tab" aria-selected="true" data-tool-details-tab="overview" class="px-3 py-2 -mb-px border-b-2 border-indigo-500 text-sm font-medium text-indigo-600 dark:text-indigo-400">Overview</button>
+            <button type="button" role="tab" aria-selected="false" data-tool-details-tab="definition" class="px-3 py-2 -mb-px border-b-2 border-transparent text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">Definition</button>
+            <button type="button" role="tab" aria-selected="false" data-tool-details-tab="source" class="px-3 py-2 -mb-px border-b-2 border-transparent text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">Source</button>
+            <div class="ml-auto flex items-center gap-2 pb-1">
+                <button type="button" data-tool-copy-definition class="px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">Copy Definition</button>
+                <button type="button" data-tool-export class="px-3 py-1.5 text-xs font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700">Download JSON</button>
+                <button type="button" data-tool-export-package class="px-3 py-1.5 text-xs font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700">Download Package</button>
+            </div>
+        </div>
+
+        <div data-tool-source-managed-notice class="hidden mb-5 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+            This Tool is managed by its <span data-tool-managed-type class="font-semibold"></span> source. Generated names, endpoints, and schemas are read-only here; update the source and resync to change them.
+        </div>
+
+        <section data-tool-details-panel="overview" role="tabpanel" aria-hidden="false">
         <!-- Two Column Layout for Main Info -->
         <div class="grid grid-cols-2 gap-6 mb-6">
             <!-- Left Column -->
@@ -334,11 +1132,80 @@ export const viewTool = async function (toolId) {
             </div>
             </div>
         </div>
+        </section>
+
+        <section data-tool-details-panel="definition" role="tabpanel" aria-hidden="true" class="hidden">
+            <div class="mb-2 flex items-center justify-between gap-3">
+                <div>
+                    <h3 class="font-semibold text-gray-800 dark:text-gray-100">Canonical Tool Definition</h3>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Portable, secret-free JSON returned by the Tool definition API.</p>
+                </div>
+                <span data-tool-document-status="definition" class="text-xs text-gray-500 dark:text-gray-400" role="status">Open this tab to load</span>
+            </div>
+            <pre data-tool-document-content="definition" tabindex="0" class="min-h-40 max-h-[32rem] overflow-auto whitespace-pre-wrap break-words rounded bg-gray-100 p-4 text-xs text-gray-800 dark:bg-gray-800 dark:text-gray-100"></pre>
+        </section>
+
+        <section data-tool-details-panel="source" role="tabpanel" aria-hidden="true" class="hidden">
+            <div class="mb-2">
+                <div class="flex items-center justify-between gap-3">
+                    <h3 class="font-semibold text-gray-800 dark:text-gray-100">Source Metadata</h3>
+                    <span data-tool-document-status="source" class="text-xs text-gray-500 dark:text-gray-400" role="status">Open this tab to load</span>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">Origin, service, schema artifact, and synchronization metadata when available.</p>
+            </div>
+            <pre data-tool-document-content="source" tabindex="0" class="min-h-40 max-h-[32rem] overflow-auto whitespace-pre-wrap break-words rounded bg-gray-100 p-4 text-xs text-gray-800 dark:bg-gray-800 dark:text-gray-100"></pre>
+        </section>
         </div>
     `;
 
       // Set structure first
       safeSetInnerHTML(toolDetailsDiv, safeHTML, true);
+      toolDetailsDiv.dataset.toolId = String(toolId);
+
+      toolDetailsDiv
+        .querySelectorAll("[data-tool-details-tab]")
+        .forEach((button) => {
+          button.addEventListener("click", () => {
+            showToolDetailsTab(
+              toolId,
+              button.dataset.toolDetailsTab,
+              toolDetailsDiv
+            );
+          });
+        });
+
+      toolDetailsDiv
+        .querySelector("[data-tool-copy-definition]")
+        ?.addEventListener("click", () => {
+          copyToolDefinition(toolId, toolDetailsDiv);
+        });
+      toolDetailsDiv
+        .querySelector("[data-tool-export]")
+        ?.addEventListener("click", () => {
+          exportTool(toolId);
+        });
+      if (window.CAN_EXPORT_TOOL_PACKAGE === false) {
+        toolDetailsDiv.querySelector("[data-tool-export-package]")?.remove();
+      }
+      toolDetailsDiv
+        .querySelector("[data-tool-export-package]")
+        ?.addEventListener("click", () => {
+          exportToolPackage(toolId);
+        });
+
+      if (isSourceManagedTool(tool)) {
+        const notice = toolDetailsDiv.querySelector(
+          "[data-tool-source-managed-notice]"
+        );
+        const managedType = toolDetailsDiv.querySelector(
+          "[data-tool-managed-type]"
+        );
+        notice?.classList.remove("hidden");
+        if (managedType) {
+          managedType.textContent =
+            tool.integrationType || tool.integration_type || "external";
+        }
+      }
 
       // Now safely set text content - NO ESCAPING since textContent is safe
       const setTextSafely = (selector, value) => {
@@ -512,7 +1379,8 @@ export const editTool = async function (toolId) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const tool = await response.json();
+    const tool = unwrapToolPayload(await response.json());
+    const sourceManaged = isSourceManagedTool(tool);
 
     const isInactiveCheckedBool = isInactiveChecked("tools");
     let hiddenField = safeGetElement("edit-show-inactive");
@@ -532,6 +1400,46 @@ export const editTool = async function (toolId) {
     const editForm = safeGetElement("edit-tool-form");
     if (editForm) {
       editForm.action = `${window.ROOT_PATH}/admin/tools/${toolId}/edit`;
+      editForm.dataset.sourceManaged = String(sourceManaged);
+
+      let sourceManagedField = editForm.querySelector(
+        'input[name="source_managed"]'
+      );
+      if (!sourceManagedField) {
+        sourceManagedField = document.createElement("input");
+        sourceManagedField.type = "hidden";
+        sourceManagedField.name = "source_managed";
+        editForm.appendChild(sourceManagedField);
+      }
+      sourceManagedField.value = String(sourceManaged);
+
+      let expectedVersionField = editForm.querySelector(
+        'input[name="expected_version"]'
+      );
+      if (!expectedVersionField) {
+        expectedVersionField = document.createElement("input");
+        expectedVersionField.type = "hidden";
+        expectedVersionField.id = "edit-tool-expected-version";
+        expectedVersionField.name = "expected_version";
+        editForm.appendChild(expectedVersionField);
+      }
+      expectedVersionField.value = String(tool.version ?? "");
+
+      const previousNotice = safeGetElement(
+        "edit-tool-source-managed-notice"
+      );
+      if (sourceManaged) {
+        const notice = previousNotice || document.createElement("div");
+        notice.id = "edit-tool-source-managed-notice";
+        notice.className =
+          "mb-4 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200";
+        notice.textContent = `${tool.integrationType || tool.integration_type || "Source-managed"} Tool: generated names, endpoints, schemas, and authentication settings are read-only. Change the source and resync to update them.`;
+        if (!previousNotice) {
+          editForm.prepend(notice);
+        }
+      } else {
+        previousNotice?.remove();
+      }
     }
 
     // Validate and set fields
@@ -546,8 +1454,13 @@ export const editTool = async function (toolId) {
     const descField = safeGetElement("edit-tool-description");
     const typeField = safeGetElement("edit-tool-type");
 
-    if (nameField && nameValidation.valid) {
-      nameField.value = nameValidation.value;
+    if (nameField) {
+      nameField.readOnly = sourceManaged;
+      if (nameValidation.valid) {
+        nameField.value = nameValidation.value;
+      } else if (sourceManaged) {
+        nameField.value = String(tool.name || "");
+      }
     }
     if (customNameField && customNameValidation.valid) {
       customNameField.value = customNameValidation.value;
@@ -557,8 +1470,12 @@ export const editTool = async function (toolId) {
     if (displayNameField) {
       displayNameField.value = tool.displayName || "";
     }
-    if (urlField && urlValidation.valid) {
-      urlField.value = urlValidation.value;
+    if (urlField) {
+      if (urlValidation.valid) {
+        urlField.value = urlValidation.value;
+      } else if (sourceManaged) {
+        urlField.value = String(tool.url || "");
+      }
     }
     if (descField) {
       // Decode HTML entities to prevent double-encoding when saving
@@ -573,6 +1490,18 @@ export const editTool = async function (toolId) {
       descField.value = decodeHtml(cleanDesc);
     }
     if (typeField) {
+      if (
+        sourceManaged &&
+        tool.integrationType &&
+        !Array.from(typeField.options || []).some(
+          (option) => option.value === tool.integrationType
+        )
+      ) {
+        const managedTypeOption = document.createElement("option");
+        managedTypeOption.value = tool.integrationType;
+        managedTypeOption.textContent = tool.integrationType;
+        typeField.appendChild(managedTypeOption);
+      }
       typeField.value = tool.integrationType || "MCP";
     }
 
@@ -704,8 +1633,8 @@ export const editTool = async function (toolId) {
     // Prefill integration type from DB and set request types accordingly
     if (typeField) {
       typeField.value = tool.integrationType || "REST";
-      // Disable integration type field for MCP tools (cannot be changed)
-      if (tool.integrationType === "MCP") {
+      // Source-managed integration types are generated and cannot be changed.
+      if (sourceManaged) {
         typeField.disabled = true;
       } else {
         typeField.disabled = false;
@@ -714,10 +1643,10 @@ export const editTool = async function (toolId) {
       updateEditToolUrl(tool.url || null);
     }
 
-    // Request Type field handling (disable for MCP)
+    // Request type is generated for source-managed tools.
     const requestTypeField = safeGetElement("edit-tool-request-type");
     if (requestTypeField) {
-      if ((tool.integrationType || "REST") === "MCP") {
+      if (sourceManaged) {
         requestTypeField.value = "";
         requestTypeField.disabled = true; // disabled -> not submitted
       } else {
@@ -746,8 +1675,8 @@ export const editTool = async function (toolId) {
       if (prevHiddenAuthType) {
         prevHiddenAuthType.remove();
       }
-      // Disable integration type field for MCP tools (cannot be changed)
-      if (tool.integrationType === "MCP") {
+      // Keep all generated fields read-only for MCP, A2A, and gRPC tools.
+      if (sourceManaged) {
         typeField.disabled = true;
         if (authTypeField) {
           authTypeField.disabled = true;
@@ -767,6 +1696,9 @@ export const editTool = async function (toolId) {
         }
         if (schemaField) {
           schemaField.setAttribute("readonly", "readonly");
+        }
+        if (outputSchemaField) {
+          outputSchemaField.setAttribute("readonly", "readonly");
         }
         if (editAuthTokenField) {
           editAuthTokenField.setAttribute("readonly", "readonly");
@@ -794,6 +1726,9 @@ export const editTool = async function (toolId) {
         if (schemaField) {
           schemaField.removeAttribute("readonly");
         }
+        if (outputSchemaField) {
+          outputSchemaField.removeAttribute("readonly");
+        }
         if (editAuthTokenField) {
           editAuthTokenField.removeAttribute("readonly");
         }
@@ -810,6 +1745,11 @@ export const editTool = async function (toolId) {
       // Update request types and URL field
       updateEditToolRequestTypes(tool.requestType || null);
       updateEditToolUrl(tool.url || null);
+      if (sourceManaged && urlField) {
+        // updateEditToolUrl has legacy MCP-only behavior, so re-assert the
+        // source-managed rule for gRPC and A2A tools after it runs.
+        urlField.readOnly = true;
+      }
     }
 
     // Auth containers
@@ -935,8 +1875,52 @@ export const editTool = async function (toolId) {
         break;
     }
 
+    [
+      authUsernameField,
+      authPasswordField,
+      authTokenField,
+      authHeaderKeyField,
+      authHeaderValueField,
+    ].forEach((field) => {
+      if (field) {
+        field.readOnly = sourceManaged;
+      }
+    });
+    if (sourceManaged) {
+      authHeadersSection
+        ?.querySelectorAll("input, textarea, button")
+        .forEach((element) => {
+          if (element.matches("button")) {
+            element.disabled = true;
+          } else {
+            element.setAttribute("readonly", "readonly");
+          }
+        });
+    } else {
+      authHeadersSection
+        ?.querySelectorAll("input, textarea, button")
+        .forEach((element) => {
+          if (element.matches("button")) {
+            element.disabled = false;
+          } else {
+            element.removeAttribute("readonly");
+          }
+        });
+    }
+
     openModal("tool-edit-modal");
-    applyVisibilityRestrictions(["edit-resource-visibility"]); // Disable public radio if restricted, preserve checked state
+    const visibilityInputs = safeGetElement("edit-tool-visibility")?.querySelectorAll(
+      'input[name="visibility"]'
+    );
+    visibilityInputs?.forEach((input) => {
+      input.disabled = false;
+    });
+    applyVisibilityRestrictions(["edit-tool-visibility"]); // Disable public radio if restricted, preserve checked state
+    if (sourceManaged) {
+      visibilityInputs?.forEach((input) => {
+        input.disabled = true;
+      });
+    }
 
     // Ensure editors are refreshed after modal display
     setTimeout(() => {

@@ -301,6 +301,10 @@ class ImportService:
             for field in required_fields[entity_type]:
                 if field not in entity:
                     raise ImportValidationError(f"Entity {index} in '{entity_type}' missing required field: {field}")
+        if entity_type == "tools" and entity.get("integration_type", "REST") != "REST":
+            raise ImportValidationError(
+                f"Entity {index} in 'tools' is source-managed; import {entity.get('integration_type')} tools with a dependency-aware Tool package instead"
+            )
 
     async def import_configuration(
         self,
@@ -1198,6 +1202,9 @@ class ImportService:
         Returns:
             ToolCreate schema object
         """
+        if tool_data.get("integration_type", "REST") != "REST":
+            raise ImportValidationError("Legacy configuration import accepts only standalone REST tools; use a dependency-aware Tool package")
+
         # Extract auth information if present
         auth_info = None
         if tool_data.get("auth_type") and tool_data.get("auth_value"):

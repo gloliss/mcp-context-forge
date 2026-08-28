@@ -23,7 +23,11 @@ import {
   handleEditResFormSubmit,
 } from "../../../mcpgateway/admin_ui/formSubmitHandlers.js";
 import { showErrorMessage } from "../../../mcpgateway/admin_ui/utils";
-import { safeParseJsonResponse } from "../../../mcpgateway/admin_ui/security";
+import {
+  safeParseJsonResponse,
+  validateInputName,
+  validateUrl,
+} from "../../../mcpgateway/admin_ui/security";
 
 vi.mock("../../../mcpgateway/admin_ui/constants", () => ({
   HEADER_NAME_REGEX: /^[A-Za-z0-9-]+$/,
@@ -580,6 +584,43 @@ describe("handleEditToolFormSubmit", () => {
     delete window.editToolHeadersEditor;
     delete window.editToolSchemaEditor;
     delete window.editToolOutputSchemaEditor;
+  });
+
+  test("skips generated name and HTTP URL validation for source-managed metadata edits", async () => {
+    const event = createFormEvent(`
+      <form action="/admin/tools/1/edit" data-source-managed="true">
+        <input name="name" value="example.Greeter.SayHello" />
+        <input name="url" value="dns:///greeter.internal:50051" />
+        <textarea name="description">Updated metadata</textarea>
+      </form>
+    `);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+    safeParseJsonResponse.mockResolvedValue({ success: true });
+
+    await handleEditToolFormSubmit(event);
+
+    expect(validateInputName).not.toHaveBeenCalled();
+    expect(validateUrl).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toHaveBeenCalled();
+    expect(showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  test("keeps HTTP URL validation for directly managed REST Tool edits", async () => {
+    const event = createFormEvent(`
+      <form action="/admin/tools/1/edit" data-source-managed="false">
+        <input name="name" value="rest-tool" />
+        <input name="url" value="dns:///not-an-http-endpoint:50051" />
+      </form>
+    `);
+
+    await handleEditToolFormSubmit(event);
+
+    expect(validateInputName).toHaveBeenCalledWith("rest-tool", "tool");
+    expect(validateUrl).toHaveBeenCalledWith(
+      "dns:///not-an-http-endpoint:50051"
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(showErrorMessage).toHaveBeenCalledWith("Invalid URL");
   });
 
   test("FormData snapshot includes schema value written by editor.save()", async () => {

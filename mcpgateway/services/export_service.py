@@ -415,8 +415,9 @@ class ExportService:
         # Fetch all tools across all pages (with team-scoped visibility)
         tools = await self._fetch_all_tools(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
-        # Filter to only exportable tools (local REST tools, not MCP tools from gateways)
-        exportable_tools = [t for t in tools if not (t.integration_type == "MCP" and t.gateway_id)]
+        # Legacy configuration import can reconstruct only standalone REST tools.
+        # Generated MCP/gRPC/A2A/SQL rows use dependency-aware source bundles.
+        exportable_tools = [t for t in tools if t.integration_type == "REST"]
 
         # Batch fetch auth data for tools with masked values (single query instead of N queries)
         tool_ids_needing_auth = [
@@ -447,6 +448,7 @@ class ExportService:
                 "rate_limit": getattr(tool, "rate_limit", None),
                 "timeout": getattr(tool, "timeout", None),
                 "is_active": tool.enabled,
+                "tool_version": getattr(tool, "version", 1) or 1,
                 "created_at": tool.created_at.isoformat() if hasattr(tool.created_at, "isoformat") and tool.created_at else None,
                 "updated_at": tool.updated_at.isoformat() if hasattr(tool.updated_at, "isoformat") and tool.updated_at else None,
             }
@@ -860,8 +862,8 @@ class ExportService:
 
         exported_tools = []
         for db_tool in db_tools:
-            # Only export local REST tools, not MCP tools from gateways
-            if db_tool.integration_type == "MCP" and db_tool.gateway_id:
+            # Legacy selective import can reconstruct only standalone REST tools.
+            if db_tool.integration_type != "REST":
                 continue
 
             tool_data = {
@@ -880,6 +882,7 @@ class ExportService:
                 "rate_limit": getattr(db_tool, "rate_limit", None),
                 "timeout": getattr(db_tool, "timeout", None),
                 "is_active": db_tool.enabled,
+                "tool_version": db_tool.version or 1,
                 "created_at": db_tool.created_at.isoformat() if db_tool.created_at else None,
                 "updated_at": db_tool.updated_at.isoformat() if db_tool.updated_at else None,
             }

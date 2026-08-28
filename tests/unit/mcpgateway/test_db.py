@@ -2775,7 +2775,8 @@ def test_get_for_update_where_and_options_paths():
     class DummyDB:
         bind = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
 
-        def get(self, _model, _entity_id):
+        def get(self, _model, _entity_id, *, populate_existing=False):
+            assert populate_existing is True
             return "via-get"
 
         def execute(self, stmt):
@@ -2796,6 +2797,44 @@ def test_get_for_update_where_and_options_paths():
     # options with entity_id forces execute path
     result2 = db.get_for_update(db_session, db.Tool, entity_id="tool-1", options=[loader_opt])
     assert result2 == "row"
+
+
+def test_get_for_update_refreshes_an_existing_sqlite_identity(tmp_path):
+    """The SQLite fallback must not return stale state from the identity map."""
+    # Third-Party
+    from sqlalchemy import create_engine, String, update
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+
+    class TestBase(DeclarativeBase):
+        """Isolated metadata for the identity-map regression test."""
+
+    class VersionedRow(TestBase):
+        """Minimal row used to exercise get_for_update."""
+
+        __tablename__ = "versioned_rows"
+
+        id: Mapped[str] = mapped_column(String, primary_key=True)
+        version: Mapped[int] = mapped_column(nullable=False)
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'identity-map.db'}")
+    TestBase.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    try:
+        with session_factory() as seed:
+            seed.add(VersionedRow(id="row-1", version=1))
+            seed.commit()
+
+        with session_factory() as stale_session, session_factory() as writer:
+            stale = stale_session.get(VersionedRow, "row-1")
+            assert stale is not None and stale.version == 1
+            writer.execute(update(VersionedRow).where(VersionedRow.id == "row-1").values(version=2))
+            writer.commit()
+
+            refreshed = db.get_for_update(stale_session, VersionedRow, "row-1")
+            assert refreshed is stale
+            assert refreshed.version == 2
+    finally:
+        engine.dispose()
 
 
 def test_llm_provider_type_helpers():

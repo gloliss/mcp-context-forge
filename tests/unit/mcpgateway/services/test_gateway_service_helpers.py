@@ -1522,6 +1522,7 @@ def test_update_or_create_tools_authheaders_no_spurious_update():
     existing.auth_value = encoded  # Text column — already encoded
     existing.visibility = "public"
     existing.title = None
+    existing.version = 5
 
     db = MagicMock()
     db.execute.return_value.scalars.return_value.all.return_value = [existing]
@@ -1551,3 +1552,4 @@ def test_update_or_create_tools_authheaders_no_spurious_update():
     # auth_value must be the EXACT same string — no spurious re-encryption
     assert existing.auth_value is original_encoded, f"auth_value was spuriously rewritten: {existing.auth_value!r} != {original_encoded!r}"
     assert decode_auth(existing.auth_value) == auth_dict
+    assert existing.version == 5

@@ -5743,6 +5743,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         if update_visibility and upstream_tool_visibility is not None:
                             existing_tool.visibility = upstream_tool_visibility
+                        persisted_version = getattr(existing_tool, "version", None)
+                        existing_tool.version = (persisted_version if type(persisted_version) is int else 1) + 1
                         logger.debug("Updated existing tool: %s", tool.name)
                 else:
                     # Create new tool if it doesn't exist

@@ -56,6 +56,7 @@ def test_root_create_rejects_unknown_fields():
 
     assert excinfo.value.errors()[0]["type"] == "extra_forbidden"
 
+
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.schemas import (
     AdminGatewayCreate,
@@ -1293,6 +1294,29 @@ class TestSchemaValidators:
         update = ToolUpdate(integration_type="REST", url="https://example.com/api/v1")
         assert update.base_url == "https://example.com"
         assert update.path_template == "/api/v1"
+
+    def test_tool_update_expected_version_alias_and_bounds(self):
+        """ToolUpdate accepts optimistic concurrency versions in either API casing."""
+        camel_case = ToolUpdate.model_validate({"expectedVersion": 3})
+        snake_case = ToolUpdate(expected_version=4)
+
+        assert camel_case.expected_version == 3
+        assert snake_case.expected_version == 4
+        assert camel_case.model_dump(by_alias=True)["expectedVersion"] == 3
+
+        with pytest.raises(ValidationError, match="greater than or equal to 1"):
+            ToolUpdate(expected_version=0)
+
+    def test_tool_create_rejects_manual_grpc_tools(self):
+        """gRPC tools must be generated from a registered schema artifact."""
+        with pytest.raises(ValidationError, match="Cannot manually create gRPC tools"):
+            ToolCreate(name="manual-grpc", integration_type="gRPC", request_type="POST", url="grpc.example.com:443")
+
+    def test_tool_update_passthrough_default_is_unset(self):
+        """A partial update must not implicitly enable REST passthrough."""
+        update = ToolUpdate(description="new description")
+        assert update.expose_passthrough is None
+        assert "expose_passthrough" not in update.model_fields_set
 
     def test_tool_update_validation_errors(self):
         """ToolUpdate validators should reject invalid passthrough configs."""

@@ -316,6 +316,7 @@ class GrpcService:
             # cache services' best-effort contract without misreporting the CRUD
             # operation as rolled back.
             logger.warning("Failed to invalidate caches for gRPC-derived tools: %s", exc)
+
     async def _build_team_visibility_clause(
         self,
         db: Session,
@@ -1017,6 +1018,8 @@ class GrpcService:
             Tools whose lookup or result cache entries must be invalidated after commit.
         """
         discovered = service.discovered_services or {}
+        active_artifact_value = service.active_artifact_id
+        active_artifact_id = active_artifact_value if isinstance(active_artifact_value, str) else None
 
         # Build set of expected tool names from discovered methods
         expected_tool_names: set[str] = set()
@@ -1066,11 +1069,18 @@ class GrpcService:
                 # catalog but are intentionally not executable MCP tools.
                 if method.get("client_streaming"):
                     existing_tool = existing_tools_map.get(tool_name)
-                    if existing_tool and (existing_tool.enabled or not existing_tool.deprecated):
-                        existing_tool.enabled = False
-                        existing_tool.deprecated = True
-                        existing_tool.version = (existing_tool.version or 1) + 1
-                        changed_tools.append(existing_tool)
+                    if existing_tool:
+                        changed = False
+                        if existing_tool.enabled or not existing_tool.deprecated:
+                            existing_tool.enabled = False
+                            existing_tool.deprecated = True
+                            changed = True
+                        if active_artifact_id is not None and existing_tool.grpc_schema_artifact_id != active_artifact_id:
+                            existing_tool.grpc_schema_artifact_id = active_artifact_id
+                            changed = True
+                        if changed:
+                            existing_tool.version = (existing_tool.version or 1) + 1
+                            changed_tools.append(existing_tool)
                     continue
                 # Per-tool try/except: a single bad method must not poison the whole sync.
                 try:
@@ -1112,6 +1122,9 @@ class GrpcService:
                             existing_tool.deprecated = False
                             existing_tool.reachable = True
                             changed = True
+                        if active_artifact_id is not None and existing_tool.grpc_schema_artifact_id != active_artifact_id:
+                            existing_tool.grpc_schema_artifact_id = active_artifact_id
+                            changed = True
                         if changed:
                             existing_tool.version = (existing_tool.version or 1) + 1
                             changed_tools.append(existing_tool)
@@ -1137,6 +1150,7 @@ class GrpcService:
                             owner_email=service.owner_email,
                             visibility=service.visibility,
                             grpc_service_id=service.id,
+                            grpc_schema_artifact_id=active_artifact_id,
                         )
                         db.add(db_tool)
                         changed_tools.append(db_tool)
