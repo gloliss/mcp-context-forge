@@ -285,10 +285,14 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
+# Longer network timeouts for flaky links to files.pythonhosted.org:
+# domestic mirrors lack the freshly-released cpex-* plugin packages.
+ENV PIP_DEFAULT_TIMEOUT=600 \
+    UV_HTTP_TIMEOUT=600
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
-    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
+    && /app/.venv/bin/pip install --no-cache-dir --timeout 600 --retries 20 --upgrade pip setuptools wheel uv \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
         /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat,grpc]" "psycopg[c]>=3.3.3"; \
