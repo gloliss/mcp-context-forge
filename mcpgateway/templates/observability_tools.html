@@ -8,6 +8,9 @@ window.createToolsController = function() {
     loading: false,
     error: null,
     autoRefreshInterval: null,
+    leaveHandler: null,
+    beforeUnloadHandler: null,
+    active: true,
     summaryCards: {
       slowest: null,
       mostErrorProne: null,
@@ -24,33 +27,59 @@ window.createToolsController = function() {
       this.charts = {};
     },
 
+    isActiveView() {
+      const panel = document.getElementById('observability-panel');
+      const container = document.getElementById('tools-container');
+      return Boolean(
+        this.active &&
+        panel &&
+        !panel.classList.contains('hidden') &&
+        container &&
+        container.style.display !== 'none'
+      );
+    },
+
     /**
      * Cleanup resources on component destroy
      */
     cleanup() {
+      this.active = false;
       this.destroyAllCharts();
       this.stopAutoRefresh();
       if (this.leaveHandler) {
         document.removeEventListener('observability:leave', this.leaveHandler);
+        this.leaveHandler = null;
+      }
+      if (this.beforeUnloadHandler) {
+        window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+        this.beforeUnloadHandler = null;
       }
     },
 
+    destroy() {
+      this.cleanup();
+    },
+
     async init() {
+      this.active = true;
+
       // Clean up any existing charts first
       this.destroyAllCharts();
 
-      await this.loadAllMetrics();
-      this.startAutoRefresh();
-
-      // Listen for tab leave event to stop auto-refresh and cleanup
+      // Listen before loading so leaving during the initial request cleans up.
       this.leaveHandler = () => {
         console.log('Tools: received observability:leave event, stopping auto-refresh');
         this.cleanup();
       };
       document.addEventListener('observability:leave', this.leaveHandler);
 
-      // Cleanup on page unload as fallback
-      window.addEventListener('beforeunload', () => this.cleanup());
+      this.beforeUnloadHandler = () => this.cleanup();
+      window.addEventListener('beforeunload', this.beforeUnloadHandler);
+
+      await this.loadAllMetrics();
+      if (this.isActiveView()) {
+        this.startAutoRefresh();
+      }
     },
     async loadAllMetrics() {
       this.loading = true;
@@ -616,7 +645,7 @@ window.createToolsController = function() {
 };
 </script>
 
-<div class="tools-dashboard" x-data="createToolsController()" x-init="init()">
+<div class="tools-dashboard" x-data="observabilityTools">
   <!-- Header with filters -->
   <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-4">
     <div class="flex flex-wrap gap-4 items-end">
@@ -676,8 +705,8 @@ window.createToolsController = function() {
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
           <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Most Used Tool</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostUsed?.name || 'N/A'"></p>
-          <p class="text-sm text-blue-600 dark:text-blue-400 font-medium" x-text="summaryCards.mostUsed ? `${summaryCards.mostUsed.value} ${summaryCards.mostUsed.metric}` : ''"></p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostUsed ? summaryCards.mostUsed.name : 'N/A'"></p>
+          <p class="text-sm text-blue-600 dark:text-blue-400 font-medium" x-text="summaryCards.mostUsed ? summaryCards.mostUsed.value + ' ' + summaryCards.mostUsed.metric : ''"></p>
         </div>
         <div class="text-3xl">📊</div>
       </div>
@@ -688,8 +717,8 @@ window.createToolsController = function() {
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
           <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Slowest Tool</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.slowest?.name || 'N/A'"></p>
-          <p class="text-sm text-orange-600 dark:text-orange-400 font-medium" x-text="summaryCards.slowest ? `${summaryCards.slowest.value} ${summaryCards.slowest.metric}` : ''"></p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.slowest ? summaryCards.slowest.name : 'N/A'"></p>
+          <p class="text-sm text-orange-600 dark:text-orange-400 font-medium" x-text="summaryCards.slowest ? summaryCards.slowest.value + ' ' + summaryCards.slowest.metric : ''"></p>
         </div>
         <div class="text-3xl">🐌</div>
       </div>
@@ -700,8 +729,8 @@ window.createToolsController = function() {
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
           <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Most Error-Prone</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostErrorProne?.name || 'None'"></p>
-          <p class="text-sm text-red-600 dark:text-red-400 font-medium" x-text="summaryCards.mostErrorProne ? `${summaryCards.mostErrorProne.value}${summaryCards.mostErrorProne.metric}` : '0% errors'"></p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostErrorProne ? summaryCards.mostErrorProne.name : 'None'"></p>
+          <p class="text-sm text-red-600 dark:text-red-400 font-medium" x-text="summaryCards.mostErrorProne ? summaryCards.mostErrorProne.value + summaryCards.mostErrorProne.metric : '0% errors'"></p>
         </div>
         <div class="text-3xl">⚠️</div>
       </div>

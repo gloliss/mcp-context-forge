@@ -749,7 +749,7 @@ These features have measurable per-request or background overhead. Disable any y
 | **Structured logging (DB)** | `STRUCTURED_LOGGING_DATABASE_ENABLED` | `false` | DB writes per log entry (high overhead) |
 | **Audit trail** | `AUDIT_TRAIL_ENABLED` | `false` | DB write per mutating request (high overhead) |
 | **Security logging** | `SECURITY_LOGGING_ENABLED` | `false` | DB writes for auth events |
-| **Observability** | `OBSERVABILITY_ENABLED` | `false` | Span creation, trace storage, request instrumentation |
+| **Observability** | `OBSERVABILITY_ENABLED` | `true` | Span creation, trace storage, request instrumentation |
 | **Prometheus** | `ENABLE_METRICS` | `false` | Per-request histogram updates, `/metrics` endpoint |
 | **Net connections count** | `MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED` | `true` | `psutil.net_connections()` call in performance stats |
 

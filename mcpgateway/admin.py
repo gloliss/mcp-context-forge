@@ -198,8 +198,9 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
+from mcpgateway.services.tool_portability_service import ToolBundleConflictError, ToolBundleValidationError, tool_portability_service
 from mcpgateway.services.tool_service import tool_service as shared_tool_service
-from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService, ToolVersionConflictError
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -744,12 +745,14 @@ UI_ACTION_PERMISSIONS = {
     "can_create_team": "teams.create",
     "can_create_server": "servers.create",
     "can_create_tool": "tools.create",
+    "can_update_tool": "tools.update",
     "can_create_resource": "resources.create",
     "can_create_prompt": "prompts.create",
     "can_create_gateway": "gateways.create",
     "can_create_user": "admin.user_management",
     "can_create_token": "tokens.read",  # Token creation uses tokens.read, setting nosec cause this is false positive as router uses this permission key.  # nosec B105
     "can_create_agent": "a2a.create",
+    "can_manage_grpc": "admin.grpc",
     # Composite gRPC-to-data views must not reveal SQL catalog/source metadata
     # to callers who can administer gRPC but lack the corresponding SQL access.
     "can_read_sql_tables": "sql.tables.read",
@@ -1909,6 +1912,7 @@ admin_router = APIRouter(
     dependencies=[Depends(enforce_admin_csrf)],
 )
 
+# First-Party
 # Feature routers inherit the admin prefix, authentication, and CSRF policy.
 # Imported here (after enforce_admin_csrf is defined) to avoid circular imports.
 from mcpgateway.routers.api_debug import router as api_debug_router  # pylint: disable=wrong-import-position  # noqa: E402
@@ -1952,6 +1956,21 @@ def _like_contains(column, value: str):
         A SQLAlchemy binary expression suitable for ``.where()``.
     """
     return column.like("%" + _escape_like(value) + "%", escape="\\")
+
+
+def _like_startswith(column, value: str):
+    """Case-insensitive prefix match with proper LIKE wildcard escaping.
+
+    Args:
+        column: SQLAlchemy column expression (pre-wrapped with ``func.lower``
+            / ``coalesce`` as needed by the caller).
+        value: Raw search term — escaping is applied internally.
+
+    Returns:
+        A SQLAlchemy binary expression suitable for ``.where()`` or relevance
+        ordering.
+    """
+    return column.like(_escape_like(value) + "%", escape="\\")
 
 
 async def _get_user_team_ids(user: dict, db: Session) -> list:
@@ -8985,6 +9004,7 @@ async def admin_tools_partial_html(
         query = query.where(
             or_(
                 _like_contains(func.lower(DbTool.id), search_query),
+                _like_contains(func.lower(DbTool.name), search_query),
                 _like_contains(func.lower(DbTool.original_name), search_query),
                 _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
                 _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
@@ -9035,6 +9055,16 @@ async def admin_tools_partial_html(
     # This eliminates the N+1 query problem from calling get_tool() in a loop
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
+    _scoped_email, _token_teams = get_scoped_resource_access_context(request, user)
+    can_export_tool_package = _is_admin and _token_teams is None
+    if not can_export_tool_package and _scoped_email:
+        can_export_tool_package = await PermissionService(db, audit_enabled=False).check_permission(
+            user_email=_scoped_email,
+            permission="admin.grpc",
+            token_teams=_token_teams,
+            allow_admin_bypass=False,
+            check_any_team=True,
+        )
     tools_pydantic = []
     failed_count = 0
     for t in tools_db:
@@ -9116,6 +9146,7 @@ async def admin_tools_partial_html(
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
+            "can_export_tool_package": can_export_tool_package,
         },
     )
 
@@ -9282,6 +9313,7 @@ async def admin_get_all_tool_ids(
         if search_query:
             search_conditions = [
                 _like_contains(func.lower(DbTool.id), search_query),
+                _like_contains(func.lower(DbTool.name), search_query),
                 _like_contains(func.lower(DbTool.original_name), search_query),
                 _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
                 _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
@@ -9439,6 +9471,7 @@ async def admin_search_tools(
     if search_query:
         search_conditions = [
             _like_contains(func.lower(DbTool.id), search_query),
+            _like_contains(func.lower(DbTool.name), search_query),
             _like_contains(func.lower(DbTool.original_name), search_query),
             _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
             _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
@@ -9453,12 +9486,14 @@ async def admin_search_tools(
     if search_query:
         query = query.order_by(
             case(
-                (func.lower(DbTool.original_name).startswith(search_query), 1),
-                (func.lower(coalesce(DbTool.custom_name, "")).startswith(search_query), 1),
-                (func.lower(coalesce(DbTool.display_name, "")).startswith(search_query), 1),
+                (func.lower(DbTool.name) == search_query, 0),
+                (_like_startswith(func.lower(DbTool.name), search_query), 1),
+                (_like_startswith(func.lower(DbTool.original_name), search_query), 1),
+                (_like_startswith(func.lower(coalesce(DbTool.custom_name, "")), search_query), 1),
+                (_like_startswith(func.lower(coalesce(DbTool.display_name, "")), search_query), 1),
                 else_=2,
             ),
-            func.lower(DbTool.original_name),
+            func.lower(DbTool.name),
         )
     else:
         query = query.order_by(func.lower(DbTool.original_name))
@@ -12021,6 +12056,7 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
             requesting_user_is_admin=_is_admin,
             requesting_user_team_roles=_team_roles,
             token_teams=auth_token_teams,
+            include_metrics=True,
         )
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
@@ -12029,6 +12065,135 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
         # Catch any other unexpected errors and re-raise or log as needed
         LOGGER.error(f"Error getting tool {tool_id}: {e}")
         raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
+
+
+async def _admin_scoped_tool_for_portability(request: Request, user: Any, db: Session, tool_id: str) -> DbTool:
+    """Resolve an admin Tool ORM row only after canonical Layer-1 access checks."""
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    user_email = get_user_email(user)
+    is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    team_roles = _get_user_team_roles(db, user_email) if user_email and not is_admin else {}
+    await tool_service.get_tool(
+        db,
+        tool_id,
+        requesting_user_email=auth_user_email,
+        requesting_user_is_admin=is_admin,
+        requesting_user_team_roles=team_roles,
+        token_teams=auth_token_teams,
+    )
+    return tool_portability_service.require_tool(db, tool_id)
+
+
+@admin_router.get("/tools/{tool_id}/definition")
+@require_permission("tools.read", allow_admin_bypass=False)
+async def admin_get_tool_definition(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """Return a canonical, secret-free Tool definition for the details modal."""
+    try:
+        tool = await _admin_scoped_tool_for_portability(request, user, db, tool_id)
+        return tool_portability_service.build_definition(db, tool)
+    except ToolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@admin_router.get("/tools/{tool_id}/source")
+@require_permission("tools.read", allow_admin_bypass=False)
+async def admin_get_tool_source(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """Return method-level source metadata without exposing full descriptors."""
+    try:
+        tool = await _admin_scoped_tool_for_portability(request, user, db, tool_id)
+        return tool_portability_service.build_source(db, tool)
+    except ToolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@admin_router.get("/tools/{tool_id}/export")
+@require_permission("tools.read", allow_admin_bypass=False)
+async def admin_export_tool_definition(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Response:
+    """Download one Tool definition from the Tool row action."""
+    try:
+        tool = await _admin_scoped_tool_for_portability(request, user, db, tool_id)
+        definition = tool_portability_service.build_definition(db, tool)
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", tool.original_name).strip("-.") or "tool"
+        return Response(
+            content=orjson.dumps(definition, option=orjson.OPT_INDENT_2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}.tool.json"'},
+        )
+    except ToolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@admin_router.post("/tools/export/package")
+@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission("tools.read", allow_admin_bypass=False)
+async def admin_export_tool_package(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Response:
+    """Download selected Tools with their executable gRPC schema dependencies."""
+    body = await _read_request_json(request)
+    tool_ids = body.get("tool_ids")
+    if not isinstance(tool_ids, list) or not tool_ids or len(tool_ids) > settings.mcpgateway_bulk_import_max_tools:
+        raise HTTPException(status_code=422, detail="tool_ids must be a non-empty bounded list")
+    try:
+        tools = [await _admin_scoped_tool_for_portability(request, user, db, str(tool_id)) for tool_id in tool_ids]
+        bundle = tool_portability_service.export_bundle(db, tools, exported_by=get_user_email(user) or "unknown")
+        payload = tool_portability_service.bundle_to_zip(bundle)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="contextforge-tools-{timestamp}.toolpkg.zip"'},
+        )
+    except ToolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ToolBundleValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@admin_router.post("/tools/import/package/preview")
+@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission("tools.create", allow_admin_bypass=False)
+async def admin_preview_tool_package(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """Validate a Tool package and return its non-mutating import plan."""
+    try:
+        bundle = tool_portability_service.bundle_from_zip(await request.body())
+        scoped_email, scoped_teams = get_scoped_resource_access_context(request, user)
+        return await tool_portability_service.preview_import(
+            db,
+            bundle,
+            scoped_email,
+            scoped_teams,
+            grpc_enabled=bool(settings.mcpgateway_grpc_enabled and GRPC_AVAILABLE),
+        )
+    except ToolBundleValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@admin_router.post("/tools/import/package")
+@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission("tools.create", allow_admin_bypass=False)
+@require_permission("tools.update", allow_admin_bypass=False)
+async def admin_import_tool_package(
+    request: Request,
+    conflict_strategy: str = Query("update", pattern="^(skip|update|fail)$"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Import a dependency-aware Tool package after preview validation."""
+    try:
+        bundle = tool_portability_service.bundle_from_zip(await request.body())
+        scoped_email, scoped_teams = get_scoped_resource_access_context(request, user)
+        return await tool_portability_service.import_bundle(
+            db,
+            bundle,
+            imported_by=get_user_email(user) or "unknown",
+            user_email=scoped_email,
+            token_teams=scoped_teams,
+            conflict_strategy=conflict_strategy,
+            grpc_enabled=bool(settings.mcpgateway_grpc_enabled and GRPC_AVAILABLE),
+        )
+    except ToolBundleConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ToolBundleValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
@@ -12313,6 +12478,10 @@ async def admin_edit_tool(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing tool ID {tool_id}")
     form = await request.form()
+    # This hint only prevents read-only controls from being echoed by the admin
+    # form. It is not an authorization decision: ToolService independently
+    # derives source ownership from the persisted row and rejects tampering.
+    source_managed = str(form.get("source_managed", "")).lower() == "true"
     team_id = _form_team_id(form)
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -12370,13 +12539,30 @@ async def admin_edit_tool(
     # Only include request_type if it's provided (not disabled in form)
     if "requestType" in form:
         tool_data["request_type"] = form.get("requestType")
+    if form.get("expected_version"):
+        tool_data["expected_version"] = form.get("expected_version")
+    if source_managed:
+        # The shared edit form contains REST execution fields even when they
+        # are rendered read-only. Do not submit those generated values to the
+        # service: only the explicitly supported presentation metadata is
+        # editable here, while direct API attempts remain rejected there.
+        editable_metadata_fields = {
+            "displayName",
+            "custom_name",
+            "description",
+            "annotations",
+            "jsonpath_filter",
+            "tags",
+            "expected_version",
+        }
+        tool_data = {key: value for key, value in tool_data.items() if key in editable_metadata_fields}
     LOGGER.debug(f"Tool update data built: {tool_data}")
     try:
         tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
 
-        # Get current tool to extract current version
-        current_tool = db.get(DbTool, tool_id)
-        current_version = getattr(current_tool, "version", 0) if current_tool else 0
+        # The edit form carries the revision it rendered; the service performs
+        # the authoritative compare-and-swap against the persisted row.
+        current_version = tool.expected_version or 0
 
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
@@ -12405,6 +12591,12 @@ async def admin_edit_tool(
     except ToolNameConflictError as ex:
         LOGGER.error(f"ToolNameConflictError in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except ToolVersionConflictError as ex:
+        LOGGER.info("Tool version conflict in admin_edit_tool: %s", ex)
+        return ORJSONResponse(
+            content={"message": str(ex), "success": False, "expected_version": ex.expected_version, "current_version": ex.current_version},
+            status_code=409,
+        )
     except ToolError as ex:
         LOGGER.error(f"ToolError in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -18674,7 +18866,18 @@ async def get_api_metrics_partial(request: Request, _user=Depends(get_current_us
         HTMLResponse: Rendered API metrics dashboard template
     """
     root_path = _resolve_root_path(request)
-    return request.app.state.templates.TemplateResponse(request, "api_metrics_dashboard.html", {"request": request, "root_path": root_path})
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "api_metrics_dashboard.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "observability_enabled": settings.observability_enabled,
+            "trace_http_requests": settings.observability_trace_http_requests,
+            "observability_sample_rate": settings.observability_sample_rate,
+        },
+    )
+
 
 @admin_router.get("/observability/stats")
 @require_permission("admin.system_config", allow_admin_bypass=False)
@@ -18755,68 +18958,60 @@ async def get_observability_traces(
     Returns:
         HTMLResponse: Rendered traces list template
     """
-    db = next(get_db())
-    try:
-        # Parse time range
-        time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
-        hours = time_map.get(time_range, 24)
-        cutoff_time = datetime.now() - timedelta(hours=hours)
+    # Parse time range
+    time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
+    hours = time_map.get(time_range, 24)
+    cutoff_time = datetime.now() - timedelta(hours=hours)
 
-        query = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time >= cutoff_time)
+    query = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time >= cutoff_time)
 
-        # Apply status filter
-        if status_filter != "all":
-            query = query.filter(ObservabilityTrace.status == status_filter)
+    # Apply status filter
+    if status_filter != "all":
+        query = query.filter(ObservabilityTrace.status == status_filter)
 
-        # Apply duration filters
-        if min_duration is not None:
-            query = query.filter(ObservabilityTrace.duration_ms >= min_duration)
-        if max_duration is not None:
-            query = query.filter(ObservabilityTrace.duration_ms <= max_duration)
+    # Apply duration filters
+    if min_duration is not None:
+        query = query.filter(ObservabilityTrace.duration_ms >= min_duration)
+    if max_duration is not None:
+        query = query.filter(ObservabilityTrace.duration_ms <= max_duration)
 
-        # Apply HTTP method filter
-        if http_method:
-            query = query.filter(ObservabilityTrace.http_method == http_method)
+    # Apply HTTP method filter
+    if http_method:
+        query = query.filter(ObservabilityTrace.http_method == http_method)
 
-        # Apply user email filter
-        if user_email:
-            query = query.filter(ObservabilityTrace.user_email.ilike(f"%{user_email}%"))
+    # Apply user email filter
+    if user_email:
+        query = query.filter(ObservabilityTrace.user_email.ilike(f"%{user_email}%"))
 
-        # Apply name search
-        if name_search:
-            query = query.filter(ObservabilityTrace.name.ilike(f"%{name_search}%"))
+    # Apply name search
+    if name_search:
+        query = query.filter(ObservabilityTrace.name.ilike(f"%{name_search}%"))
 
-        # Apply attribute search
-        if attribute_search:
-            # Escape special characters for SQL LIKE
-            safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
-            query = query.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
+    # Apply attribute search
+    if attribute_search:
+        # Escape special characters for SQL LIKE
+        safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
+        query = query.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
 
-        # Apply tool name filter (join with spans to find traces that invoked a specific tool)
-        if tool_name:
-            # Subquery to find trace_ids that have tool invocations matching the tool name
-            tool_trace_ids = (
-                db.query(ObservabilitySpan.trace_id)
-                .filter(
-                    ObservabilitySpan.name == "tool.invoke",
-                    extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),
-                )
-                .distinct()
-                .subquery()
+    # Apply tool name filter (join with spans to find traces that invoked a specific tool)
+    if tool_name:
+        # Subquery to find trace_ids that have tool invocations matching the tool name
+        tool_trace_ids = (
+            db.query(ObservabilitySpan.trace_id)
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),
             )
-            query = query.filter(ObservabilityTrace.trace_id.in_(select(tool_trace_ids.c.trace_id)))
+            .distinct()
+            .subquery()
+        )
+        query = query.filter(ObservabilityTrace.trace_id.in_(select(tool_trace_ids.c.trace_id)))
 
-        # Get traces ordered by most recent
-        traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
+    # Get traces ordered by most recent
+    traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
 
-        root_path = _resolve_root_path(request)
-        return request.app.state.templates.TemplateResponse(request, "observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(request, "observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
 
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
@@ -18836,21 +19031,13 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
     Raises:
         HTTPException: 404 if trace not found
     """
-    db = next(get_db())
-    try:
-        trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
+    trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
 
-        if not trace:
-            raise HTTPException(status_code=404, detail="Trace not found")
+    if not trace:
+        raise HTTPException(status_code=404, detail="Trace not found")
 
-        root_path = _resolve_root_path(request)
-        return request.app.state.templates.TemplateResponse(request, "observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(request, "observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
 
 
 @admin_router.post("/observability/queries", response_model=dict)
@@ -18881,10 +19068,8 @@ async def save_observability_query(
     Raises:
         HTTPException: 400 if validation fails
     """
-    db = next(get_db())
     try:
-        # Get user email from authenticated user
-        user_email = user.email if hasattr(user, "email") else "unknown"
+        user_email = get_user_email(user)
 
         # Create new saved query
         query = ObservabilitySavedQuery(name=name, description=description, user_email=user_email, filter_config=filter_config, is_shared=is_shared)
@@ -18896,14 +19081,8 @@ async def save_observability_query(
         return {"id": query.id, "name": query.name, "description": query.description, "filter_config": query.filter_config, "is_shared": query.is_shared, "created_at": query.created_at.isoformat()}
     except Exception as e:
         db.rollback()
-        LOGGER.error(f"Failed to save query: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+        LOGGER.exception("Failed to save observability query")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @admin_router.get("/observability/queries", response_model=list)
@@ -18921,38 +19100,30 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
     Returns:
         list: List of saved query dictionaries
     """
-    db = next(get_db())
-    try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+    user_email = get_user_email(user)
 
-        # Get user's own queries + shared queries
-        queries = (
-            db.query(ObservabilitySavedQuery)
-            .filter(or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True))
-            .order_by(desc(ObservabilitySavedQuery.created_at))
-            .all()
-        )
+    # Get user's own queries + shared queries
+    queries = (
+        db.query(ObservabilitySavedQuery)
+        .filter(or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared.is_(True)))
+        .order_by(desc(ObservabilitySavedQuery.created_at))
+        .all()
+    )
 
-        return [
-            {
-                "id": q.id,
-                "name": q.name,
-                "description": q.description,
-                "filter_config": q.filter_config,
-                "is_shared": q.is_shared,
-                "user_email": q.user_email,
-                "created_at": q.created_at.isoformat(),
-                "last_used_at": q.last_used_at.isoformat() if q.last_used_at else None,
-                "use_count": q.use_count,
-            }
-            for q in queries
-        ]
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    return [
+        {
+            "id": q.id,
+            "name": q.name,
+            "description": q.description,
+            "filter_config": q.filter_config,
+            "is_shared": q.is_shared,
+            "user_email": q.user_email,
+            "created_at": q.created_at.isoformat(),
+            "last_used_at": q.last_used_at.isoformat() if q.last_used_at else None,
+            "use_count": q.use_count,
+        }
+        for q in queries
+    ]
 
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
@@ -18972,35 +19143,25 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
     Raises:
         HTTPException: 404 if query not found or unauthorized
     """
-    db = next(get_db())
-    try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+    user_email = get_user_email(user)
 
-        # Can only access own queries or shared queries
-        query = (
-            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True)).first()
-        )
+    # Can only access own queries or shared queries
+    query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared.is_(True))).first()
 
-        if not query:
-            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+    if not query:
+        raise HTTPException(status_code=404, detail="Query not found or unauthorized")
 
-        return {
-            "id": query.id,
-            "name": query.name,
-            "description": query.description,
-            "filter_config": query.filter_config,
-            "is_shared": query.is_shared,
-            "user_email": query.user_email,
-            "created_at": query.created_at.isoformat(),
-            "last_used_at": query.last_used_at.isoformat() if query.last_used_at else None,
-            "use_count": query.use_count,
-        }
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    return {
+        "id": query.id,
+        "name": query.name,
+        "description": query.description,
+        "filter_config": query.filter_config,
+        "is_shared": query.is_shared,
+        "user_email": query.user_email,
+        "created_at": query.created_at.isoformat(),
+        "last_used_at": query.last_used_at.isoformat() if query.last_used_at else None,
+        "use_count": query.use_count,
+    }
 
 
 @admin_router.put("/observability/queries/{query_id}", response_model=dict)
@@ -19033,9 +19194,8 @@ async def update_observability_query(
     Raises:
         HTTPException: 404 if query not found, 403 if unauthorized
     """
-    db = next(get_db())
     try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+        user_email = get_user_email(user)
 
         # Can only update own queries
         query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, ObservabilitySavedQuery.user_email == user_email).first()
@@ -19068,14 +19228,8 @@ async def update_observability_query(
         raise
     except Exception as e:
         db.rollback()
-        LOGGER.error(f"Failed to update query: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+        LOGGER.exception("Failed to update observability query")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
@@ -19092,9 +19246,8 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
     Raises:
         HTTPException: 404 if query not found, 403 if unauthorized
     """
-    db = next(get_db())
     try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+        user_email = get_user_email(user)
 
         # Can only delete own queries
         query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, ObservabilitySavedQuery.user_email == user_email).first()
@@ -19104,12 +19257,12 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
 
         db.delete(query)
         db.commit()
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        LOGGER.exception("Failed to delete observability query")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
@@ -19129,13 +19282,12 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
     Raises:
         HTTPException: 404 if query not found or unauthorized
     """
-    db = next(get_db())
     try:
-        user_email = user.email if hasattr(user, "email") else "unknown"
+        user_email = get_user_email(user)
 
         # Can track usage for own queries or shared queries
         query = (
-            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True)).first()
+            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared.is_(True))).first()
         )
 
         if not query:
@@ -19153,14 +19305,8 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         raise
     except Exception as e:
         db.rollback()
-        LOGGER.error(f"Failed to track query usage: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+        LOGGER.exception("Failed to track observability query usage")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @admin_router.get("/observability/metrics/percentiles", response_model=dict)

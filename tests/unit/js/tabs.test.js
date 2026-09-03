@@ -527,7 +527,8 @@ describe("showTab", () => {
     delete window.UI_HIDDEN_TABS;
     isAdminUser.mockReturnValue(true);
     window.ROOT_PATH = "";
-    window.chartRegistry = { destroyByPrefix: vi.fn() };
+    delete window.chartRegistry;
+    window.Admin = { chartRegistry: { destroyByPrefix: vi.fn() } };
     window.htmx = {
       trigger: vi.fn(),
       ajax: vi.fn().mockResolvedValue({}),
@@ -539,6 +540,7 @@ describe("showTab", () => {
     vi.useRealTimers();
     document.body.innerHTML = "";
     delete window.chartRegistry;
+    delete window.Admin;
     delete window.htmx;
   });
 
@@ -555,6 +557,36 @@ describe("showTab", () => {
     showTab("gateways");
     logSpy.mockRestore();
     expect(panel.classList.contains("hidden")).toBe(false);
+  });
+
+  test("resumes observability polling when entering the tab", () => {
+    const gatewaysPanel = document.createElement("div");
+    gatewaysPanel.id = "gateways-panel";
+    gatewaysPanel.classList.add("tab-panel");
+    document.body.appendChild(gatewaysPanel);
+
+    const observabilityPanel = document.createElement("div");
+    observabilityPanel.id = "observability-panel";
+    observabilityPanel.classList.add("tab-panel", "hidden");
+    document.body.appendChild(observabilityPanel);
+
+    const link = document.createElement("a");
+    link.classList.add("sidebar-link");
+    link.href = "#observability";
+    document.body.appendChild(link);
+
+    const dispatchSpy = vi.spyOn(document, "dispatchEvent");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    showTab("observability");
+
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "observability:enter" })
+    );
+    expect(observabilityPanel.classList.contains("hidden")).toBe(false);
+
+    dispatchSpy.mockRestore();
+    logSpy.mockRestore();
   });
 
   test("activates link", () => {
@@ -663,7 +695,7 @@ describe("showTab", () => {
     document.body.appendChild(link);
 
     const destroySpy = vi.fn();
-    window.chartRegistry = { destroyByPrefix: destroySpy };
+    window.Admin.chartRegistry = { destroyByPrefix: destroySpy };
 
     const dispatchSpy = vi.spyOn(document, "dispatchEvent");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -675,12 +707,67 @@ describe("showTab", () => {
     expect(destroySpy).toHaveBeenCalledWith("tools-");
     expect(destroySpy).toHaveBeenCalledWith("prompts-");
     expect(destroySpy).toHaveBeenCalledWith("resources-");
+    expect(window.chartRegistry).toBeUndefined();
     expect(dispatchSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "observability:leave",
       })
     );
+    expect(obsPanel.classList.contains("hidden")).toBe(true);
+    expect(gatewaysPanel.classList.contains("hidden")).toBe(false);
 
+    dispatchSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  test("continues switching tabs when observability chart cleanup fails", () => {
+    const obsPanel = document.createElement("div");
+    obsPanel.id = "observability-panel";
+    obsPanel.classList.add("tab-panel");
+    document.body.appendChild(obsPanel);
+
+    const gatewaysPanel = document.createElement("div");
+    gatewaysPanel.id = "gateways-panel";
+    gatewaysPanel.classList.add("tab-panel", "hidden");
+    document.body.appendChild(gatewaysPanel);
+
+    const link = document.createElement("a");
+    link.classList.add("sidebar-link");
+    link.href = "#gateways";
+    document.body.appendChild(link);
+
+    const cleanupError = new Error("chart cleanup failed");
+    const destroySpy = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw cleanupError;
+      })
+      .mockImplementation(() => {});
+    window.Admin.chartRegistry = { destroyByPrefix: destroySpy };
+
+    const dispatchSpy = vi.spyOn(document, "dispatchEvent");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    showTab("gateways");
+    vi.runAllTimers();
+
+    expect(destroySpy).toHaveBeenCalledTimes(4);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Failed to destroy observability charts with prefix metrics-:",
+      cleanupError
+    );
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "observability:leave",
+      })
+    );
+    expect(obsPanel.classList.contains("hidden")).toBe(true);
+    expect(gatewaysPanel.classList.contains("hidden")).toBe(false);
+    expect(link.classList.contains("active")).toBe(true);
+
+    dispatchSpy.mockRestore();
+    warnSpy.mockRestore();
     logSpy.mockRestore();
   });
 

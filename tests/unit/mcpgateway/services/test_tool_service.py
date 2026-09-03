@@ -1066,6 +1066,10 @@ class TestToolService:
             "Authorization": existing_encrypted_auth,
             "X-Trace-Id": "trace-1",
         }
+        mock_tool.integration_type = "REST"
+        mock_tool.gateway_id = None
+        mock_tool.grpc_service_id = None
+        mock_tool.sql_table_id = None
 
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -1732,7 +1736,7 @@ class TestToolService:
         )
 
     @pytest.mark.asyncio
-    async def test_get_tool(self, tool_service, mock_tool, test_db):
+    async def test_get_tool(self, tool_service, mock_tool, test_db, mock_logging_services):
         """Test getting a tool by ID."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
@@ -1783,7 +1787,34 @@ class TestToolService:
 
         # Verify result
         assert result == tool_read
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None)
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool,
+            requesting_user_email=None,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles=None,
+            include_metrics=False,
+        )
+        assert mock_logging_services["structured_logger"].log.call_args.kwargs["custom_fields"]["include_metrics"] is False
+
+    @pytest.mark.asyncio
+    async def test_get_tool_includes_metrics_when_requested(self, tool_service, mock_tool, test_db, mock_logging_services):
+        """get_tool forwards the metrics flag and records the requested behavior."""
+        test_db.get = Mock(return_value=mock_tool)
+        tool_read = MagicMock()
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
+
+        result = await tool_service.get_tool(test_db, 1, include_metrics=True)
+
+        assert result == tool_read
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool,
+            requesting_user_email=None,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles=None,
+            include_metrics=True,
+        )
+        mock_logging_services["structured_logger"].log.assert_called_once()
+        assert mock_logging_services["structured_logger"].log.call_args.kwargs["custom_fields"]["include_metrics"] is True
 
     @pytest.mark.asyncio
     async def test_get_tool_not_found(self, tool_service, test_db):
@@ -1920,7 +1951,7 @@ class TestToolService:
         result = await tool_service.set_tool_state(test_db, 1, activate=False, reachable=True)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, 1)
+        test_db.get.assert_called_once_with(DbTool, 1, populate_existing=True)
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
 
@@ -1948,7 +1979,7 @@ class TestToolService:
         assert "Tool not found: 1" in str(exc.value)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, "1")
+        test_db.get.assert_called_once_with(DbTool, "1", populate_existing=True)
 
     @pytest.mark.asyncio
     async def test_set_tool_state_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
@@ -1964,7 +1995,7 @@ class TestToolService:
         result = await tool_service.set_tool_state(test_db, "1", activate=True, reachable=True)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, "1")
+        test_db.get.assert_called_once_with(DbTool, "1", populate_existing=True)
 
         tool_service._notify_tool_activated.assert_called_once_with(mock_tool)
 
@@ -2078,7 +2109,7 @@ class TestToolService:
         result = await tool_service.set_tool_state(test_db, 1, activate=True, reachable=True)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, 1)
+        test_db.get.assert_called_once_with(DbTool, 1, populate_existing=True)
         test_db.commit.assert_not_called()
         test_db.refresh.assert_not_called()
 
@@ -2095,6 +2126,10 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_update_tool(self, tool_service, mock_tool, test_db):
         """Test updating a tool."""
+        mock_tool.integration_type = "REST"
+        mock_tool.gateway_id = None
+        mock_tool.grpc_service_id = None
+        mock_tool.sql_table_id = None
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
 
@@ -2160,7 +2195,7 @@ class TestToolService:
             result = await tool_service.update_tool(test_db, 1, tool_update)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, 1)
+        test_db.get.assert_called_once_with(DbTool, 1, populate_existing=True)
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
 
@@ -2180,6 +2215,10 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_update_tool_name_conflict(self, tool_service, mock_tool, test_db):
         """Test updating a tool with a name that conflicts with another tool."""
+        mock_tool.integration_type = "REST"
+        mock_tool.gateway_id = None
+        mock_tool.grpc_service_id = None
+        mock_tool.sql_table_id = None
         # Mock DB get to return our tool
         test_db.get = Mock(return_value=mock_tool)
 
@@ -2228,23 +2267,24 @@ class TestToolService:
 
     @pytest.mark.asyncio
     async def test_update_tool_none_name(self, tool_service, mock_tool, test_db):
-        """Test updating a tool with no name."""
-        # Mock DB get to return None
+        """An empty partial update returns the current Tool without writes."""
+        mock_tool.version = 1
         test_db.get = Mock(return_value=mock_tool)
-
-        # Create update request
+        test_db.commit = Mock()
         tool_update = ToolUpdate()
 
-        # The service wraps the exception in ToolError
-        with pytest.raises(ToolError) as exc_info:
-            await tool_service.update_tool(test_db, 999, tool_update)
+        result = await tool_service.update_tool(test_db, 999, tool_update)
 
-        assert "Failed to update tool" in str(exc_info.value)
+        assert result.id == str(mock_tool.id)
+        test_db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_tool_extra_fields(self, tool_service, mock_tool, test_db):
         """Test updating extra fields in an existing tool."""
-        # Mock DB get to return None
+        mock_tool.integration_type = "REST"
+        mock_tool.gateway_id = None
+        mock_tool.grpc_service_id = None
+        mock_tool.sql_table_id = None
         mock_tool.id = "999"
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()  # SQLAlchemy commit is synchronous
@@ -2266,7 +2306,10 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_update_tool_basic_auth(self, tool_service, mock_tool, test_db):
         """Test updating auth in an existing tool."""
-        # Mock DB get to return None
+        mock_tool.integration_type = "REST"
+        mock_tool.gateway_id = None
+        mock_tool.grpc_service_id = None
+        mock_tool.sql_table_id = None
         mock_tool.id = "999"
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()  # SQLAlchemy commit is synchronous
@@ -2292,7 +2335,10 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_update_tool_bearer_auth(self, tool_service, mock_tool, test_db):
         """Test updating auth in an existing tool."""
-        # Mock DB get to return None
+        mock_tool.integration_type = "REST"
+        mock_tool.gateway_id = None
+        mock_tool.grpc_service_id = None
+        mock_tool.sql_table_id = None
         mock_tool.id = "999"
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()  # SQLAlchemy commit is synchronous
@@ -2313,7 +2359,10 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_update_tool_empty_auth(self, tool_service, mock_tool, test_db):
         """Test updating auth in an existing tool."""
-        # Mock DB get to return None
+        mock_tool.integration_type = "REST"
+        mock_tool.gateway_id = None
+        mock_tool.grpc_service_id = None
+        mock_tool.sql_table_id = None
         mock_tool.id = "999"
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()  # SQLAlchemy commit is synchronous
@@ -8626,6 +8675,26 @@ class TestToolServiceBulkImport:
         assert existing_tool.plugin_chain_post == ["response_shape"]
         assert existing_tool.version == 3
 
+        # Re-importing identical semantic content still records the bulk
+        # operation, but must not manufacture a new entity version.
+        repeated = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={tool.name: existing_tool},
+            conflict_strategy="update",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip="127.0.0.1",
+            created_via="api",
+            created_user_agent="pytest",
+            import_batch_id="batch-1",
+            federation_source="fed-1",
+        )
+
+        assert repeated["status"] == "update"
+        assert existing_tool.version == 3
+
     def test_process_single_tool_for_bulk_conflict_variants(self):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_conflict")
@@ -11583,6 +11652,7 @@ class TestGrpcToolInvocation:
         tool.original_description = "gRPC method test.Svc.DoStuff"
         tool.integration_type = "gRPC"
         tool.request_type = "SSE"
+        tool.timeout_ms = None
         tool.headers = {}
         tool.input_schema = {"type": "object", "properties": {}}
         tool.output_schema = None

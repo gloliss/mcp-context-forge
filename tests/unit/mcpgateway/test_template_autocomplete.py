@@ -164,3 +164,15 @@ class TestOAuthCallbackUrlNotHardcoded:
         hardcoded = [m.strip() for m in matches if "oauth/callback" in m and "localhost" in m]
 
         assert not hardcoded, "Found hardcoded localhost OAuth callback URLs in <code> hints " "(should use {{ request.base_url }}):\n  " + "\n  ".join(hardcoded)
+
+
+class TestAdminNavigationStructure:
+    """Regression checks for unique Admin UI tab wiring."""
+
+    def test_api_metrics_tab_link_and_panel_are_unique(self) -> None:
+        """API Metrics must have one navigation target and one content panel."""
+        raw = (TEMPLATES_DIR / "admin.html").read_text(encoding="utf-8")
+
+        assert raw.count('id="tab-api-metrics"') == 1
+        assert raw.count('href="#api-metrics"') == 1
+        assert raw.count('id="api-metrics-panel"') == 1

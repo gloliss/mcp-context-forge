@@ -545,7 +545,7 @@ def setup_query_tracking(engine):
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `OBSERVABILITY_ENABLED` | `false` | Enable query span tracking |
+| `OBSERVABILITY_ENABLED` | `true` | Enable query span tracking |
 | `LOG_LEVEL` | `ERROR` | Set to `INFO` or `DEBUG` to see SQLAlchemy echo logs |
 | `SQLALCHEMY_ECHO` | `false` | Print all SQL to stdout (requires `LOG_LEVEL=INFO` or `DEBUG`) |
 | `DB_POOL_CLASS` | `auto` | Pool class: `auto`, `null` (PgBouncer), `queue` |

@@ -317,7 +317,7 @@ LOG_TO_FILE=false
 STRUCTURED_LOGGING_DATABASE_ENABLED=false
 
 # Observability
-OBSERVABILITY_ENABLED=false
+OBSERVABILITY_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=          # .env.example sets http://localhost:4317
 ```
 

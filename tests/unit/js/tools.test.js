@@ -8,9 +8,19 @@
 import { describe, test, expect, vi, afterEach } from "vitest";
 
 import {
+  copyToolDefinition,
   viewTool,
   editTool,
+  exportTool,
+  exportToolPackage,
+  confirmToolPackageImport,
+  handleToolPackageFileSelect,
+  isSourceManagedTool,
   initToolSelect,
+  loadToolDocument,
+  previewToolPackageImport,
+  resetToolPackageImport,
+  showToolDetailsTab,
   testTool,
   loadTools,
   enrichTool,
@@ -23,7 +33,11 @@ import {
   generateToolFormFields,
   invokeTool,
 } from "../../../mcpgateway/admin_ui/tools.js";
-import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
+import {
+  fetchWithTimeout,
+  showErrorMessage,
+  showSuccessMessage,
+} from "../../../mcpgateway/admin_ui/utils";
 import { openModal, closeModal } from "../../../mcpgateway/admin_ui/modals";
 
 vi.mock("../../../mcpgateway/admin_ui/appState.js", () => ({
@@ -66,6 +80,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   getCurrentTeamId: vi.fn(() => null),
   handleFetchError: vi.fn((e) => e.message),
   isInactiveChecked: vi.fn(() => false),
+  makeCopyIdButton: vi.fn(() => document.createElement("button")),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
   showSuccessMessage: vi.fn(),
@@ -73,8 +88,16 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
 }));
 
 afterEach(() => {
+  resetToolPackageImport();
   document.body.innerHTML = "";
   delete window.ROOT_PATH;
+  delete window.CAN_EXPORT_TOOL_PACKAGE;
+  delete window.htmx;
+  try {
+    delete navigator.clipboard;
+  } catch (_error) {
+    // Some DOM implementations expose clipboard as a non-configurable getter.
+  }
   vi.clearAllMocks();
 });
 
@@ -121,6 +144,422 @@ describe("viewTool", () => {
     expect(consoleSpy).toHaveBeenCalled();
     consoleSpy.mockRestore();
     logSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tool definition, source, copy, and export
+// ---------------------------------------------------------------------------
+describe("Tool definition and source documents", () => {
+  test("loads definition and source only when their tabs are selected", async () => {
+    window.ROOT_PATH = "/forge";
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const details = document.createElement("div");
+    details.id = "tool-details";
+    document.body.appendChild(details);
+
+    fetchWithTimeout
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            id: "grpc/tool",
+            name: "catalog.v1.Catalog/GetItem",
+            integrationType: "gRPC",
+            grpcServiceId: "service-1",
+            inputSchema: {},
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            name: "</pre><img src=x onerror=alert(1)>",
+            inputSchema: { type: "object" },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            sourceType: "grpc",
+            serviceId: "service-1",
+            artifactHash: "sha256:123",
+          }),
+      });
+
+    await viewTool("grpc/tool");
+
+    expect(fetchWithTimeout).toHaveBeenCalledTimes(1);
+    expect(details.querySelector('[data-tool-details-tab="definition"]')).not.toBeNull();
+    expect(details.querySelector('[data-tool-details-tab="source"]')).not.toBeNull();
+    expect(
+      details
+        .querySelector("[data-tool-source-managed-notice]")
+        .classList.contains("hidden")
+    ).toBe(false);
+
+    await showToolDetailsTab("grpc/tool", "definition", details);
+    expect(fetchWithTimeout).toHaveBeenNthCalledWith(
+      2,
+      "/forge/admin/tools/grpc%2Ftool/definition"
+    );
+    expect(
+      details.querySelector('[data-tool-document-content="definition"]')
+        .textContent
+    ).toContain("<img src=x onerror=alert(1)>");
+    expect(details.querySelector("img")).toBeNull();
+
+    await showToolDetailsTab("grpc/tool", "source", details);
+    expect(fetchWithTimeout).toHaveBeenNthCalledWith(
+      3,
+      "/forge/admin/tools/grpc%2Ftool/source"
+    );
+    expect(
+      details.querySelector('[data-tool-document-content="source"]')
+        .textContent
+    ).toContain('"artifactHash": "sha256:123"');
+
+    // Returning to a loaded document uses the modal cache.
+    await showToolDetailsTab("grpc/tool", "definition", details);
+    expect(fetchWithTimeout).toHaveBeenCalledTimes(3);
+    consoleSpy.mockRestore();
+  });
+
+  test("copies a lazily loaded canonical definition", async () => {
+    window.ROOT_PATH = "";
+    const details = document.createElement("div");
+    details.id = "tool-details";
+    details.dataset.toolId = "copy-tool";
+    details.innerHTML = `
+      <span data-tool-document-status="definition"></span>
+      <pre data-tool-document-content="definition"></pre>
+    `;
+    document.body.appendChild(details);
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ name: "copy-me", version: 3 }),
+    });
+
+    await expect(copyToolDefinition("copy-tool", details)).resolves.toBe(true);
+
+    expect(writeText).toHaveBeenCalledWith(
+      JSON.stringify({ name: "copy-me", version: 3 }, null, 2)
+    );
+    expect(showSuccessMessage).toHaveBeenCalledWith(
+      "Tool definition copied to clipboard"
+    );
+  });
+
+  test("downloads the backend Tool export with a safe filename", async () => {
+    window.ROOT_PATH = "/forge";
+    const mockBlob = new Blob(["{}"], { type: "application/json" });
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(mockBlob),
+      headers: {
+        get: vi.fn(() => 'attachment; filename="folder/tool-export.json"'),
+      },
+    });
+
+    const createObjectURL = vi.fn(() => "blob:tool-export");
+    const revokeObjectURL = vi.fn();
+    window.URL.createObjectURL = createObjectURL;
+    window.URL.revokeObjectURL = revokeObjectURL;
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+
+    await expect(exportTool("grpc/tool")).resolves.toBe(true);
+
+    expect(fetchWithTimeout).toHaveBeenCalledWith(
+      "/forge/admin/tools/grpc%2Ftool/export"
+    );
+    expect(createObjectURL).toHaveBeenCalledWith(mockBlob);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:tool-export");
+    expect(showSuccessMessage).toHaveBeenCalledWith(
+      "Tool exported as folder_tool-export.json"
+    );
+    clickSpy.mockRestore();
+  });
+
+  test("downloads a dependency-aware Tool package", async () => {
+    window.ROOT_PATH = "/forge";
+    const mockBlob = new Blob(["package"], { type: "application/zip" });
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(mockBlob),
+      headers: {
+        get: vi.fn(() => 'attachment; filename="one-tool.toolpkg.zip"'),
+      },
+    });
+    window.URL.createObjectURL = vi.fn(() => "blob:tool-package");
+    window.URL.revokeObjectURL = vi.fn();
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+
+    await expect(exportToolPackage("grpc/tool")).resolves.toBe(true);
+
+    expect(fetchWithTimeout).toHaveBeenCalledWith(
+      "/forge/admin/tools/export/package",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ tool_ids: ["grpc/tool"] }),
+      })
+    );
+    expect(showSuccessMessage).toHaveBeenCalledWith(
+      "Tool package exported as one-tool.toolpkg.zip"
+    );
+    clickSpy.mockRestore();
+  });
+
+  test("reports definition and export request failures", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const details = document.createElement("div");
+    details.dataset.toolId = "bad-tool";
+    details.innerHTML = `
+      <span data-tool-document-status="definition"></span>
+      <pre data-tool-document-content="definition"></pre>
+    `;
+
+    fetchWithTimeout.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+    });
+    await expect(
+      loadToolDocument("bad-tool", "definition", details)
+    ).resolves.toBeNull();
+    expect(
+      details.querySelector('[data-tool-document-status="definition"]')
+        .textContent
+    ).toBe("Unable to load definition");
+
+    fetchWithTimeout.mockRejectedValueOnce(new Error("download failed"));
+    await expect(exportTool("bad-tool")).resolves.toBe(false);
+    expect(showErrorMessage).toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+});
+
+describe("isSourceManagedTool", () => {
+  test("recognizes generated Tool integrations and gRPC provenance", () => {
+    expect(isSourceManagedTool({ integrationType: "MCP" })).toBe(true);
+    expect(isSourceManagedTool({ integrationType: "A2A" })).toBe(true);
+    expect(isSourceManagedTool({ integrationType: "gRPC" })).toBe(true);
+    expect(isSourceManagedTool({ integrationType: "SQL" })).toBe(true);
+    expect(isSourceManagedTool({ integrationType: "REST", grpcServiceId: "g1" })).toBe(true);
+    expect(isSourceManagedTool({ integrationType: "REST", gateway_id: "gateway-1" })).toBe(true);
+    expect(isSourceManagedTool({ integrationType: "REST" })).toBe(false);
+    expect(isSourceManagedTool(null)).toBe(false);
+  });
+});
+
+describe("Tool package import", () => {
+  const mountPackageImport = () => {
+    document.body.innerHTML = `
+      <input id="tool-package-file" type="file" />
+      <span id="tool-package-file-name"></span>
+      <select id="tool-package-conflict-strategy"><option value="update" selected>Update</option></select>
+      <div id="tool-package-status" class="hidden"></div>
+      <section id="tool-package-preview" class="hidden"></section>
+      <section id="tool-package-result" class="hidden"></section>
+      <button id="tool-package-preview-btn" disabled>Preview Package</button>
+      <button id="tool-package-import-btn" disabled>Confirm Import</button>
+      <input id="show-inactive-tools" type="checkbox" />
+    `;
+    window.htmx = { trigger: vi.fn() };
+    return document.getElementById("tool-package-file");
+  };
+
+  test("requires preview before importing a selected package", async () => {
+    window.ROOT_PATH = "/forge";
+    const input = mountPackageImport();
+    const file = new File(["zip bytes"], "portable.toolpkg.zip", {
+      type: "application/zip",
+    });
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file],
+    });
+
+    expect(handleToolPackageFileSelect(input)).toBe(true);
+    expect(document.getElementById("tool-package-file-name").textContent).toBe(
+      "portable.toolpkg.zip"
+    );
+    expect(document.getElementById("tool-package-preview-btn").disabled).toBe(
+      false
+    );
+
+    fetchWithTimeout
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            ready: true,
+            items: [
+              {
+                name: "example.Greeter.SayHello",
+                integrationType: "gRPC",
+                status: "ready",
+                action: "activate_and_sync",
+                generatedTools: ["example.Greeter.SayHello"],
+              },
+            ],
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            status: "completed",
+            createdServices: 0,
+            syncedGrpcTools: 1,
+            createdTools: 0,
+            updatedTools: 0,
+            skippedTools: 0,
+          }),
+      });
+
+    await expect(previewToolPackageImport()).resolves.toMatchObject({
+      ready: true,
+    });
+    expect(fetchWithTimeout).toHaveBeenNthCalledWith(
+      1,
+      "/forge/admin/tools/import/package/preview",
+      expect.objectContaining({ method: "POST", body: file })
+    );
+    expect(document.getElementById("tool-package-preview").textContent).toContain(
+      "example.Greeter.SayHello"
+    );
+    expect(document.getElementById("tool-package-import-btn").disabled).toBe(
+      false
+    );
+
+    await expect(confirmToolPackageImport()).resolves.toMatchObject({
+      status: "completed",
+    });
+    expect(fetchWithTimeout).toHaveBeenNthCalledWith(
+      2,
+      "/forge/admin/tools/import/package?conflict_strategy=update",
+      expect.objectContaining({ method: "POST", body: file })
+    );
+    expect(document.getElementById("tool-package-result").textContent).toContain(
+      "Synced gRPC Tools"
+    );
+    expect(window.htmx.trigger).toHaveBeenCalled();
+  });
+
+  test("rejects files that are not Tool packages", () => {
+    const input = mountPackageImport();
+    const file = new File(["json"], "tools.json", {
+      type: "application/json",
+    });
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file],
+    });
+
+    expect(handleToolPackageFileSelect(input)).toBe(false);
+    expect(document.getElementById("tool-package-status").textContent).toContain(
+      ".toolpkg.zip"
+    );
+  });
+
+  test("keeps confirmation disabled when feature-gated gRPC items are blocked", async () => {
+    window.ROOT_PATH = "/forge";
+    const input = mountPackageImport();
+    const file = new File(["grpc bundle"], "grpc.toolpkg.zip", {
+      type: "application/zip",
+    });
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file],
+    });
+    handleToolPackageFileSelect(input);
+    fetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ready: false,
+        items: [
+          {
+            name: "example.Greeter.SayHello",
+            integrationType: "gRPC",
+            status: "blocked",
+            reason: "gRPC support is disabled",
+          },
+        ],
+      }),
+    });
+
+    await expect(previewToolPackageImport()).resolves.toMatchObject({
+      ready: false,
+    });
+
+    expect(document.getElementById("tool-package-preview").textContent).toContain(
+      "gRPC support is disabled"
+    );
+    expect(document.getElementById("tool-package-import-btn").disabled).toBe(
+      true
+    );
+    expect(document.getElementById("tool-package-status").textContent).toContain(
+      "blocked items"
+    );
+  });
+
+  test("discards a stale preview when another package is selected", async () => {
+    window.ROOT_PATH = "/forge";
+    const input = mountPackageImport();
+    const firstFile = new File(["first"], "first.toolpkg.zip", {
+      type: "application/zip",
+    });
+    const secondFile = new File(["second"], "second.toolpkg.zip", {
+      type: "application/zip",
+    });
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [firstFile],
+    });
+    handleToolPackageFileSelect(input);
+
+    let resolveFirstPreview;
+    fetchWithTimeout.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFirstPreview = resolve;
+      })
+    );
+    const firstPreview = previewToolPackageImport();
+
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [secondFile],
+    });
+    handleToolPackageFileSelect(input);
+    resolveFirstPreview({
+      ok: true,
+      json: async () => ({
+        ready: true,
+        items: [{ name: "first.Tool", status: "ready" }],
+      }),
+    });
+
+    await expect(firstPreview).resolves.toBeNull();
+    expect(document.getElementById("tool-package-file-name").textContent).toBe(
+      "second.toolpkg.zip"
+    );
+    expect(document.getElementById("tool-package-import-btn").disabled).toBe(
+      true
+    );
+    await expect(confirmToolPackageImport()).resolves.toBeNull();
+    expect(fetchWithTimeout).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1013,6 +1452,45 @@ describe("viewTool - enhanced", () => {
     expect(details.innerHTML).toContain("Custom Headers");
     consoleSpy.mockRestore();
   });
+
+  test("preserves zero values and uses N/A only for missing metrics", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const details = document.createElement("div");
+    details.id = "tool-details";
+    document.body.appendChild(details);
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "t-zero",
+          name: "zero-metrics-tool",
+          description: "",
+          inputSchema: {},
+          metrics: {
+            totalExecutions: 0,
+            successfulExecutions: 0,
+            failedExecutions: 0,
+            failureRate: 0,
+            minResponseTime: 0,
+            maxResponseTime: null,
+          },
+        }),
+    });
+
+    await viewTool("t-zero");
+
+    expect(details.querySelector(".metric-total").textContent).toBe("0");
+    expect(details.querySelector(".metric-success").textContent).toBe("0");
+    expect(details.querySelector(".metric-failed").textContent).toBe("0");
+    expect(details.querySelector(".metric-failure-rate").textContent).toBe("0");
+    expect(details.querySelector(".metric-min-time").textContent).toBe("0");
+    expect(details.querySelector(".metric-max-time").textContent).toBe("N/A");
+    expect(details.querySelector(".tool-description").textContent).toBe("");
+    consoleSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1120,6 +1598,74 @@ describe("editTool - enhanced", () => {
 
     await editTool("t1");
     expect(typeField.disabled).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  test("marks gRPC Tool fields as source-managed and read-only", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "grpc-1",
+          name: "catalog.v1.Catalog/GetItem",
+          url: "dns:///catalog:50051",
+          integrationType: "gRPC",
+          grpcServiceId: "service-1",
+          requestType: "SSE",
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+        }),
+    });
+
+    const editForm = document.createElement("form");
+    editForm.id = "edit-tool-form";
+    document.body.appendChild(editForm);
+
+    const addField = (tagName, id) => {
+      const field = document.createElement(tagName);
+      field.id = id;
+      editForm.appendChild(field);
+      return field;
+    };
+    const nameField = addField("input", "edit-tool-name");
+    const urlField = addField("input", "edit-tool-url");
+    const typeField = addField("select", "edit-tool-type");
+    ["REST", "MCP"].forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      typeField.appendChild(option);
+    });
+    const requestTypeField = addField("select", "edit-tool-request-type");
+    const headersField = addField("textarea", "edit-tool-headers");
+    const schemaField = addField("textarea", "edit-tool-schema");
+    const outputSchemaField = addField(
+      "textarea",
+      "edit-tool-output-schema"
+    );
+    const annotationsField = addField("textarea", "edit-tool-annotations");
+
+    await editTool("grpc-1");
+
+    expect(editForm.querySelector("#edit-tool-source-managed-notice").textContent).toContain(
+      "gRPC Tool"
+    );
+    expect(nameField.readOnly).toBe(true);
+    expect(urlField.readOnly).toBe(true);
+    expect(typeField.value).toBe("gRPC");
+    expect(typeField.disabled).toBe(true);
+    expect(requestTypeField.disabled).toBe(true);
+    expect(headersField.readOnly).toBe(true);
+    expect(schemaField.readOnly).toBe(true);
+    expect(outputSchemaField.readOnly).toBe(true);
+    expect(annotationsField.readOnly).toBe(false);
+    expect(editForm.querySelector('input[name="source_managed"]').value).toBe(
+      "true"
+    );
+    expect(openModal).toHaveBeenCalledWith("tool-edit-modal");
     consoleSpy.mockRestore();
   });
 

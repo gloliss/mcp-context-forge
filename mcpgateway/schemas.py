@@ -775,6 +775,7 @@ class ToolCreate(BaseModel):
     allow_auto: bool = False  # Internal flag to allow system-initiated A2A tool creation
 
     name: str = Field(..., description="Unique name for the tool")
+    custom_name: Optional[str] = Field(None, description="Optional local invocation name; defaults to name")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
@@ -826,9 +827,9 @@ class ToolCreate(BaseModel):
         """
         return validate_tags_field(v)
 
-    @field_validator("name")
+    @field_validator("name", "custom_name")
     @classmethod
-    def validate_name(cls, v: str) -> str:
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
         """Ensure tool names follow MCP naming conventions
 
         Args:
@@ -849,7 +850,7 @@ class ToolCreate(BaseModel):
                 ...
             ValueError: ...
         """
-        return SecurityValidator.validate_tool_name(v)
+        return SecurityValidator.validate_tool_name(v) if v is not None else None
 
     @field_validator("url")
     @classmethod
@@ -1180,6 +1181,8 @@ class ToolCreate(BaseModel):
         allow_auto = values.get("allow_auto", False)
         if integration_type == "MCP":
             raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - tools will be auto-discovered and registered with integration_type='MCP'.")
+        if integration_type == "gRPC":
+            raise ValueError("Cannot manually create gRPC tools. Add or import a gRPC service schema - tools will be generated from its descriptor artifact.")
         if integration_type == "A2A" and not allow_auto:
             raise ValueError("Cannot manually create A2A tools. Add A2A agents via the A2A interface - tools will be auto-created when agents are associated with servers.")
         return values
@@ -1357,6 +1360,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     Similar to ToolCreate but all fields are optional to allow partial updates.
     """
 
+    expected_version: Optional[int] = Field(None, ge=1, description="Current tool version expected by the caller; rejects stale updates when provided")
     name: Optional[str] = Field(None, description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
@@ -1385,7 +1389,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
     header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
     timeout_ms: Optional[int] = Field(default=None, gt=0, le=600_000, description="Optional per-tool timeout override in milliseconds (maximum 600 seconds); otherwise the protocol default applies")
-    expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
+    expose_passthrough: Optional[bool] = Field(None, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
@@ -1844,6 +1848,7 @@ class ToolRead(BaseModelWithConfigDict):
     reachable: bool
     gateway_id: Optional[str]
     grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
+    grpc_schema_artifact_id: Optional[str] = Field(None, description="ID of the immutable gRPC schema artifact that produced this tool revision")
     sql_table_id: Optional[str] = Field(None, description="ID of the SQL table backing a generated SQL tool")
     source_operation: Optional[str] = Field(None, description="Source operation such as query, insert, update, or delete")
     execution_count: Optional[int] = Field(None)
@@ -8415,6 +8420,8 @@ class GrpcToolSyncPreview(BaseModel):
     disabled_tools: List[str] = Field(default_factory=list)
     methods_needing_reapproval: List[str] = Field(default_factory=list)
     warning: Optional[str] = None
+
+
 class GrpcRegistrySchemaVersionRead(BaseModel):
     """One schema version in the registry view, without descriptor bytes."""
 
@@ -8537,6 +8544,8 @@ class GrpcDataLineageRead(BaseModel):
     relationship_semantics: str = Field(
         default="API/SQL bindings describe catalog/impact metadata; they do not imply that the gRPC request directly executes SQL."
     )
+
+
 class SQLDataSourceCreate(BaseModel):
     """Create an encrypted external SQL data source."""
 

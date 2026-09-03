@@ -781,14 +781,17 @@ export const handleEditToolFormSubmit = async function (event) {
     // Basic validation before touching editors
     const name = form.elements["name"]?.value;
     const url = form.elements["url"]?.value;
-    const nameValidation = validateInputName(name, "tool");
-    const urlValidation = validateUrl(url);
+    const sourceManaged = form.dataset.sourceManaged === "true";
+    if (!sourceManaged) {
+      const nameValidation = validateInputName(name, "tool");
+      const urlValidation = validateUrl(url);
 
-    if (!nameValidation.valid) {
-      throw new Error(nameValidation.error);
-    }
-    if (!urlValidation.valid) {
-      throw new Error(urlValidation.error);
+      if (!nameValidation.valid) {
+        throw new Error(nameValidation.error);
+      }
+      if (!urlValidation.valid) {
+        throw new Error(urlValidation.error);
+      }
     }
 
     // Flush all CodeMirror editors to their underlying <textarea> elements
