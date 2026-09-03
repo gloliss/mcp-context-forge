@@ -24,6 +24,7 @@ Examples:
 
 # Standard
 import logging
+import secrets
 import time
 import traceback
 from typing import Callable, Optional
@@ -86,22 +87,43 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     Captures every HTTP request as a trace with timing, status codes,
     and user context. Automatically creates spans for the request lifecycle.
 
-    This middleware is disabled by default and can be enabled via the
-    MCPGATEWAY_OBSERVABILITY_ENABLED environment variable.
+    This middleware is enabled by default and can be disabled explicitly with
+    ``OBSERVABILITY_ENABLED=false``.
     """
 
-    def __init__(self, app, enabled: bool = None, service: Optional[ObservabilityService] = None):
+    def __init__(
+        self,
+        app,
+        enabled: bool = None,
+        service: Optional[ObservabilityService] = None,
+        trace_http_requests: Optional[bool] = None,
+        sample_rate: Optional[float] = None,
+    ):
         """Initialize the observability middleware.
 
         Args:
             app: ASGI application
             enabled: Whether observability is enabled (defaults to settings)
             service: Optional ObservabilityService instance
+            trace_http_requests: Whether HTTP requests are traced (defaults to settings)
+            sample_rate: Fraction of eligible HTTP requests to trace (defaults to settings)
+
+        Raises:
+            ValueError: If ``sample_rate`` is outside the inclusive range 0.0-1.0.
         """
         super().__init__(app)
         self.enabled = enabled if enabled is not None else getattr(settings, "observability_enabled", False)
+        self.trace_http_requests = trace_http_requests if trace_http_requests is not None else getattr(settings, "observability_trace_http_requests", True)
+        self.sample_rate = sample_rate if sample_rate is not None else getattr(settings, "observability_sample_rate", 1.0)
+        if not 0.0 <= self.sample_rate <= 1.0:
+            raise ValueError("sample_rate must be between 0.0 and 1.0")
         self.service = service or ObservabilityService()
-        logger.info(f"Observability middleware initialized (enabled={self.enabled})")
+        logger.info(
+            "Observability middleware initialized (enabled=%s, trace_http_requests=%s, sample_rate=%s)",
+            self.enabled,
+            self.trace_http_requests,
+            self.sample_rate,
+        )
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request and create observability trace.
@@ -119,12 +141,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         Raises:
             Exception: Re-raises any exception from request processing after logging
         """
-        # Skip if observability is disabled
-        if not self.enabled:
+        # Keep manual/service-level observability available while allowing operators
+        # to disable automatic HTTP request traces independently.
+        if not self.enabled or not self.trace_http_requests:
             return await call_next(request)
 
         # Skip health checks and static files to reduce noise
         if should_skip_observability(request.url.path):
+            return await call_next(request)
+
+        # Head-sample only eligible requests. A secure RNG avoids security-scanner
+        # warnings while keeping the decision independent for each request.
+        if self.sample_rate <= 0.0:
+            return await call_next(request)
+        if self.sample_rate < 1.0 and secrets.randbelow(10**9) / 1e9 >= self.sample_rate:
             return await call_next(request)
 
         # Extract request context

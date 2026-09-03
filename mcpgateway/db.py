@@ -3484,6 +3484,8 @@ class Tool(Base):
     # Federation relationship with a gRPC service
     grpc_service_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grpc_services.id", ondelete="CASCADE"))
     grpc_service: Mapped[Optional["GrpcService"]] = relationship("GrpcService", back_populates="tools")
+    grpc_schema_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("grpc_schema_artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    grpc_schema_artifact: Mapped[Optional["GrpcSchemaArtifact"]] = relationship("GrpcSchemaArtifact", back_populates="tools")
 
     # Direct binding for generated SQL tools. Manual catalog bindings are stored
     # separately and deliberately do not grant database access.
@@ -5390,6 +5392,8 @@ class GrpcSchemaArtifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="grpc_schema_artifact")
+
 
 class GrpcHealthSample(Base):
     """Bounded gRPC health-check sample used for status trends."""
@@ -6405,11 +6409,16 @@ def get_for_update(
     if options:
         stmt = stmt.options(*options)
 
+    # A caller may already have loaded this identity earlier in the request.
+    # Refresh it from the locking SELECT instead of returning stale state from
+    # SQLAlchemy's identity map (critical for version/conflict checks).
+    stmt = stmt.execution_options(populate_existing=True)
+
     if dialect != "postgresql":
         # SQLite and others: no FOR UPDATE support
         # Use db.get optimization only when querying by primary key without loader options
         if not options and where is None and entity_id is not None:
-            return db.get(model, entity_id)
+            return db.get(model, entity_id, populate_existing=True)
         return db.execute(stmt).scalar_one_or_none()
 
     # PostgreSQL: set lock timeout if specified

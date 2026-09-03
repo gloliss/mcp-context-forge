@@ -282,7 +282,9 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
         tags=[],
     )
 
-    export_service.tool_service.list_tools.return_value = ([local_tool, mcp_tool], None)
+    grpc_tool = local_tool.model_copy(update={"id": "tool3", "original_name": "grpc_tool", "integration_type": "gRPC", "grpc_service_id": "grpc1"})
+
+    export_service.tool_service.list_tools.return_value = ([local_tool, mcp_tool, grpc_tool], None)
 
     # Execute export
     tools = await export_service._export_tools(mock_db, None, False)
@@ -291,6 +293,7 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
     assert len(tools) == 1
     assert tools[0]["name"] == "local_tool"
     assert tools[0]["integration_type"] == "REST"
+    assert tools[0]["tool_version"] == 1
 
 
 @pytest.mark.asyncio

@@ -104,7 +104,7 @@ http://localhost:4444/admin/observability
 
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
-| `OBSERVABILITY_ENABLED` | Master switch for internal observability | `false` | `true`, `false` |
+| `OBSERVABILITY_ENABLED` | Master switch for internal observability | `true` | `true`, `false` |
 | `OBSERVABILITY_TRACE_HTTP_REQUESTS` | Auto-trace HTTP requests | `true` | `true`, `false` |
 
 ### Retention & Limits

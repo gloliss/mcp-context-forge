@@ -9,8 +9,10 @@ Module documentation...
 
 import pytest
 from unittest.mock import MagicMock, patch
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from mcpgateway.config import settings
+from mcpgateway.db import ObservabilityEvent, ObservabilityMetric, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.services.observability_service import (
     ObservabilityService,
     parse_traceparent,
@@ -19,7 +21,9 @@ from mcpgateway.services.observability_service import (
     format_traceparent,
     ensure_timezone_aware,
 )
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import sessionmaker
 
 
 @pytest.fixture
@@ -965,6 +969,94 @@ def test_delete_old_traces_success(mock_session_factory):
     assert deleted == 2
 
 
+def test_enforce_trace_limits_retention_cap_and_related_rows(monkeypatch):
+    """Retention and the count cap remove dependent data with FK semantics."""
+    engine = create_engine("sqlite:///:memory:")
+    with engine.connect() as connection:
+        connection.execute(text("PRAGMA foreign_keys=ON"))
+
+    for table in (ObservabilityTrace.__table__, ObservabilitySpan.__table__, ObservabilityEvent.__table__, ObservabilityMetric.__table__):
+        table.create(engine)
+
+    session_factory = sessionmaker(bind=engine)
+    now = datetime.now(timezone.utc)
+    with session_factory() as db:
+        db.add_all(
+            [
+                ObservabilityTrace(trace_id="expired", name="expired", start_time=now - timedelta(days=8)),
+                ObservabilityTrace(trace_id="oldest", name="oldest", start_time=now - timedelta(days=3)),
+                ObservabilityTrace(trace_id="middle", name="middle", start_time=now - timedelta(days=2)),
+                ObservabilityTrace(trace_id="newest", name="newest", start_time=now - timedelta(days=1)),
+            ]
+        )
+        db.commit()
+        db.add_all(
+            [
+                ObservabilitySpan(span_id="expired-span", trace_id="expired", name="span", kind="server", start_time=now - timedelta(days=8)),
+                ObservabilitySpan(span_id="oldest-span", trace_id="oldest", name="span", kind="server", start_time=now - timedelta(days=3)),
+            ]
+        )
+        db.commit()
+        db.add_all(
+            [
+                ObservabilityEvent(span_id="expired-span", name="event", timestamp=now - timedelta(days=8)),
+                ObservabilityEvent(span_id="oldest-span", name="event", timestamp=now - timedelta(days=3)),
+                ObservabilityMetric(name="metric", metric_type="counter", value=1.0, trace_id="expired", timestamp=now),
+                ObservabilityMetric(name="metric", metric_type="counter", value=1.0, trace_id="oldest", timestamp=now),
+            ]
+        )
+        db.commit()
+
+    monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", session_factory)
+    service = ObservabilityService()
+
+    assert service.enforce_trace_limits(retention_days=7, max_traces=2) == 2
+    assert service.enforce_trace_limits(retention_days=7, max_traces=2) == 0
+
+    with session_factory() as db:
+        assert {trace.trace_id for trace in db.query(ObservabilityTrace).all()} == {"middle", "newest"}
+        assert db.query(ObservabilitySpan).count() == 0
+        assert db.query(ObservabilityEvent).count() == 0
+        assert db.query(ObservabilityMetric).count() == 2
+        assert {metric.trace_id for metric in db.query(ObservabilityMetric).all()} == {None}
+
+    with (
+        patch.object(settings, "observability_trace_retention_days", 7),
+        patch.object(settings, "observability_max_traces", 2),
+    ):
+        service.start_trace("latest", trace_id="latest")
+
+    with session_factory() as db:
+        assert db.query(ObservabilityTrace).count() == 1
+        assert {trace.trace_id for trace in db.query(ObservabilityTrace).all()} == {"latest"}
+
+    engine.dispose()
+
+
+def test_trace_limit_maintenance_is_amortized_to_avoid_per_request_scan():
+    """Maintenance reserves enough capacity for the next per-worker batch."""
+    service = ObservabilityService()
+
+    assert service._trace_maintenance_target(100_000) == 99_900
+    assert service._trace_maintenance_target(2) == 1
+    with patch("mcpgateway.services.observability_service.time.monotonic", return_value=10.0):
+        assert service._trace_maintenance_due() is True
+        assert all(service._trace_maintenance_due() is False for _ in range(99))
+        assert service._trace_maintenance_due() is True
+
+
+def test_start_trace_cleanup_failure_remains_best_effort(mock_session_factory):
+    """A failed scheduled maintenance pass must not escape start_trace."""
+    _, mock_session = mock_session_factory
+    mock_session.flush.side_effect = SQLAlchemyError("cleanup failed")
+
+    trace_id = ObservabilityService().start_trace("test")
+
+    assert trace_id
+    mock_session.rollback.assert_called_once()
+    mock_session.commit.assert_not_called()
+
+
 def test_record_token_usage_auto_cost_and_total(mock_session_factory):
     mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
@@ -1007,7 +1099,6 @@ def test_query_traces_invalid_limit_and_order_raises(mock_db):
 # =============================================================================
 
 
-@patch("mcpgateway.services.observability_service.ObservabilityTrace", MagicMock())
 def test_start_trace_session_close_failure(mock_session_factory):
     """Test that start_trace handles session close failures gracefully."""
     mock_factory, mock_session = mock_session_factory

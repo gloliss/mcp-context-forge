@@ -353,13 +353,37 @@ export const showTab = function (tabName) {
       tabName !== "observability"
     ) {
       console.log("Leaving observability tab, triggering cleanup...");
-      // Destroy all observability charts
-      window.chartRegistry.destroyByPrefix("metrics-");
-      window.chartRegistry.destroyByPrefix("tools-");
-      window.chartRegistry.destroyByPrefix("prompts-");
-      window.chartRegistry.destroyByPrefix("resources-");
+      // Destroy all observability charts. Cleanup is best-effort and must never
+      // prevent the requested tab from being shown.
+      try {
+        const chartRegistry = window.Admin && window.Admin.chartRegistry;
+        if (
+          chartRegistry &&
+          typeof chartRegistry.destroyByPrefix === "function"
+        ) {
+          ["metrics-", "tools-", "prompts-", "resources-"].forEach((prefix) => {
+            try {
+              chartRegistry.destroyByPrefix(prefix);
+            } catch (error) {
+              console.warn(
+                `Failed to destroy observability charts with prefix ${prefix}:`,
+                error
+              );
+            }
+          });
+        }
+      } catch (error) {
+        console.warn(
+          "Failed to access the observability chart registry:",
+          error
+        );
+      }
       // Dispatch event so Alpine components can stop intervals and reset state
-      document.dispatchEvent(new CustomEvent("observability:leave"));
+      try {
+        document.dispatchEvent(new CustomEvent("observability:leave"));
+      } catch (error) {
+        console.warn("Failed to dispatch observability cleanup event:", error);
+      }
     }
 
     // Clean up URL params from other tabs when switching tabs
@@ -382,6 +406,14 @@ export const showTab = function (tabName) {
     const panel = safeGetElement(`${tabName}-panel`);
     if (panel) {
       panel.classList.remove("hidden");
+
+      if (tabName === "observability") {
+        try {
+          document.dispatchEvent(new CustomEvent("observability:enter"));
+        } catch (error) {
+          console.warn("Failed to dispatch observability enter event:", error);
+        }
+      }
 
       // Reset scroll position on the main content area
       // Use requestAnimationFrame to ensure DOM updates have completed

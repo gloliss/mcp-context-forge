@@ -1024,7 +1024,7 @@ RPO/RTO 必须由业务分级确定并通过恢复演练证明。只验证“备
 | Direct Proxy Gateway | 默认关闭的高级模式 | 只有完成独立缓存、认证和调用路径验证后启用 |
 | Plugins | 框架初始关闭；Compose/Helm 开启 | 核对最终配置；逐个完成供应链、安全和性能评审 |
 | Audit / Security Logging | 源码默认关闭 | 合规需要时显式开启、验证递归脱敏与可靠交付 |
-| Internal Observability / DB Logs | 源码/Compose 开启，Helm 关闭；DB Logs 关闭 | 按最终渲染配置验收；调整采样率和保留期 |
+| Internal Observability / DB Structured Logs | 源码/Compose 开启，Helm 关闭；DB Structured Logs 关闭 | 按最终渲染配置验收；调整采样率和保留期，高敏或高吞吐场景可显式关闭 |
 | Metrics | 源码默认关闭，发布清单常覆盖开启 | 私网抓取并修补 Prometheus 端点 RBAC 缺口 |
 | Dynamic Client Registration | 当前源码默认开启且空 issuer 列表不收窄 | 不使用时关闭；使用时设精确 issuer 白名单 |
 | Redis Cache | 不是源码默认，但为多副本推荐 | 生产多副本使用 `CACHE_TYPE=redis` |

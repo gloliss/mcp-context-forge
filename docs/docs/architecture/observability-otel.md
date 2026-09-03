@@ -803,7 +803,7 @@ OTEL_BSP_MAX_QUEUE_SIZE=4096
 
 ### No Traces Appearing
 
-1. **Check OTEL is enabled**: `OBSERVABILITY_ENABLED=true`
+1. **Check external OTEL export is enabled**: `OTEL_ENABLE_OBSERVABILITY=true`
 2. **Verify exporter endpoint**: Test connectivity to OTLP endpoint
 3. **Check service name**: Ensure `OTEL_SERVICE_NAME` is set correctly
 4. **Review logs**: Look for "OpenTelemetry initialized" message

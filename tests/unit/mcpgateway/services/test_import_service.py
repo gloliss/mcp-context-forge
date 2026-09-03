@@ -150,6 +150,15 @@ async def test_validate_entity_fields_missing_required(import_service):
     assert "missing required field: name" in str(excinfo.value)
 
 
+@pytest.mark.parametrize("integration_type", ["MCP", "gRPC", "A2A", "SQL"])
+def test_validate_entity_fields_rejects_source_managed_tool_without_package(import_service, integration_type):
+    """Legacy JSON imports must not create generated Tools without parents."""
+    entity_data = {"name": "generated", "url": "https://example.com", "integration_type": integration_type}
+
+    with pytest.raises(ImportValidationError, match="dependency-aware Tool package"):
+        import_service._validate_entity_fields("tools", entity_data, 0)
+
+
 @pytest.mark.asyncio
 async def test_import_configuration_success(import_service, mock_db, valid_import_data):
     """Test successful configuration import."""

@@ -11,9 +11,11 @@ branch coverage beyond the current 63%.
 
 # Standard
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+from threading import Barrier
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, patch
@@ -23,7 +25,9 @@ from urllib.parse import urlparse
 import jsonschema
 import orjson
 import pytest
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.orm import sessionmaker
 
 # First-Party
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
@@ -38,6 +42,7 @@ from mcpgateway.services.tool_service import (
     _get_registry_cache,
     _get_tool_lookup_cache,
     _get_validator_class_and_check,
+    _reserve_tool_version,
     extract_using_jq,
     ToolError,
     ToolInvocationError,
@@ -47,6 +52,7 @@ from mcpgateway.services.tool_service import (
     ToolService,
     ToolTimeoutError,
     ToolValidationError,
+    ToolVersionConflictError,
 )
 
 # ─── autouse fixtures ────────────────────────────────────────────────────────
@@ -264,6 +270,7 @@ def _make_tool_update(**overrides) -> MagicMock:
     """Build a ToolUpdate MagicMock with all fields defaulting to None."""
     update = MagicMock(spec=ToolUpdate)
     defaults = dict(
+        expected_version=None,
         name=None,
         custom_name=None,
         displayName=None,
@@ -376,6 +383,15 @@ class TestExceptionClasses:
         err = ToolLockConflictError("locked")
         assert isinstance(err, ToolError)
         assert str(err) == "locked"
+
+    def test_tool_version_conflict_error(self):
+        """ToolVersionConflictError exposes versions for an HTTP 409 response."""
+        err = ToolVersionConflictError("tool-1", expected_version=2, current_version=3)
+        assert isinstance(err, ToolError)
+        assert err.tool_id == "tool-1"
+        assert err.expected_version == 2
+        assert err.current_version == 3
+        assert str(err) == "Tool tool-1 version conflict: expected 2, current 3"
 
     def test_tool_validation_error(self):
         """ToolValidationError should be a subclass of ToolError."""
@@ -1412,6 +1428,207 @@ class TestUpdateTool:
                     await tool_service.update_tool(db, "tool-1", tool_update, user_email="nope@x.com")
 
     @pytest.mark.asyncio
+    async def test_update_tool_rejects_stale_expected_version(self, tool_service, mock_tool):
+        """A stale expected_version fails before mutating or committing the tool."""
+        db = MagicMock()
+        mock_tool.version = 4
+        old_description = mock_tool.description
+        notify = AsyncMock()
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), patch.object(tool_service, "_notify_tool_updated", notify):
+            with pytest.raises(ToolVersionConflictError) as exc_info:
+                await tool_service.update_tool(db, "tool-1", ToolUpdate(expected_version=3, description="stale write"))
+
+        assert exc_info.value.expected_version == 3
+        assert exc_info.value.current_version == 4
+        assert mock_tool.description == old_description
+        db.rollback.assert_called_once()
+        db.commit.assert_not_called()
+        notify.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_tool_matching_version_increments_on_semantic_change(self, tool_service, mock_tool):
+        """A matching expected_version permits one semantic version increment."""
+        db = MagicMock()
+        mock_tool.version = 4
+
+        current_version = MagicMock()
+        current_version.scalar_one_or_none.return_value = 4
+        reservation = MagicMock()
+        reservation.rowcount = 1
+        db.execute.side_effect = [current_version, reservation]
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "tool-1", "version": 5}),
+        ):
+            result = await tool_service.update_tool(db, "tool-1", ToolUpdate(expected_version=4, description="changed"))
+
+        assert result["version"] == 5
+        assert mock_tool.description == "changed"
+        assert mock_tool.version == 5
+
+    def test_tool_version_compare_and_swap_is_atomic_on_sqlite(self, tmp_path):
+        """Two SQLite writers with the same expected version produce one winner."""
+        engine = create_engine(f"sqlite:///{tmp_path / 'tool-version-cas.db'}", connect_args={"timeout": 5})
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE tools (id VARCHAR(36) PRIMARY KEY, version INTEGER NOT NULL, updated_at DATETIME)"))
+            connection.execute(text("INSERT INTO tools (id, version) VALUES ('tool-1', 1)"))
+
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+        start = Barrier(2)
+
+        def writer() -> tuple[str, int]:
+            """Attempt one version reservation from an independent session."""
+            with session_factory() as session:
+                start.wait(timeout=5)
+                try:
+                    next_version = _reserve_tool_version(session, "tool-1", 1)
+                    session.commit()
+                    return "updated", next_version
+                except ToolVersionConflictError as exc:
+                    session.rollback()
+                    return "conflict", exc.current_version
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                outcomes = [future.result(timeout=10) for future in (executor.submit(writer), executor.submit(writer))]
+            assert sorted(outcomes) == [("conflict", 2), ("updated", 2)]
+            with engine.connect() as connection:
+                assert connection.execute(text("SELECT version FROM tools WHERE id = 'tool-1'")).scalar_one() == 2
+        finally:
+            engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_update_tool_compare_and_swap_rejects_concurrent_writer(self, tool_service, mock_tool):
+        """A writer that wins after the initial version read makes the atomic reservation fail."""
+        db = MagicMock()
+        mock_tool.version = 4
+        initial_version = MagicMock()
+        initial_version.scalar_one_or_none.return_value = 4
+        lost_reservation = MagicMock()
+        lost_reservation.rowcount = 0
+        latest_version = MagicMock()
+        latest_version.scalar_one_or_none.return_value = 5
+        db.execute.side_effect = [initial_version, lost_reservation, latest_version]
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
+            with pytest.raises(ToolVersionConflictError) as exc_info:
+                await tool_service.update_tool(db, "tool-1", ToolUpdate(expected_version=4, description="concurrent change"))
+
+        assert exc_info.value.current_version == 5
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_source_managed_tool_accepts_identical_echoed_name_for_enrichment(self, tool_service, mock_tool):
+        """ToolOps-style metadata enrichment may echo an unchanged generated name."""
+        db = MagicMock()
+        mock_tool.integration_type = "gRPC"
+        mock_tool.grpc_service_id = "grpc-1"
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool),
+            patch.object(tool_service, "_check_tool_name_conflict"),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "tool-1", "version": 5}),
+        ):
+            result = await tool_service.update_tool(db, "tool-1", ToolUpdate(name=mock_tool.name, description="Enriched description"))
+
+        assert result["version"] == 5
+        assert mock_tool.description == "Enriched description"
+
+    @pytest.mark.asyncio
+    async def test_update_tool_noop_is_side_effect_free(self, tool_service, mock_tool):
+        """A semantic no-op keeps its version without writes, events, audit, or cache work."""
+        db = MagicMock()
+        mock_tool.version = 4
+        notify = AsyncMock()
+        registry_cache = AsyncMock()
+        lookup_cache = AsyncMock()
+        result_cache = AsyncMock()
+        admin_cache = MagicMock()
+        admin_cache.invalidate_tags = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool),
+            patch.object(tool_service, "_notify_tool_updated", notify),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "tool-1", "version": 4}),
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service._get_tool_result_cache", return_value=result_cache),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", admin_cache),
+            patch("mcpgateway.services.tool_service.audit_trail.log_action") as audit,
+        ):
+            result = await tool_service.update_tool(
+                db,
+                "tool-1",
+                ToolUpdate(expected_version=4, description=mock_tool.description),
+                modified_by="editor@example.com",
+            )
+
+        assert result["version"] == 4
+        assert mock_tool.version == 4
+        assert mock_tool.modified_by is None
+        db.commit.assert_not_called()
+        db.refresh.assert_not_called()
+        notify.assert_not_awaited()
+        audit.assert_not_called()
+        registry_cache.invalidate_tools.assert_not_awaited()
+        lookup_cache.invalidate.assert_not_awaited()
+        result_cache.invalidate_tool.assert_not_awaited()
+        admin_cache.invalidate_tags.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rejects_generated_source_fields(self, tool_service, mock_tool):
+        """Generated tools expose source-owned fields as read-only at the service boundary."""
+        db = MagicMock()
+        mock_tool.version = 2
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
+            with pytest.raises(ToolError, match="managed by the source service"):
+                await tool_service.update_tool(db, "tool-1", ToolUpdate(expected_version=2, url="https://other.example.com"))
+
+        assert mock_tool.url == "http://example.com/tools/test"
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_rest_tool_persists_passthrough_and_deprecated_fields(self, tool_service, mock_tool):
+        """Direct REST tools persist portable execution fields as one semantic revision."""
+        db = MagicMock()
+        mock_tool.version = 2
+        mock_tool.integration_type = "REST"
+        mock_tool.gateway_id = None
+        mock_tool.grpc_service_id = None
+        mock_tool.sql_table_id = None
+        mock_tool.path_template = "/old"
+        mock_tool.expose_passthrough = True
+        mock_tool.deprecated = False
+
+        current_version = MagicMock()
+        current_version.scalar_one_or_none.return_value = 2
+        reservation = MagicMock()
+        reservation.rowcount = 1
+        db.execute.side_effect = [current_version, reservation]
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "tool-1", "version": 3}),
+        ):
+            result = await tool_service.update_tool(
+                db,
+                "tool-1",
+                ToolUpdate(expected_version=2, path_template="/new", expose_passthrough=False, deprecated=True),
+            )
+
+        assert result["version"] == 3
+        assert mock_tool.path_template == "/new"
+        assert mock_tool.expose_passthrough is False
+        assert mock_tool.deprecated is True
+        assert mock_tool.version == 3
+
+    @pytest.mark.asyncio
     async def test_update_tool_integrity_error(self, tool_service, mock_tool):
         """update_tool should re-raise IntegrityError."""
         db = MagicMock()
@@ -1424,7 +1641,7 @@ class TestUpdateTool:
         tool_update.custom_name = None
         tool_update.displayName = None
         tool_update.url = None
-        tool_update.description = None
+        tool_update.description = "changed before commit"
         tool_update.integration_type = None
         tool_update.request_type = None
         tool_update.headers = None
@@ -1453,7 +1670,7 @@ class TestUpdateTool:
         tool_update.custom_name = None
         tool_update.displayName = None
         tool_update.url = None
-        tool_update.description = None
+        tool_update.description = "changed before commit"
         tool_update.integration_type = None
         tool_update.request_type = None
         tool_update.headers = None

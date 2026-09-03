@@ -5593,6 +5593,7 @@ class TestUpdateOrCreateTools:
         existing.auth_value = None
         existing.visibility = "public"
         existing.title = "old title"
+        existing.version = 3
 
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = [existing]
@@ -5617,6 +5618,7 @@ class TestUpdateOrCreateTools:
         assert existing.url == "http://new-url.com"
         assert existing.description == "new desc"
         assert existing.title == "new title"
+        assert existing.version == 4
 
     def test_none_tool_skipped(self, gateway_service, mock_gateway):
         db = MagicMock()

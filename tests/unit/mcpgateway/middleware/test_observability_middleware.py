@@ -48,6 +48,49 @@ async def test_dispatch_disabled(mock_request, mock_call_next):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_http_tracing_disabled(mock_request, mock_call_next):
+    service = MagicMock(spec=ObservabilityService)
+    middleware = ObservabilityMiddleware(app=None, enabled=True, service=service, trace_http_requests=False)
+
+    response = await middleware.dispatch(mock_request, mock_call_next)
+
+    assert response.status_code == 200
+    service.start_trace.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sample_rate_zero_skips_trace(mock_request, mock_call_next):
+    service = MagicMock(spec=ObservabilityService)
+    middleware = ObservabilityMiddleware(app=None, enabled=True, service=service, sample_rate=0.0)
+
+    with patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+        response = await middleware.dispatch(mock_request, mock_call_next)
+
+    assert response.status_code == 200
+    service.start_trace.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sampled_out_request_skips_trace(mock_request, mock_call_next):
+    service = MagicMock(spec=ObservabilityService)
+    middleware = ObservabilityMiddleware(app=None, enabled=True, service=service, sample_rate=0.25)
+
+    with (
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+        patch("mcpgateway.middleware.observability_middleware.secrets.randbelow", return_value=250_000_000),
+    ):
+        response = await middleware.dispatch(mock_request, mock_call_next)
+
+    assert response.status_code == 200
+    service.start_trace.assert_not_called()
+
+
+def test_invalid_sample_rate_rejected():
+    with pytest.raises(ValueError, match="sample_rate"):
+        ObservabilityMiddleware(app=None, enabled=True, sample_rate=1.01)
+
+
+@pytest.mark.asyncio
 async def test_dispatch_health_check_skipped(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     mock_request.url.path = "/health"

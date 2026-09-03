@@ -918,9 +918,9 @@ class TestDownstreamHeadersMetrics:
     @patch("mcpgateway.services.a2a_service.ObservabilityService")
     @patch("mcpgateway.services.a2a_service.settings")
     def test_metric_skipped_when_observability_disabled(self, mock_settings, mock_obs_service_class):
-        """Metric NOT recorded when OBSERVABILITY_ENABLED=false (default, no overhead)."""
+        """Metric is not recorded when OBSERVABILITY_ENABLED is explicitly disabled."""
         # Arrange
-        mock_settings.observability_enabled = False  # Default
+        mock_settings.observability_enabled = False
         mock_settings.enable_sensitive_header_passthrough = True
 
         downstream_headers = {

@@ -1,5 +1,6 @@
 <!-- API Metrics Dashboard -->
-<div class="space-y-6" x-data="apiMetricsDashboard()" x-init="init()">
+{% if observability_enabled and trace_http_requests and observability_sample_rate > 0 %}
+<div class="space-y-6" x-data="apiMetricsDashboard">
   <!-- Header with Time Range -->
   <div class="flex items-center justify-between">
     <div>
@@ -152,140 +153,34 @@
     </div>
   </div>
 </div>
-
-<script nonce="{{ csp_nonce(request) }}">
-window.apiMetricsDashboard = function apiMetricsDashboard() {
-  return {
-    timeRange: 24,
-    loading: false,
-    error: null,
-    stats: { total_traces: 0, success_count: 0, error_count: 0, avg_duration_ms: 0 },
-    percentileData: { timestamps: [], p50: [], p90: [], p95: [], p99: [] },
-    topErrors: [],
-    topSlow: [],
-
-    async init() {
-      await this.loadAll();
-    },
-
-    async loadAll() {
-      this.loading = true;
-      this.error = null;
-      try {
-        const rootPath = window.ROOT_PATH || '';
-        const [statsRes, pctRes, errRes, slowRes] = await Promise.all([
-          fetch(`${rootPath}/admin/observability/stats?hours=${this.timeRange}`),
-          fetch(`${rootPath}/admin/observability/metrics/percentiles?hours=${this.timeRange}&interval_minutes=${this.intervalForRange()}`),
-          fetch(`${rootPath}/admin/observability/metrics/top-errors?hours=${this.timeRange}&limit=10`),
-          fetch(`${rootPath}/admin/observability/metrics/top-slow?hours=${this.timeRange}&limit=10`),
-        ]);
-
-        const responses = [
-          ['Stats', statsRes],
-          ['Percentiles', pctRes],
-          ['Top errors', errRes],
-          ['Top slow', slowRes],
-        ];
-        const failed = responses.find(([, response]) => !response.ok);
-        if (failed) {
-          throw new Error(`${failed[0]} endpoint returned ${failed[1].status}`);
-        }
-
-        const [statsData, pctData, errData, slowData] = await Promise.all(responses.map(([, response]) => response.json()));
-        this.stats = statsData.stats || statsData;
-        this.percentileData = pctData;
-        this.topErrors = errData.endpoints || [];
-        this.topSlow = slowData.endpoints || [];
-      } catch (e) {
-        console.error('API Metrics Dashboard error:', e);
-        this.error = 'Failed to load metrics: ' + e.message;
-      } finally {
-        this.loading = false;
-      }
-    },
-
-    intervalForRange() {
-      if (this.timeRange <= 1) return 5;
-      if (this.timeRange <= 6) return 15;
-      if (this.timeRange <= 24) return 60;
-      return 360; // 7 days → 6h buckets
-    },
-
-    successRate() {
-      if (!this.stats.total_traces) return 0;
-      return (this.stats.success_count / this.stats.total_traces) * 100;
-    },
-
-    errorRate() {
-      if (!this.stats.total_traces) return 0;
-      return (this.stats.error_count / this.stats.total_traces) * 100;
-    },
-
-    successRateColor() {
-      const r = this.successRate();
-      if (r >= 99) return 'text-green-600 dark:text-green-400';
-      if (r >= 95) return 'text-yellow-600 dark:text-yellow-400';
-      return 'text-red-600 dark:text-red-400';
-    },
-
-    errorRateColor() {
-      const r = this.errorRate();
-      if (r <= 1) return 'text-green-600 dark:text-green-400';
-      if (r <= 5) return 'text-yellow-600 dark:text-yellow-400';
-      return 'text-red-600 dark:text-red-400';
-    },
-
-    latestPercentile(p) {
-      const values = this.percentileData[`p${p}`];
-      return Array.isArray(values) && values.length ? values[values.length - 1] : null;
-    },
-
-    timeRangeLabel() {
-      if (this.timeRange <= 1) return 'last hour';
-      if (this.timeRange <= 6) return 'last 6 hours';
-      if (this.timeRange <= 24) return 'last 24 hours';
-      return 'last 7 days';
-    },
-
-    // Formatting helpers
-    fmtCount(v) {
-      if (v == null) return '—';
-      if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
-      if (v >= 1000) return (v / 1000).toFixed(1) + 'K';
-      return String(v);
-    },
-
-    fmtPct(v) {
-      if (v == null) return '—';
-      return v.toFixed(1) + '%';
-    },
-
-    fmtMs(v) {
-      if (v == null) return '—';
-      if (v >= 1000) return (v / 1000).toFixed(1) + 's';
-      return Math.round(v) + ' ms';
-    },
-
-    truncateUrl(url, max) {
-      if (!url) return '';
-      return url.length > max ? url.substring(0, max) + '…' : url;
-    },
-
-    methodBadge(method) {
-      const m = (method || '').toUpperCase();
-      if (m === 'GET') return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
-      if (m === 'POST') return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
-      if (m === 'PUT' || m === 'PATCH') return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
-      if (m === 'DELETE') return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
-      return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
-    },
-
-    durationColor(ms) {
-      if (ms == null) return 'text-gray-600 dark:text-gray-400';
-      if (ms >= 1000) return 'text-red-600 dark:text-red-400';
-      if (ms >= 500) return 'text-yellow-600 dark:text-yellow-400';
-      return 'text-green-600 dark:text-green-400';
-    },
-  };
-};
-</script>
+{% elif not observability_enabled %}
+<div class="rounded-xl border border-amber-200 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-900/20">
+  <h2 class="text-xl font-semibold text-amber-900 dark:text-amber-200">API Metrics are disabled</h2>
+  <p class="mt-2 text-sm text-amber-800 dark:text-amber-300">
+    Set <code class="font-mono">OBSERVABILITY_ENABLED=true</code> and restart ContextForge to collect API performance metrics.
+  </p>
+  <p class="mt-2 text-sm text-amber-700 dark:text-amber-400">
+    Only requests received after observability is enabled are collected; earlier requests are not backfilled.
+  </p>
+</div>
+{% elif not trace_http_requests %}
+<div class="rounded-xl border border-amber-200 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-900/20">
+  <h2 class="text-xl font-semibold text-amber-900 dark:text-amber-200">API request tracing is disabled</h2>
+  <p class="mt-2 text-sm text-amber-800 dark:text-amber-300">
+    Set <code class="font-mono">OBSERVABILITY_TRACE_HTTP_REQUESTS=true</code> and restart ContextForge to collect API performance metrics.
+  </p>
+  <p class="mt-2 text-sm text-amber-700 dark:text-amber-400">
+    Only requests received after API request tracing is enabled are collected; earlier requests are not backfilled.
+  </p>
+</div>
+{% else %}
+<div class="rounded-xl border border-amber-200 bg-amber-50 p-6 dark:border-amber-800 dark:bg-amber-900/20">
+  <h2 class="text-xl font-semibold text-amber-900 dark:text-amber-200">API trace sampling is disabled</h2>
+  <p class="mt-2 text-sm text-amber-800 dark:text-amber-300">
+    Set <code class="font-mono">OBSERVABILITY_SAMPLE_RATE</code> to a value greater than <code class="font-mono">0</code> and restart ContextForge to collect API performance metrics.
+  </p>
+  <p class="mt-2 text-sm text-amber-700 dark:text-amber-400">
+    Only requests sampled after tracing is enabled are collected; earlier requests are not backfilled.
+  </p>
+</div>
+{% endif %}

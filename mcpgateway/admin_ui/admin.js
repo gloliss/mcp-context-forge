@@ -492,9 +492,17 @@ Admin.showUsageStatsModal = showUsageStatsModal;
 
 // Tools
 import {
+  closeToolPackageImport,
+  confirmToolPackageImport,
   editTool,
+  exportTool,
+  exportToolPackage,
+  handleToolPackageFileSelect,
   initToolSelect,
   invokeTool,
+  openToolPackageImport,
+  previewToolPackageImport,
+  resetToolPackageImport,
   testTool,
   enrichTool,
   generateToolTestCases,
@@ -504,9 +512,17 @@ import {
   viewTool,
 } from "./tools.js";
 
+Admin.closeToolPackageImport = closeToolPackageImport;
+Admin.confirmToolPackageImport = confirmToolPackageImport;
 Admin.editTool = editTool;
+Admin.exportTool = exportTool;
+Admin.exportToolPackage = exportToolPackage;
+Admin.handleToolPackageFileSelect = handleToolPackageFileSelect;
 Admin.initToolSelect = initToolSelect;
 Admin.invokeTool = invokeTool;
+Admin.openToolPackageImport = openToolPackageImport;
+Admin.previewToolPackageImport = previewToolPackageImport;
+Admin.resetToolPackageImport = resetToolPackageImport;
 Admin.testTool = testTool;
 Admin.enrichTool = enrichTool;
 Admin.generateToolTestCases = generateToolTestCases;

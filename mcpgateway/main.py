@@ -215,7 +215,8 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
+from mcpgateway.services.tool_portability_service import ToolBundleConflictError, ToolBundleValidationError, tool_portability_service
+from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolVersionConflictError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
@@ -6021,6 +6022,141 @@ async def get_tool(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
+async def _get_scoped_tool_for_portability(request: Request, user: Any, db: Session, tool_id: str) -> DbTool:
+    """Resolve a Tool ORM row only after applying canonical Layer-1 visibility."""
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    request_email = get_user_email(user)
+    is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    team_roles = get_user_team_roles(db, request_email) if request_email and not is_admin else None
+    await tool_service.get_tool(
+        db,
+        tool_id,
+        requesting_user_email=auth_user_email,
+        requesting_user_is_admin=is_admin,
+        requesting_user_team_roles=team_roles,
+        token_teams=auth_token_teams,
+    )
+    return tool_portability_service.require_tool(db, tool_id)
+
+
+@tool_router.get("/{tool_id}/definition", response_model=Dict[str, Any])
+@require_permission("tools.read")
+async def get_tool_definition(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """Return the current canonical, secret-free Tool definition."""
+    try:
+        tool = await _get_scoped_tool_for_portability(request, user, db, tool_id)
+        return tool_portability_service.build_definition(db, tool)
+    except ToolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@tool_router.get("/{tool_id}/source", response_model=Dict[str, Any])
+@require_permission("tools.read")
+async def get_tool_source(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """Return lazy source/binding metadata without exposing descriptor bytes."""
+    try:
+        tool = await _get_scoped_tool_for_portability(request, user, db, tool_id)
+        return tool_portability_service.build_source(db, tool)
+    except ToolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@tool_router.get("/{tool_id}/export")
+@require_permission("tools.read")
+async def export_tool_definition(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Response:
+    """Download one canonical Tool definition as JSON."""
+    try:
+        tool = await _get_scoped_tool_for_portability(request, user, db, tool_id)
+        definition = tool_portability_service.build_definition(db, tool)
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", tool.original_name).strip("-.") or "tool"
+        return Response(
+            content=orjson.dumps(definition, option=orjson.OPT_INDENT_2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}.tool.json"'},
+        )
+    except ToolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@tool_router.post("/export")
+@require_permission("admin.grpc")
+@require_permission("tools.read")
+async def export_tool_bundle(
+    request: Request,
+    selection: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
+    """Download selected Tools and their gRPC descriptor dependencies."""
+    tool_ids = selection.get("tool_ids")
+    if not isinstance(tool_ids, list) or not tool_ids or len(tool_ids) > settings.mcpgateway_bulk_import_max_tools:
+        raise HTTPException(status_code=422, detail="tool_ids must be a non-empty bounded list")
+    try:
+        tools = [await _get_scoped_tool_for_portability(request, user, db, str(tool_id)) for tool_id in tool_ids]
+        bundle = tool_portability_service.export_bundle(db, tools, exported_by=get_user_email(user) or "unknown")
+        payload = tool_portability_service.bundle_to_zip(bundle)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="contextforge-tools-{timestamp}.toolpkg.zip"'},
+        )
+    except ToolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ToolBundleValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@tool_router.post("/import/preview", response_model=Dict[str, Any])
+@require_permission("admin.grpc")
+@require_permission("tools.create")
+async def preview_tool_bundle_import(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """Validate an uploaded Tool package and return its non-mutating plan."""
+    payload = await request.body()
+    try:
+        bundle = tool_portability_service.bundle_from_zip(payload)
+        scoped_email, scoped_teams = get_scoped_resource_access_context(request, user)
+        return await tool_portability_service.preview_import(
+            db,
+            bundle,
+            scoped_email,
+            scoped_teams,
+            grpc_enabled=settings.mcpgateway_grpc_enabled,
+        )
+    except ToolBundleValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@tool_router.post("/import", response_model=Dict[str, Any])
+@require_permission("admin.grpc")
+@require_permission("tools.create")
+@require_permission("tools.update")
+async def import_tool_bundle(
+    request: Request,
+    conflict_strategy: str = Query("update", pattern="^(skip|update|fail)$"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Import a dependency-aware Tool package after the same validation as preview."""
+    payload = await request.body()
+    try:
+        bundle = tool_portability_service.bundle_from_zip(payload)
+        scoped_email, scoped_teams = get_scoped_resource_access_context(request, user)
+        return await tool_portability_service.import_bundle(
+            db,
+            bundle,
+            imported_by=get_user_email(user) or "unknown",
+            user_email=scoped_email,
+            token_teams=scoped_teams,
+            conflict_strategy=conflict_strategy,
+            grpc_enabled=settings.mcpgateway_grpc_enabled,
+        )
+    except ToolBundleConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ToolBundleValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @tool_router.put("/{tool_id}", response_model=ToolRead)
 @require_permission("tools.update")
 async def update_tool(
@@ -6066,8 +6202,6 @@ async def update_tool(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        db.commit()
-        db.close()
         return result
     except Exception as ex:
         if isinstance(ex, PermissionError):
@@ -6080,6 +6214,11 @@ async def update_tool(
         if isinstance(ex, IntegrityError):
             logger.error(f"Integrity error while updating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, ToolVersionConflictError):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"message": str(ex), "expected_version": ex.expected_version, "current_version": ex.current_version},
+            )
         if isinstance(ex, ToolError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
         logger.error(f"Unexpected error while updating tool: {ex}")
