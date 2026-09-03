@@ -1833,11 +1833,11 @@ class TestTokenCatalogServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_create_token_no_expiry_when_required(self, token_service, mock_db, mock_user, monkeypatch):
-        """Test create_token rejects None expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        """Test create_token rejects None expiry when REQUIRE_API_TOKEN_EXPIRATION=true."""
         # First-Party
         from mcpgateway import config
 
-        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+        monkeypatch.setattr(config.settings, "require_api_token_expiration", True)
 
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [
             mock_user,
@@ -1849,11 +1849,11 @@ class TestTokenCatalogServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_create_token_no_expiry_when_allowed(self, token_service, mock_db, mock_user, monkeypatch):
-        """Test create_token allows None expiry when REQUIRE_TOKEN_EXPIRATION=false."""
+        """Test create_token allows None expiry when REQUIRE_API_TOKEN_EXPIRATION=false."""
         # First-Party
         from mcpgateway import config
 
-        monkeypatch.setattr(config.settings, "require_token_expiration", False)
+        monkeypatch.setattr(config.settings, "require_api_token_expiration", False)
 
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [
             mock_user,
@@ -1870,11 +1870,11 @@ class TestTokenCatalogServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_create_token_with_expiry_when_required(self, token_service, mock_db, mock_user, monkeypatch):
-        """Test create_token accepts expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        """Test create_token accepts expiry when REQUIRE_API_TOKEN_EXPIRATION=true."""
         # First-Party
         from mcpgateway import config
 
-        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+        monkeypatch.setattr(config.settings, "require_api_token_expiration", True)
 
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [
             mock_user,
@@ -1891,11 +1891,11 @@ class TestTokenCatalogServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_create_token_with_team_and_expiry_required(self, token_service, mock_db, mock_user, mock_team, mock_team_member, monkeypatch):
-        """Test create_token with team requires expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        """Test create_token with team requires expiry when REQUIRE_API_TOKEN_EXPIRATION=true."""
         # First-Party
         from mcpgateway import config
 
-        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+        monkeypatch.setattr(config.settings, "require_api_token_expiration", True)
 
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [
             mock_user,
@@ -1909,11 +1909,11 @@ class TestTokenCatalogServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_create_token_zero_expiry_days_when_required(self, token_service, mock_db, mock_user, monkeypatch):
-        """Test create_token with expires_in_days=0 is treated as no expiry and rejected when REQUIRE_TOKEN_EXPIRATION=true."""
+        """Test create_token with expires_in_days=0 is treated as no expiry and rejected when REQUIRE_API_TOKEN_EXPIRATION=true."""
         # First-Party
         from mcpgateway import config
 
-        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+        monkeypatch.setattr(config.settings, "require_api_token_expiration", True)
 
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [
             mock_user,

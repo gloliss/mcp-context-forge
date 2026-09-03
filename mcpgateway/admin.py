@@ -2760,6 +2760,7 @@ async def get_configuration_settings(
             "jwt_issuer": settings.jwt_issuer,
             "token_expiry": settings.token_expiry,
             "require_token_expiration": settings.require_token_expiration,
+            "require_api_token_expiration": settings.require_api_token_expiration,
             "mcp_client_auth_enabled": settings.mcp_client_auth_enabled,
             "trust_proxy_auth": settings.trust_proxy_auth,
             "skip_ssl_verify": settings.skip_ssl_verify,
@@ -4317,8 +4318,8 @@ async def admin_ui(
             # Password policy - pass actual requirements dict for user creation
             "password_requirements": PasswordPolicyService.get_password_requirements(is_privileged=False),
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
-            # Token policy flags
-            "require_token_expiration": getattr(settings, "require_token_expiration", True),
+            # Token policy flags (API-token form follows the API-token policy)
+            "require_token_expiration": getattr(settings, "require_api_token_expiration", False),
             "sri_hashes": load_sri_hashes(),
             "max_members_per_team": settings.max_members_per_team,
         },

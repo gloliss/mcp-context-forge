@@ -1685,6 +1685,78 @@ async def get_current_user(
     logger.debug("Attempting authentication with bearer credentials")
     email = None
 
+    async def _db_api_token_fallback(fallback_error: Exception) -> None:
+        """Retry the Bearer token against the DB API token table.
+
+        Reached when JWT decode fails, including API tokens deliberately signed
+        without an ``exp`` claim. Those permanent tokens are created when the
+        REQUIRED_API_TOKEN_EXPIRATION policy is disabled; their expiry and
+        revocation are enforced here from the EmailApiToken row. Sets ``email``
+        and request.state fields on success; raises HTTPException 401 otherwise.
+        """
+        nonlocal email
+        logger.debug("JWT validation failed with error: %s, trying database API token", fallback_error)
+        try:
+            token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+
+            # Lookup API token using fresh session in thread pool
+            api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
+            logger.debug(f"Database lookup result: {api_token_info is not None}")
+
+            if api_token_info:
+                # Check for error conditions returned by helper
+                if api_token_info.get("expired"):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="API token expired",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                if api_token_info.get("revoked"):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="API token has been revoked",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                # Use the email from the API token
+                email = api_token_info["user_email"]
+                logger.debug(f"API token authentication successful for email: {email}")
+
+                # Set auth_method for database API tokens
+                if request:
+                    request.state.auth_method = "api_token"
+                    request.state.user_email = api_token_info["user_email"]
+                    # Store JTI for use in middleware
+                    if "jti" in api_token_info:
+                        request.state.jti = api_token_info["jti"]
+                    # Store token scopes for permission checking (database API tokens).
+                    # NAMING NOTE: database API tokens carry permissions in the "resource_scopes"
+                    # column while JWT tokens use the nested "scopes.permissions" claim; both
+                    # converge on "token_scopes" here so enforcement has a single input.
+                    # See _store_jwt_token_scopes() above for the JWT-side extraction.
+                    request.state.token_scopes = api_token_info.get("resource_scopes") or []
+            else:
+                logger.debug("API token not found in database")
+                logger.debug("No valid authentication method found")
+                # Neither JWT nor API token worked
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            # Neither JWT nor API token validation worked
+            logger.debug(f"Database API token validation failed with exception: {SecurityValidator.sanitize_log_message(str(e))}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     try:
         # Try JWT token first using the centralized verify_jwt_token_cached function
         logger.debug("Attempting JWT token validation")
@@ -2035,73 +2107,18 @@ async def get_current_user(
             # Session tokens leave token_scopes unset so Layer 1 is skipped and RBAC alone applies.
             await _set_auth_method_from_payload(payload)
 
-    except HTTPException:
-        # Re-raise HTTPException from verify_jwt_token (handles expired/invalid tokens)
-        raise
-    except Exception as jwt_error:
-        # JWT validation failed, try database API token
-        # Uses fresh DB session via asyncio.to_thread to avoid blocking event loop
-        logger.debug("JWT validation failed with error: %s, trying database API token", jwt_error)
-        try:
-            token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-
-            # Lookup API token using fresh session in thread pool
-            api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
-            logger.debug(f"Database lookup result: {api_token_info is not None}")
-
-            if api_token_info:
-                # Check for error conditions returned by helper
-                if api_token_info.get("expired"):
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="API token expired",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                if api_token_info.get("revoked"):
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="API token has been revoked",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                # Use the email from the API token
-                email = api_token_info["user_email"]
-                logger.debug(f"API token authentication successful for email: {email}")
-
-                # Set auth_method for database API tokens
-                if request:
-                    request.state.auth_method = "api_token"
-                    request.state.user_email = api_token_info["user_email"]
-                    # Store JTI for use in middleware
-                    if "jti" in api_token_info:
-                        request.state.jti = api_token_info["jti"]
-                    # Store token scopes for permission checking (database API tokens).
-                    # NAMING NOTE: database API tokens carry permissions in the "resource_scopes"
-                    # column while JWT tokens use the nested "scopes.permissions" claim; both
-                    # converge on "token_scopes" here so enforcement has a single input.
-                    # See _store_jwt_token_scopes() above for the JWT-side extraction.
-                    request.state.token_scopes = api_token_info.get("resource_scopes") or []
-            else:
-                logger.debug("API token not found in database")
-                logger.debug("No valid authentication method found")
-                # Neither JWT nor API token worked
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid authentication credentials",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-        except HTTPException:
-            # Re-raise HTTP exceptions
+    except HTTPException as http_exc:
+        # A DB-backed permanent API token carries no JWT exp claim; the JWT layer
+        # rejects it with "missing required expiration claim". Route that case
+        # through the database API token path (expiry/revocation enforced from the
+        # EmailApiToken row) before rejecting outright.
+        if "missing required expiration" in str(http_exc.detail):
+            await _db_api_token_fallback(http_exc)
+        else:
+            # Re-raise HTTPException from verify_jwt_token (handles expired/invalid tokens)
             raise
-        except Exception as e:
-            # Neither JWT nor API token validation worked
-            logger.debug(f"Database API token validation failed with exception: {SecurityValidator.sanitize_log_message(str(e))}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    except Exception as jwt_error:
+        await _db_api_token_fallback(jwt_error)
 
     # Get user from database using fresh session in thread pool
     user = await asyncio.to_thread(_get_user_by_email_sync, email)

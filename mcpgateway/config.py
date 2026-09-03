@@ -25,6 +25,7 @@ Environment variables:
 - PROMPT_CACHE_SIZE: Max cached prompts (default: 100)
 - HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 300)
 - REQUIRE_TOKEN_EXPIRATION: Require JWT tokens to have expiration (default: True)
+- REQUIRE_API_TOKEN_EXPIRATION: Require API tokens to have expiration (default: False, blank = permanent)
 - REQUIRE_JTI: Require JTI claim in tokens for revocation (default: True)
 - REQUIRE_USER_IN_DB: Require all users to exist in database (default: False)
 
@@ -394,6 +395,7 @@ class Settings(BaseSettings):
     token_blocklist_cleanup_hours: int = Field(default=24, ge=1, le=168, description="Hours to retain expired tokens in blocklist before cleanup (1-168).")
 
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
+    require_api_token_expiration: bool = Field(default=False, description="Require API access tokens to have an expiration (default: False — blank expiry means permanent)")
     require_jti: bool = Field(default=True, description="Require JTI (JWT ID) claim in all tokens for revocation support (secure default)")
     require_user_in_db: bool = Field(
         default=True,
