@@ -605,10 +605,16 @@ class SQLDataService:
         db: Session,
         source_id: str,
         *,
+        user_email: Optional[str] = None,
         defer_result_cache_invalidation: bool = False,
         defer_tool_cache_invalidation: bool = False,
     ) -> list[DbSQLTable]:
-        """Reflect tables/views, upsert hashes, preserve stale records, and discover FKs."""
+        """Reflect tables/views, upsert hashes, preserve stale records, and discover FKs.
+
+        Newly reflected private tables are claimed by ``user_email`` so the
+        administrator who triggered discovery can see and expose them; an
+        owner-less private table is invisible to everyone (visibility deadlock).
+        """
         source = db.get(SQLDataSource, source_id)
         if source is None:
             raise SQLDataNotFoundError("SQL data source not found")
@@ -665,6 +671,7 @@ class SQLDataService:
                                 primary_key=pk,
                                 unique_keys=unique_keys,
                                 schema_hash=schema_hash,
+                                owner_email=user_email,
                             )
                             db.add(record)
                             db.flush()

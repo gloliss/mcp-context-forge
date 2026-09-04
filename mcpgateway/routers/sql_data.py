@@ -79,7 +79,17 @@ def _scoped_tools(request: Request, user: Any, statement, db: Session, model: An
 
 
 def _ensure_table_manage_scope(request: Request, user: Any, db: Session, table_id: str, *, detail: str = "SQL table not found") -> DbSQLTable:
-    """Resolve a mutation target through canonical Layer-1 visibility."""
+    """Resolve a mutation target through canonical Layer-1 visibility.
+
+    Platform administrators may also claim an owner-less private table (the
+    pre-claim visibility deadlock): the update path assigns ``owner_email``
+    from the caller once claimed.
+    """
+    table = db.get(DbSQLTable, table_id)
+    if table is None:
+        raise HTTPException(status_code=404, detail=detail)
+    if table.owner_email is None and isinstance(user, dict) and user.get("is_admin"):
+        return table
     statement = _scoped_tables(request, user, select(DbSQLTable).where(DbSQLTable.id == table_id), db)
     table = db.execute(statement).scalar_one_or_none()
     if table is None:
@@ -187,6 +197,7 @@ async def discover_source(source_id: str, db: Session = Depends(get_db), user=De
         tables = SQLDataService.discover(
             db,
             source_id,
+            user_email=get_user_email(user),
             defer_result_cache_invalidation=True,
             defer_tool_cache_invalidation=True,
         )
