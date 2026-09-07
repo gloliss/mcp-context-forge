@@ -417,6 +417,59 @@ class TestGetCurrentUser:
                     assert user.auth_provider == "api_token"
 
     @pytest.mark.asyncio
+    async def test_permanent_api_token_without_exp_routes_to_db_fallback(self):
+        """Permanent API tokens (no JWT exp claim) authenticate via the DB fallback.
+
+        The JWT layer rejects exp-less tokens under REQUIRE_TOKEN_EXPIRATION;
+        they must be retried against EmailApiToken, where expiry/revocation are
+        enforced from the DB row (expires_at=None means permanent).
+        """
+        api_token_value = "permanent_api_token_123456"
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=api_token_value)
+
+        mock_user = EmailUser(
+            email="api_user@example.com",
+            password_hash="hash",
+            full_name="API User",
+            is_admin=False,
+            is_active=True,
+            auth_provider="api_token",
+            password_change_required=False,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        # JWT decode rejects the exp-less permanent token with the specific 401.
+        with patch(
+            "mcpgateway.auth.verify_jwt_token_cached",
+            AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is missing required expiration claim. Set REQUIRE_TOKEN_EXPIRATION=false to allow.")),
+        ):
+            with patch("mcpgateway.auth._lookup_api_token_sync", return_value={"user_email": "api_user@example.com", "jti": "api_token_jti"}):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    user = await get_current_user(credentials=credentials)
+
+                    assert user.email == mock_user.email
+                    assert user.auth_provider == "api_token"
+
+    @pytest.mark.asyncio
+    async def test_permanent_api_token_without_exp_and_no_db_record_raises_401(self):
+        """An exp-less token that matches no DB API token stays rejected."""
+        api_token_value = "unknown_permanent_token"
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=api_token_value)
+
+        with patch(
+            "mcpgateway.auth.verify_jwt_token_cached",
+            AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is missing required expiration claim. Set REQUIRE_TOKEN_EXPIRATION=false to allow.")),
+        ):
+            with patch("mcpgateway.auth._lookup_api_token_sync", return_value=None):
+                with pytest.raises(HTTPException) as exc_info:
+                    await get_current_user(credentials=credentials)
+
+                assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                assert exc_info.value.detail == "Invalid authentication credentials"
+
+    @pytest.mark.asyncio
     async def test_session_token_with_single_team_narrows_via_resolve_session_teams(self, monkeypatch):
         """Session tokens with a JWT teams claim narrow DB teams via resolve_session_teams."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")  # pragma: allowlist secret

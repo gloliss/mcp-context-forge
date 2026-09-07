@@ -522,9 +522,9 @@ class TokenCatalogService:
         if expires_in_days:
             expires_at = utc_now() + timedelta(days=expires_in_days)
 
-        # Enforce expiration requirement if configured
-        if settings.require_token_expiration and not expires_at:
-            raise ValueError("Token expiration is required by server policy (REQUIRE_TOKEN_EXPIRATION=true). Please specify an expiration date for the token.")
+        # Enforce expiration requirement if configured for API tokens
+        if settings.require_api_token_expiration and not expires_at:
+            raise ValueError("Token expiration is required by server policy (REQUIRE_API_TOKEN_EXPIRATION=true). Please specify an expiration date for the token.")
 
         jti = str(uuid.uuid4())  # Unique JWT ID
         # Generate JWT token with all necessary claims

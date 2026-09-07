@@ -2108,6 +2108,12 @@ class ToolService(BaseService):
             if structured is None:
                 return True
 
+            # Reserved gateway side-channel keys (debugger call metadata) never
+            # belong to the upstream output schema contract; strip them before
+            # validation so metadata capture cannot poison structured output.
+            if isinstance(structured, dict) and "_grpc" in structured:
+                structured = {k: v for k, v in structured.items() if k != "_grpc"}
+
             # Attach structured content. A frozen or slotted ``tool_result``
             # that refuses the assignment is a genuine contract violation —
             # downstream code relies on ``structured_content`` being
