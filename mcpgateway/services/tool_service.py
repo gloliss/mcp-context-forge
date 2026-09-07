@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
 import logging
 import math
 import os
@@ -33,7 +32,7 @@ import ssl
 import time
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 import uuid
 
 # Third-Party
@@ -69,7 +68,7 @@ from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolAnnotations
 from mcpgateway.common.models import ToolResult
-from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import fresh_db_session
@@ -80,6 +79,19 @@ from mcpgateway.db import ToolMetric, ToolMetricsDaily, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
+from mcpgateway.protocols import InvocationContext, LegacyRestContractBuilder, ProtocolError, protocol_registry
+from mcpgateway.protocols.http.adapter import (
+    REST_HEADER_MAPPING_ILLEGAL_CHARS,
+    REST_HTTP_STATUS_ERROR,
+    REST_MISSING_URL_PARAM,
+    REST_QUERY_MAPPING_NON_SCALAR,
+    REST_SEND_TIMEOUT,
+    REST_UNEXPECTED_STATUS,
+    REST_URL_PINNING_MISSING,
+    REST_URL_VALIDATION_FAILED,
+    REST_URL_VALIDATION_TIMEOUT,
+    _form_value_to_str as _protocol_form_value_to_str,
+)
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -822,33 +834,6 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
     # ``fallback_type`` came from ``_safe_type_name`` so it's
     # guaranteed to be a ``str`` already.
     return f"<{fallback_type} object (unrepresentable)>"
-
-
-def _handle_json_parse_error(response, error, is_error_response: bool = False) -> dict:
-    """Handle JSON parsing failures with graceful fallback to raw text.
-
-    Args:
-        response: The HTTP response object with .text attribute
-        error: The exception that was raised during JSON parsing
-        is_error_response: If True, logs as "error response", else "response"
-
-    Returns:
-        Dictionary with response_text key containing the raw response text
-        (truncated to REST_RESPONSE_TEXT_MAX_LENGTH if longer to avoid exposing sensitive data),
-        or error details if response body is empty/None
-    """
-    msg = "error response" if is_error_response else "response"
-    if not response.text:
-        logger.warning("Failed to parse JSON %s: %s. Response body was empty.", msg, error)
-        return {"error": "Empty response body"}
-
-    max_length = settings.rest_response_text_max_length
-    text = response.text[:max_length] if len(response.text) > max_length else response.text
-    if len(response.text) > max_length:
-        logger.warning("Failed to parse JSON %s: %s. Response truncated from %s to %s characters.", msg, error, len(response.text), max_length)
-    else:
-        logger.warning("Failed to parse JSON %s: %s", msg, error)
-    return {"response_text": text}
 
 
 @lru_cache(maxsize=128)
@@ -6186,231 +6171,54 @@ class ToolService(BaseService):
                             if payload.headers is not None:
                                 headers = payload.headers.model_dump()
 
-                    # Build the payload based on integration type
-                    payload = arguments.copy()
+                    # ── PR1: dispatch through the Protocol Runtime layer ───────
+                    # URL template substitution, query/header mapping, SSRF
+                    # validation + connection pinning, transport send, and response
+                    # classification moved to mcpgateway.protocols.http.adapter.
+                    # This branch compiles the legacy tool into an
+                    # OperationDefinition, injects ToolService-owned infrastructure
+                    # via InvocationContext, and restores the pre-extraction error
+                    # paths verbatim (messages, log replays, metric status codes,
+                    # ToolResult shapes).
+                    rest_operation = LegacyRestContractBuilder.from_tool(tool, tool_payload=tool_payload)
 
-                    # Handle URL path and query parameter substitution (using local variable)
-                    final_url = tool_url
-                    if "{" in tool_url and "}" in tool_url:
-                        # Extract ALL parameters (path and query) from URL template
-                        url_params = re.findall(r"\{(\w+)\}", tool_url)
-                        url_substitutions = {}
+                    async def _rest_send_with_retry(send: Callable[[dict], Awaitable[Any]], call_headers: dict) -> Any:
+                        """Apply the B2 token-exchange single-retry policy to a REST send."""
+                        return await self._send_with_token_exchange_retry(
+                            send,
+                            call_headers,
+                            gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                            gateway_id_str,
+                            gateway_name,
+                            app_user_email,
+                            request_headers or {},
+                            ca_certificate=gateway_ca_cert,
+                            client_cert=gateway_client_cert,
+                            client_key=gateway_client_key,
+                        )
 
-                        for param in url_params:
-                            if param in payload:
-                                url_substitutions[param] = payload.pop(param)  # Remove from payload
-                                final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
-                            else:
-                                raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
-
-                    # --- Extract query params from URL if query_mapping or header_mapping is used ---
-                    # When mappings are present (not None/empty), we strip query params from URL and apply transformations.
-                    # When mappings are absent (None/empty), preserve query params in URL for signed URLs.
-                    query_params = {}
-                    # Treat empty dict same as None (no mapping configured)
-                    has_query_mapping = tool_query_mapping is not None and tool_query_mapping != {}
-                    has_header_mapping = tool_header_mapping is not None and tool_header_mapping != {}
-
-                    if has_query_mapping or has_header_mapping:
-                        parsed = urlparse(final_url)
-                        final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                        query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
-
-                        if tool_query_mapping:
-                            # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
-                            # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
-                            payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
-                            # Reject non-scalar values that would be inappropriate as query parameters.
-                            for qk, qv in payload.items():
-                                if isinstance(qv, (dict, list)):
-                                    raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
-
-                        # Headers are mapped from the original arguments (not the path-param-reduced payload)
-                        # to preserve all available data for header injection.
-                        if tool_header_mapping:
-                            _validate_header_mapping_targets(tool_header_mapping, name)
-                            headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
-                            # Reject header values containing CRLF or null bytes to prevent header injection.
-                            for hdr_name, hdr_val in headers.items():
-                                if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
-                                    raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
-
-                    # Use the tool's request_type rather than defaulting to POST (using local variable)
-                    method = tool_request_type.upper() if tool_request_type else "POST"
-                    _url_query_params = query_params if not tool_query_mapping else None
-
-                    # Detect body encoding from the final Content-Type header (after auth/plugin/mapping modifications).
-                    # Supports application/x-www-form-urlencoded and multipart/form-data in addition to the default JSON.
-                    _ct_base = next((v for k, v in headers.items() if k.lower() == "content-type"), "").lower().split(";")[0].strip()
-
-                    # For non-GET form-urlencoded and multipart requests without mappings,
-                    # extract URL query params so they are forwarded via params= (query string)
-                    # rather than being silently embedded in the URL or lost.  GET has its own
-                    # extraction below; JSON POST intentionally preserves query params in the URL
-                    # for signed-URL support.
-                    if method != "GET" and not has_query_mapping and not has_header_mapping and _ct_base in ("application/x-www-form-urlencoded", "multipart/form-data"):
-                        parsed = urlparse(final_url)
-                        if parsed.query:
-                            final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                            _url_query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
-
-                    rest_request_extensions: dict[str, str] = {}
-                    rest_http_client = self._http_client
-                    pinned_rest_http_client: Optional[ResilientHttpClient] = None
-                    pinned_rest_pool_entry: Optional[_PinnedRestPoolEntry] = None
-                    pinned_rest_key: Optional[_PinnedRestPoolKey] = None
+                    protocol_context = InvocationContext(
+                        tool_name=name,
+                        tool_name_computed=tool_name_computed,
+                        tool_id=tool_id,
+                        effective_timeout=effective_timeout,
+                        remaining_timeout=_remaining_tool_timeout,
+                        http_client=self._http_client,
+                        headers=headers,
+                        send_with_retry=_rest_send_with_retry,
+                        pinned_rest_pool=self._pinned_rest_client_pool,
+                        pinned_client_builder=_build_pinned_rest_http_client,
+                        pool_key_factory=_pinned_rest_pool_key,
+                        apply_mapping=apply_mapping_into_target,
+                        validate_header_mapping_targets=_validate_header_mapping_targets,
+                        invalid_header_value_chars=_INVALID_HEADER_VALUE_CHARS,
+                        child_span_factory=create_child_span,
+                    )
                     try:
-                        validated_target = await asyncio.wait_for(
-                            SecurityValidator.validate_url_for_connection_pinning(final_url, "Tool URL"),
-                            timeout=_remaining_tool_timeout(),
-                        )
-                    except (asyncio.TimeoutError, ToolTimeoutError) as timeout_error:
-                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_error
-                    except ValueError as validation_error:
-                        safe_url = sanitize_url_for_logging(final_url)
-                        logger.warning(
-                            "REST tool outbound URL validation failed for tool %s (%s), url=%s, correlation_id=%s: %s",
-                            SecurityValidator.sanitize_log_message(tool_name_computed),
-                            SecurityValidator.sanitize_log_message(tool_id),
-                            safe_url,
-                            get_correlation_id(),
-                            SecurityValidator.sanitize_log_message(str(validation_error)),
-                        )
-                        raise ToolInvocationError("Outbound URL blocked by URL policy") from validation_error
-
-                    resolved_ip = validated_target.get("resolved_ip")
-                    original_hostname = validated_target.get("hostname")
-                    original_authority = validated_target.get("original_authority")
-                    if settings.ssrf_protection_enabled and not (resolved_ip and original_hostname and original_authority):
-                        safe_url = sanitize_url_for_logging(final_url)
-                        logger.warning(
-                            "REST tool outbound URL validation did not return a pinned target for tool %s (%s), url=%s, correlation_id=%s",
-                            SecurityValidator.sanitize_log_message(tool_name_computed),
-                            SecurityValidator.sanitize_log_message(tool_id),
-                            safe_url,
-                            get_correlation_id(),
-                        )
-                        raise ToolInvocationError("Outbound URL blocked by URL policy")
-                    if resolved_ip and original_hostname and original_authority:
-                        final_url = pin_url_to_resolved_ip(final_url, resolved_ip)
-                        headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
-                        headers["Host"] = original_authority
-                        rest_request_extensions["sni_hostname"] = original_hostname
-                        pinned_rest_key = _pinned_rest_pool_key(final_url, resolved_ip, original_hostname, original_authority)
-
-                    with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
-                        rest_start_time = time.time()
-
-                        async def _send(call_headers: dict) -> Any:
-                            """Issue the REST upstream call with the given headers (B2 retry hook)."""
-                            request_options = {"headers": call_headers}
-                            if rest_request_extensions:
-                                request_options["extensions"] = rest_request_extensions
-                            if method == "GET":
-                                return await asyncio.wait_for(
-                                    rest_http_client.get(final_url, params=payload, **request_options),
-                                    timeout=_remaining_tool_timeout(),
-                                )
-                            if _ct_base == "application/x-www-form-urlencoded":
-                                # NOTE: Intentional asymmetry with the JSON/default path below.
-                                # Form-encoded bodies use params= to keep URL query params on the
-                                # query string (semantically correct for form encoding), whereas
-                                # the JSON path merges them into the body via payload.update() for
-                                # backward compatibility and signed-URL support.
-                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
-                                return await asyncio.wait_for(
-                                    rest_http_client.request(
-                                        method,
-                                        final_url,
-                                        data=form_payload,
-                                        params=_url_query_params,
-                                        **request_options,
-                                    ),
-                                    timeout=_remaining_tool_timeout(),
-                                )
-                            if _ct_base == "multipart/form-data":
-                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
-                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
-                                headers_mp = {k: v for k, v in call_headers.items() if k.lower() != "content-type"}
-                                multipart_request_options = {"headers": headers_mp}
-                                if rest_request_extensions:
-                                    multipart_request_options["extensions"] = rest_request_extensions
-                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
-                                return await asyncio.wait_for(
-                                    rest_http_client.request(
-                                        method,
-                                        final_url,
-                                        files=files_payload,
-                                        params=_url_query_params,
-                                        **multipart_request_options,
-                                    ),
-                                    timeout=_remaining_tool_timeout(),
-                                )
-                            # For POST/PUT/PATCH/DELETE (JSON body, default path)
-                            return await asyncio.wait_for(
-                                rest_http_client.request(method, final_url, json=payload, **request_options),
-                                timeout=_remaining_tool_timeout(),
-                            )
-
-                        try:
-                            if method == "GET":
-                                # For GET: Extract and merge URL query params with input arguments
-                                if not has_query_mapping and not has_header_mapping:
-                                    # When no mappings (None or empty), extract query params from URL
-                                    parsed = urlparse(final_url)
-                                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
-
-                                    conflicts = set(payload.keys()) & set(query_params.keys())
-                                    if conflicts:
-                                        logger.warning(
-                                            "REST tool GET request has conflicting parameters between URL and input arguments. URL query params will take precedence for: %s. Tool: %s",
-                                            ", ".join(sorted(conflicts)),
-                                            name,
-                                        )
-
-                                payload.update(query_params)
-                            elif has_query_mapping or has_header_mapping:
-                                # When mappings are used (not None/empty), query params were already extracted and mapped
-                                # Merge them into the JSON body for backward compatibility with mapped tools
-                                payload.update(query_params)
-                            # else: No mappings (None or empty) - preserve query params in URL for signed URL support
-                            # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
-
-                            if pinned_rest_key is not None:
-                                if settings.mcpgateway_rest_client_pool_enabled:
-                                    pinned_rest_pool_entry = await self._pinned_rest_client_pool.acquire(pinned_rest_key)
-                                    rest_http_client = pinned_rest_pool_entry.client
-                                else:
-                                    pinned_rest_http_client = _build_pinned_rest_http_client()
-                                    rest_http_client = pinned_rest_http_client
-
-                            try:
-                                # Bound the complete send/re-exchange/retry sequence,
-                                # rather than granting each retry a fresh deadline.
-                                response = await asyncio.wait_for(
-                                    self._send_with_token_exchange_retry(
-                                        _send,
-                                        headers,
-                                        gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                        gateway_id_str,
-                                        gateway_name,
-                                        app_user_email,
-                                        request_headers or {},
-                                        ca_certificate=gateway_ca_cert,
-                                        client_cert=gateway_client_cert,
-                                        client_key=gateway_client_key,
-                                    ),
-                                    timeout=_remaining_tool_timeout(),
-                                )
-                            finally:
-                                if pinned_rest_pool_entry is not None:
-                                    await self._pinned_rest_client_pool.release(pinned_rest_pool_entry)
-                                elif pinned_rest_http_client is not None:
-                                    await pinned_rest_http_client.aclose()
-                            metric_status_code = str(response.status_code)
-                        except (asyncio.TimeoutError, httpx.TimeoutException):
-                            rest_elapsed_ms = (time.time() - rest_start_time) * 1000
+                        protocol_result = await protocol_registry.invoke("http", rest_operation, arguments, protocol_context)
+                    except ProtocolError as protocol_error:
+                        if protocol_error.code == REST_SEND_TIMEOUT:
+                            rest_elapsed_ms = protocol_error.details["elapsed_ms"]
                             structured_logger.log(
                                 level="WARNING",
                                 message=f"REST tool invocation timed out: {tool_name_computed}",
@@ -6437,50 +6245,59 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
-                        try:
-                            response.raise_for_status()
-                        except httpx.HTTPStatusError:
-                            # Non-2xx response — parse body (may be HTML, plain text, XML, etc.)
-                            try:
-                                result = response.json()
-                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=True)
-                            if "error" in result:
-                                error_val = result["error"]
-                            elif "response_text" in result:
-                                error_val = f"HTTP {response.status_code}: {result['response_text']}"
-                            else:
-                                error_val = f"HTTP {response.status_code}"
+                        if protocol_error.code == REST_URL_VALIDATION_TIMEOUT:
+                            # NOTE: budget exhaustion raises ToolTimeoutError from
+                            # _remaining_tool_timeout() itself and propagates unchanged
+                            # through the adapter; only the asyncio.TimeoutError path
+                            # reaches this handler.
+                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from protocol_error.__cause__
+                        if protocol_error.code == REST_URL_VALIDATION_FAILED:
+                            safe_url = sanitize_url_for_logging(protocol_error.details["raw_url"])
+                            logger.warning(
+                                "REST tool outbound URL validation failed for tool %s (%s), url=%s, correlation_id=%s: %s",
+                                SecurityValidator.sanitize_log_message(tool_name_computed),
+                                SecurityValidator.sanitize_log_message(tool_id),
+                                safe_url,
+                                get_correlation_id(),
+                                SecurityValidator.sanitize_log_message(protocol_error.details["validation_error"]),
+                            )
+                            raise ToolInvocationError("Outbound URL blocked by URL policy") from protocol_error.__cause__
+                        if protocol_error.code == REST_URL_PINNING_MISSING:
+                            safe_url = sanitize_url_for_logging(protocol_error.details["raw_url"])
+                            logger.warning(
+                                "REST tool outbound URL validation did not return a pinned target for tool %s (%s), url=%s, correlation_id=%s",
+                                SecurityValidator.sanitize_log_message(tool_name_computed),
+                                SecurityValidator.sanitize_log_message(tool_id),
+                                safe_url,
+                                get_correlation_id(),
+                            )
+                            raise ToolInvocationError("Outbound URL blocked by URL policy")
+                        if protocol_error.code in (REST_MISSING_URL_PARAM, REST_QUERY_MAPPING_NON_SCALAR, REST_HEADER_MAPPING_ILLEGAL_CHARS):
+                            raise ToolInvocationError(protocol_error.message)
+                        if protocol_error.code == REST_HTTP_STATUS_ERROR:
+                            metric_status_code = str(protocol_error.protocol_status)
                             tool_result = ToolResult(
-                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                content=[TextContent(type="text", text=protocol_error.message)],
                                 is_error=True,
-                                structured_content={"status_code": response.status_code},
+                                structured_content={"status_code": protocol_error.protocol_status},
                             )
                             # Don't mark as successful — success remains False
-
-                        # Handle 204 No Content responses that have no body
-                        if tool_result is not None and tool_result.is_error:
-                            pass  # Already handled by HTTPStatusError above
-                        elif response.status_code == 204:
-                            tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
-                            success = True
-                        elif response.status_code not in [200, 201, 202, 206]:
-                            # Non-standard 2xx codes (203, 205, 207, etc.) treated as errors
-                            try:
-                                result = response.json()
-                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=True)
-                            error_val = result["error"] if "error" in result else "Tool error encountered"
+                        elif protocol_error.code == REST_UNEXPECTED_STATUS:
+                            metric_status_code = str(protocol_error.protocol_status)
                             tool_result = ToolResult(
-                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                content=[TextContent(type="text", text=protocol_error.message)],
                                 is_error=True,
                             )
                             # Don't mark as successful for error responses - success remains False
                         else:
-                            try:
-                                result = response.json()
-                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=False)
+                            raise protocol_error
+                    else:
+                        metric_status_code = str(protocol_result.metadata["status_code"])
+                        if protocol_result.data is None and protocol_result.metadata["status_code"] == 204:
+                            tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                            success = True
+                        else:
+                            result = protocol_result.data
                             logger.debug("REST API tool response: %s", result)
                             filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
                             # Check if extract_using_jq returned an error (list of TextContent objects)
@@ -7965,12 +7782,13 @@ class ToolService(BaseService):
 
     @staticmethod
     def _form_value_to_str(v: Any) -> str:
-        """Coerce a payload value to string for form/multipart encoding."""
-        if v is None:
-            return ""
-        if isinstance(v, (dict, list, bool)):
-            return orjson.dumps(v).decode()
-        return str(v)
+        """Coerce a payload value to string for form/multipart encoding.
+
+        PR1: the implementation moved to
+        ``mcpgateway.protocols.http.adapter``; this staticmethod remains as a
+        compatibility delegate for external callers.
+        """
+        return _protocol_form_value_to_str(v)
 
     @staticmethod
     def _check_tool_name_conflict(db: Session, custom_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
