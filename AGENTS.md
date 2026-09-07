@@ -12,6 +12,16 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 
 **Note:** The `llms/` directory contains guidance for LLMs *using* ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
 
+## Language Convention
+
+For this fork, human-facing descriptions default to **简体中文** (Simplified Chinese):
+
+- **Commit messages** — subject and body in Chinese; a conventional-commit prefix (`feat:` / `fix:`) may stay English.
+- **PR / MR titles and descriptions** — Chinese.
+- **Code review comments** — Chinese.
+
+Code, identifiers, and code-level comments stay English; this rule covers only the human-facing description text.
+
 ## Project Overview
 
 ContextForge is an open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. It federates tools, agents, and APIs, optimizes agent and tool calling, and supports plugins, auth/RBAC, rate-limiting, virtual servers, multi-transport protocols, and an optional Admin UI.
