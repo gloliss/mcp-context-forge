@@ -22,6 +22,49 @@ For this fork, human-facing descriptions default to **简体中文** (Simplified
 
 Code, identifiers, and code-level comments stay English; this rule covers only the human-facing description text.
 
+## 开发与发布流程（本 fork 约定，codex-15 部署链）
+
+模块代码开发完成后，按以下流程全部走完才算完成：
+
+1. **测试**
+   - 代码质量：`make pre-commit`；提交前对改动文件跑 `make ruff bandit interrogate pylint verify`。
+   - 全量测试：`make test`（pytest）。前端 Vitest 需要 Node 20+，codex-15 主机 Node 过老时前端测试可豁免，但须在提交说明中注明。
+   - 涉及迁移：`cd mcpgateway && alembic heads` 必须单一 head，再 `make test`。
+   - 涉及 Rust：`cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test`。
+
+2. **提交并推送双远端**（提交说明用简体中文，`git commit -s` 带 DCO 签名）
+   - GitHub fork：`git push origin main`（gloliss/mcp-context-forge）。
+   - 内网 GitLab：`git push gitlab main`（`ssh://git@10.10.104.76:9822/xin.feng/mcp-context-forge.git`）。推送必须走 SSH 9822 端口，HTTP 9890 推大包会被 413 拒绝；仓库必须是完整克隆，shallow 会报 `shallow update not allowed`。
+
+3. **构建镜像**（在 codex-15 上执行；国内网络必须 `--network host`）
+   ```bash
+   docker build --network host --progress=plain -f Containerfile \
+     -t mcpgateway:main-<short-sha>-<YYYYMMDD> .
+   ```
+   - 坑：国内 PyPI 镜像缺 `cpex-*` 插件包，必须走官方源（Containerfile 已内置 600s 超时 + 20 次重试）。
+   - 镜像约 406MB。
+
+4. **替换容器并保留数据**
+   ```bash
+   docker rm -f mcpgateway && docker run -d --name mcpgateway --network host \
+     --env-file /home/xin.feng/mcpgw-env.list \
+     -v mcpgateway-data:/data \
+     --health-cmd "python3 -c \"import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)\"" \
+     --health-interval=30s --health-start-period=90s \
+     mcpgateway:<tag>
+   ```
+   - 数据卷 `mcpgateway-data:/data` 必须保留（生产 DB 在 `/data/mcp.db`）；环境变量全集在 `/home/xin.feng/mcpgw-env.list`，复用即可，不要重写。
+   - 回滚准备：保留上一版镜像（如 `mcpgateway-backup-20260903`）；换容器前备份 DB（`mcp.db` 连同 `-wal`/`-shm`）。
+
+5. **端到端验证与修复同步**
+   - 健康检查：`/health` 返回 200；admin 登录用 `admin@example.com`，密码见 env-file 的 `PLATFORM_ADMIN_PASSWORD`。
+   - E2E 面（按本次改动选择相关面 + 全量冒烟）：MCP initialize/tools-list、REST 工具调用、gRPC 工具调用（SERVING + structuredContent）、SQL 源创建→test→discover→暴露→查询、API debugger invoke/history/stats、grpc registry/lineage/schemas、observability metrics、401 RBAC、日志无 Traceback。
+   - E2E 造数用完即清理：删除 e2e SQL source（级联删表/绑定）、删除 `/data/e2e_*.db`。
+   - 发现缺陷 → 修复提交 → 回到第 1 步，直到 E2E 全过；修复提交同样推双远端。
+   - 收尾核对：`git ls-remote origin main` 与 `git ls-remote gitlab main` 均等于本地 `git rev-parse HEAD`。
+
+6. **完成定义**：测试通过 → 双远端同步 → 容器运行新镜像 → E2E 全过。
+
 ## Project Overview
 
 ContextForge is an open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. It federates tools, agents, and APIs, optimizes agent and tool calling, and supports plugins, auth/RBAC, rate-limiting, virtual servers, multi-transport protocols, and an optional Admin UI.
