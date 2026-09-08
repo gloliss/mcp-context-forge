@@ -761,7 +761,7 @@ class ToolCreate(BaseModel):
         url (Union[str, AnyHttpUrl]): Tool endpoint URL.
         description (Optional[str]): Tool description.
         integration_type (Literal["REST", "MCP"]): Tool integration type - REST for individual endpoints, MCP for gateway-discovered tools.
-        request_type (Literal["GET", "POST", "PUT", "DELETE", "PATCH"]): HTTP method to be used for invoking the tool.
+        request_type (Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]): HTTP method to be used for invoking the tool.
         headers (Optional[Dict[str, str]]): Additional headers to send when invoking the tool.
         input_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool parameters. Alias 'inputSchema'.
         output_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool output. Alias 'outputSchema'.
@@ -781,7 +781,7 @@ class ToolCreate(BaseModel):
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A", "gRPC", "SQL"] = Field("REST", description="Tool integration type")
-    request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
+    request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: dict(_DEFAULT_INPUT_SCHEMA), description="JSON Schema for validating tool parameters", alias="inputSchema")
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for validating tool output", alias="outputSchema")
@@ -813,6 +813,7 @@ class ToolCreate(BaseModel):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+    protocol_config: Optional[Dict[str, Any]] = Field(None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path.")
 
     @field_validator("tags")
     @classmethod
@@ -1066,7 +1067,7 @@ class ToolCreate(BaseModel):
             raise ValueError(f"Unknown integration type: {integration_type}")
 
         if integration_type == "REST":
-            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
             if v not in allowed:
                 raise ValueError(f"Request type '{v}' not allowed for REST. Only {allowed} methods are accepted.")
         elif integration_type == "MCP":
@@ -1368,7 +1369,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Optional[Literal["REST", "MCP", "A2A", "gRPC", "SQL"]] = Field(None, description="Tool integration type")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     output_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool output")
@@ -1393,6 +1394,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+    protocol_config: Optional[Dict[str, Any]] = Field(None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path.")
 
     @field_validator("tags")
     @classmethod
@@ -1554,7 +1556,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         integration_type = info.data.get("integration_type", "REST")
 
         if integration_type == "REST":
-            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
         elif integration_type == "MCP":
             allowed = ["SSE", "STDIO", "STREAMABLEHTTP"]
         elif integration_type == "A2A":
@@ -1891,6 +1893,7 @@ class ToolRead(BaseModelWithConfigDict):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+    protocol_config: Optional[Dict[str, Any]] = Field(None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path.")
 
     # MCP protocol extension field
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")

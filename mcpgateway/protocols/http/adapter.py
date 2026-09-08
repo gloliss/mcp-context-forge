@@ -3,15 +3,24 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-HTTP protocol adapter — PR1 legacy REST runtime extraction.
+HTTP protocol adapter — legacy REST runtime extraction (PR1) plus the
+PR2 protocol_config runtime.
 
-This module hosts the invocation-time REST logic previously inlined in
+PR1 extracted the invocation-time REST logic previously inlined in
 ``ToolService.invoke_tool`` (URL template substitution, query/header
 mapping, SSRF validation + connection pinning, transport send, response
-classification).  PR1 is a pure extraction: every observable behaviour
-(method, URL, query, headers, body, auth, timeout, response) is preserved
-byte-for-byte, including the three intentional asymmetries of the legacy
-encoding paths.
+classification).  That path — the "legacy" path — is preserved
+byte-for-byte for tools with no ``protocol_config`` (design §9.11: a
+``NULL`` ``protocol_config`` continues through
+``LegacyRestContractBuilder``).
+
+PR2 adds the new path taken when ``InvocationContext.protocol_config`` is
+set: request assembly via ``RequestBuilder`` (path/query/header/cookie/body
+independent, design §9.6), per-hop SSRF re-validation and manual redirect
+following via ``RedirectSecurity`` (design §9.10 — ``follow_redirects`` is
+never enabled), and response decoding via ``ResponseDecoder`` (Content-Type
+→ codec, design §9.7/§70).  Success is now ``200 <= status_code < 300``
+(design §9.8); 204/205/HEAD return ``data=None``.
 
 ToolService-owned infrastructure (pinned client pool, token-exchange
 retry, mapping helpers, telemetry factories) is injected per invocation
@@ -44,6 +53,11 @@ import orjson
 from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.protocols.base import ProtocolAdapter
+from mcpgateway.protocols.codecs import codec_registry
+from mcpgateway.protocols.codecs.base import CodecContext
+from mcpgateway.protocols.http.redirect import REST_TOO_MANY_REDIRECTS, RedirectSecurity
+from mcpgateway.protocols.http.request_builder import RequestBuilder
+from mcpgateway.protocols.http.response_decoder import ResponseDecoder
 from mcpgateway.protocols.models import ErrorCategory, InvocationContext, ProtocolError, ProtocolResult
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
@@ -59,9 +73,6 @@ REST_URL_VALIDATION_TIMEOUT = "REST_URL_VALIDATION_TIMEOUT"
 REST_SEND_TIMEOUT = "REST_SEND_TIMEOUT"
 REST_HTTP_STATUS_ERROR = "REST_HTTP_STATUS_ERROR"
 REST_UNEXPECTED_STATUS = "REST_UNEXPECTED_STATUS"
-
-# Status codes the legacy REST branch treats as success after decoding.
-_LEGACY_REST_SUCCESS_STATUSES = [200, 201, 202, 206]
 
 
 def _handle_json_parse_error(response: Any, error: Any, is_error_response: bool = False) -> dict:
@@ -101,13 +112,15 @@ def _form_value_to_str(v: Any) -> str:
 
 
 class HttpProtocolAdapter(ProtocolAdapter):
-    """Execute legacy REST operations with pre-extraction behaviour preserved.
+    """Execute HTTP operations over the legacy and protocol_config paths.
 
-    PR1 scope: this adapter is the extracted body of the old
-    ``if tool_integration_type == "REST":`` branch of
-    ``ToolService.invoke_tool``.  It intentionally contains no new
-    abstractions (request builders, codecs, redirect handling arrive in
-    PR2) and no behaviour changes.
+    When ``InvocationContext.protocol_config`` is ``None`` (legacy REST
+    tools) the adapter runs the extracted PR1 body of the old
+    ``if tool_integration_type == "REST":`` branch unchanged.  When
+    ``protocol_config`` is set (PR2) it assembles the request with
+    ``RequestBuilder``, follows redirects manually with per-hop SSRF
+    re-validation (``RedirectSecurity``), and decodes the response with
+    ``ResponseDecoder``.
     """
 
     async def invoke(
@@ -116,7 +129,7 @@ class HttpProtocolAdapter(ProtocolAdapter):
         arguments: dict[str, Any],
         context: InvocationContext,
     ) -> ProtocolResult:
-        """Execute a legacy REST operation.
+        """Execute an HTTP operation.
 
         Args:
             operation: ``OperationDefinition`` whose ``request`` carries
@@ -126,8 +139,190 @@ class HttpProtocolAdapter(ProtocolAdapter):
             context: ToolService-injected runtime context.
 
         Returns:
-            ``ProtocolResult`` for 200/201/202/206 (data = parsed body)
-            and 204 (data = ``None``; the empty body is not parsed).
+            ``ProtocolResult`` for ``200 <= status_code < 300`` (data =
+            decoded body) and ``data=None`` for 204/205/HEAD successes.
+
+        Raises:
+            ProtocolError: For argument, URL-policy, redirect-budget,
+                timeout, and upstream status failures.  Timeout and
+                URL-policy codes carry ``details`` consumed by ToolService
+                to replay the legacy logs/metrics exactly.
+        """
+        if context.protocol_config is not None:
+            return await self._invoke_protocol_config(operation, arguments, context)
+        return await self._invoke_legacy(operation, arguments, context)
+
+    async def _invoke_protocol_config(
+        self,
+        operation: Any,
+        arguments: dict[str, Any],
+        context: InvocationContext,
+    ) -> ProtocolResult:
+        """Run the PR2 protocol_config path (§9.6/§9.7/§9.10).
+
+        Args:
+            operation: ``OperationDefinition`` (request carries the base
+                ``url``/``base_url`` used to resolve the request path).
+            arguments: Invocation arguments.
+            context: Runtime context with a non-``None``
+                ``protocol_config``.
+
+        Returns:
+            ``ProtocolResult`` decoded via ``ResponseDecoder``.
+
+        Raises:
+            ProtocolError: ``REST_TOO_MANY_REDIRECTS`` when the hop budget
+                is exhausted, plus the shared URL-policy/timeout codes.
+        """
+        config = context.protocol_config or {}
+        request_config = config.get("request") or {}
+
+        # Resolve the full request URL from the tool base URL + rendered path.
+        base_url = operation.request.get("url") or operation.request.get("base_url") or ""
+        built = RequestBuilder(codec_registry).build(arguments, request_config)
+        final_url = RedirectSecurity.resolve_absolute(built.url_path, base_url)
+
+        redirect_security = RedirectSecurity()
+        response = None
+        rest_start_time = time.time()
+        current_url = final_url
+        hops = 0
+
+        # Validate + pin the first hop, then send, following redirects
+        # manually so every hop re-runs SSRF validation (§9.10).
+        while True:
+            target = await redirect_security.validate_and_pin(current_url, context)
+            hop_headers = {hk: hv for hk, hv in context.headers.items() if hk.lower() != "host"}
+            hop_headers.update(target.headers)
+            hop_headers.update(built.headers)
+
+            request_options: dict[str, Any] = {
+                "cookies": built.cookies or None,
+                "follow_redirects": False,
+            }
+            if target.extensions:
+                request_options["extensions"] = target.extensions
+            if built.query_params:
+                request_options["params"] = built.query_params
+
+            body_kwargs = self._body_kwargs(built.body)
+            try:
+                response = await asyncio.wait_for(
+                    context.send_with_retry(
+                        lambda call_headers, _url=target.url: self._send_new(
+                            context, built.method, _url, call_headers, request_options, body_kwargs
+                        ),
+                        hop_headers,
+                    ),
+                    timeout=context.remaining_timeout(),
+                )
+            except (asyncio.TimeoutError, httpx.TimeoutException):
+                rest_elapsed_ms = (time.time() - rest_start_time) * 1000
+                raise ProtocolError(
+                    category=ErrorCategory.UNAVAILABLE,
+                    code=REST_SEND_TIMEOUT,
+                    message=f"Tool invocation timed out after {context.effective_timeout}s",
+                    origin="http",
+                    retryable=True,
+                    details={"elapsed_ms": rest_elapsed_ms},
+                )
+
+            if not redirect_security.is_redirect(response.status_code):
+                break
+
+            # A redirect hop: resolve Location and re-validate on the next
+            # iteration, bounded by gateway_max_redirects (§9.10).
+            location = redirect_security.parse_location(response.headers)
+            if not location:
+                break
+            current_url = redirect_security.resolve_absolute(location, current_url)
+            hops += 1
+            if hops > redirect_security.max_hops:
+                raise ProtocolError(
+                    category=ErrorCategory.UPSTREAM_ERROR,
+                    code=REST_TOO_MANY_REDIRECTS,
+                    message=f"Too many redirects (exceeded {redirect_security.max_hops} hops)",
+                    origin="http",
+                    retryable=False,
+                    protocol_status=response.status_code,
+                )
+
+        decoder = ResponseDecoder(codec_registry)
+        content_type = response.headers.get("content-type")
+        payload = response.content
+        codec_context = CodecContext(
+            protocol_config=config,
+            preferred_media_types=tuple((config.get("response") or {}).get("preferredMediaTypes") or ()),
+            max_response_bytes=settings.rest_response_text_max_length,
+        )
+        decoded = decoder.decode(response.status_code, content_type, payload, codec_context)
+        return ProtocolResult(
+            data=decoded.data,
+            metadata={"status_code": response.status_code, "content_type": decoded.codec_media_type},
+            duration_ms=(time.time() - rest_start_time) * 1000,
+        )
+
+    @staticmethod
+    def _body_kwargs(body: Any) -> dict[str, Any]:
+        """Map an ``EncodedBody`` to HTTPX body kwargs.
+
+        Args:
+            body: The encoded body, or ``None`` for bodyless methods.
+
+        Returns:
+            A dict of HTTPX body keyword arguments (may be empty).
+        """
+        if body is None:
+            return {}
+        return {body.mode: body.value}
+
+    async def _send_new(
+        self,
+        context: InvocationContext,
+        method: str,
+        url: str,
+        call_headers: dict,
+        options: dict[str, Any],
+        body_kwargs: dict[str, Any],
+    ) -> Any:
+        """Issue one protocol_config-path hop with the given headers.
+
+        Args:
+            context: The invocation context (supplies the HTTP client).
+            method: Uppercase HTTP method.
+            url: The validated/pinned hop URL.
+            call_headers: The merged outbound headers (B2 retry hook input).
+            options: Request options (extensions, cookies, params, headers).
+            body_kwargs: HTTPX body keyword arguments.
+
+        Returns:
+            The HTTPX response for this hop.
+        """
+        client = context.http_client
+        # The B2 retry hook may replace ``call_headers`` (token exchange), so
+        # the headers are applied here rather than baked into ``options``.
+        request_options = dict(options)
+        request_options["headers"] = call_headers
+        return await client.request(method, url, **body_kwargs, **request_options)
+
+    async def _invoke_legacy(
+        self,
+        operation: Any,
+        arguments: dict[str, Any],
+        context: InvocationContext,
+    ) -> ProtocolResult:
+        """Run the extracted PR1 legacy path (no ``protocol_config``).
+
+        Args:
+            operation: ``OperationDefinition`` whose ``request`` carries
+                url, method, query_mapping, and header_mapping.
+            arguments: Invocation arguments; URL-template parameters are
+                popped from a copy, never from the caller's dict.
+            context: ToolService-injected runtime context.
+
+        Returns:
+            ``ProtocolResult`` for ``200 <= status_code < 300`` (data =
+            parsed body) and ``data=None`` for 204/205/HEAD successes.
 
         Raises:
             ProtocolError: For argument, URL-policy, timeout, and upstream
@@ -412,29 +607,11 @@ class HttpProtocolAdapter(ProtocolAdapter):
                     protocol_status=response.status_code,
                 )
 
-            # Handle 204 No Content responses that have no body
-            if response.status_code == 204:
-                # Do not parse the empty body — that would emit a spurious
-                # "Failed to parse JSON response" warning.
-                return ProtocolResult(data=None, metadata={"status_code": 204}, duration_ms=(time.time() - rest_start_time) * 1000)
-
-            if response.status_code not in _LEGACY_REST_SUCCESS_STATUSES:
-                # Non-standard 2xx codes (203, 205, 207, etc.) treated as errors
-                try:
-                    result = response.json()
-                except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                    result = _handle_json_parse_error(response, e, is_error_response=True)
-                # NOTE: a parse-fallback {"response_text": ...} result is
-                # intentionally discarded here (legacy behaviour preserved).
-                error_val = result["error"] if "error" in result else "Tool error encountered"
-                raise ProtocolError(
-                    category=ErrorCategory.UPSTREAM_ERROR,
-                    code=REST_UNEXPECTED_STATUS,
-                    message=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode(),
-                    origin="http",
-                    retryable=False,
-                    protocol_status=response.status_code,
-                )
+            # 204/205/HEAD successes carry no body; do not parse the empty
+            # body — that would emit a spurious "Failed to parse JSON response"
+            # warning (design §9.8).
+            if response.status_code in (204, 205) or method == "HEAD":
+                return ProtocolResult(data=None, metadata={"status_code": response.status_code}, duration_ms=(time.time() - rest_start_time) * 1000)
 
             try:
                 result = response.json()

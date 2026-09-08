@@ -3474,6 +3474,7 @@ class Tool(Base):
     allowlist: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     plugin_chain_pre: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     plugin_chain_post: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    protocol_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"))

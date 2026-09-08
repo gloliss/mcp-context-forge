@@ -93,6 +93,7 @@ def create_mock_tool(visibility="public", owner_email=None, team_id=None, enable
     tool.gateway_id = None
     tool.gateway = None
     tool.jsonpath_filter = ""
+    tool.protocol_config = None  # PR2: NULL keeps legacy REST tools on the legacy adapter path
     tool.annotations = {}
     tool.tags = []
     tool.custom_name = None

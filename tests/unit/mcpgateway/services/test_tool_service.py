@@ -725,6 +725,7 @@ def mock_tool(mock_gateway):
     tool.team = None
     tool.query_mapping = None
     tool.header_mapping = None
+    tool.protocol_config = None  # PR2: NULL keeps legacy tools on the legacy adapter path
 
     # Set up metrics
     tool.metrics = []
@@ -2471,7 +2472,8 @@ class TestToolService:
 
         assert result.content[0].text == "Request completed successfully (No Content)"
 
-        # Test 205 status
+        # Test 205 status — §9.8: bodyless success decodes to data=None and the
+        # (nonsensical) JSON body is never parsed.
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 205
@@ -2486,7 +2488,8 @@ class TestToolService:
             # -------------- invoke -----------------
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
-        assert result.content[0].text == "Tool error encountered"
+        assert result.content[0].text == "Request completed successfully (No Content)"
+        mock_response.json.assert_not_called()  # §9.8: bodyless responses skip JSON parsing
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_post(self, tool_service, mock_tool, mock_global_config_obj, test_db):

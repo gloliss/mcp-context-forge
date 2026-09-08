@@ -30,7 +30,6 @@ from mcpgateway.protocols.http.adapter import (
     REST_MISSING_URL_PARAM,
     REST_QUERY_MAPPING_NON_SCALAR,
     REST_SEND_TIMEOUT,
-    REST_UNEXPECTED_STATUS,
     REST_URL_PINNING_MISSING,
     REST_URL_VALIDATION_FAILED,
     REST_URL_VALIDATION_TIMEOUT,
@@ -603,29 +602,27 @@ async def test_204_success_skips_body_parsing():
     assert response.json_calls == 0
 
 
-async def test_unexpected_status_falls_back_to_tool_error_message():
-    """203 with a non-JSON body yields 'Tool error encountered'."""
+async def test_203_success_falls_back_to_response_text():
+    """203 (non-standard 2xx) is success; a non-JSON body falls back to text."""
     response = _FakeResponse(status_code=203, text="partial content", json_error=json.JSONDecodeError("x", "d", 0))
     context = _make_context(http_client=_FakeClient(response=response))
-    with pytest.raises(ProtocolError, match="Tool error encountered") as exc_info:
-        await HttpProtocolAdapter().invoke(_make_operation(), {}, context)
-    error = exc_info.value
-    assert error.code == REST_UNEXPECTED_STATUS
-    assert error.protocol_status == 203
+    result = await HttpProtocolAdapter().invoke(_make_operation(), {}, context)
+    assert result.data == {"response_text": "partial content"}
+    assert result.metadata == {"status_code": 203}
 
 
-async def test_unexpected_status_uses_error_field_when_present():
-    """A 205 with an error field uses that field as the message."""
+async def test_205_success_returns_none():
+    """205 Reset Content is success with data=None (no body, design §9.8)."""
     response = _FakeResponse(status_code=205, json_data={"error": "partial"})
     context = _make_context(http_client=_FakeClient(response=response))
-    with pytest.raises(ProtocolError, match="partial") as exc_info:
-        await HttpProtocolAdapter().invoke(_make_operation(), {}, context)
-    assert exc_info.value.code == REST_UNEXPECTED_STATUS
+    result = await HttpProtocolAdapter().invoke(_make_operation(), {}, context)
+    assert result.data is None
+    assert result.metadata == {"status_code": 205}
 
 
-@pytest.mark.parametrize("status_code", [200, 201, 202, 206])
+@pytest.mark.parametrize("status_code", [200, 201, 202, 203, 206, 207])
 async def test_success_statuses_return_parsed_data(status_code):
-    """200/201/202/206 decode JSON into ProtocolResult.data with status metadata."""
+    """200/201/202/203/206/207 decode JSON into ProtocolResult.data (§9.8)."""
     response = _FakeResponse(status_code=status_code, json_data={"ok": True, "n": status_code})
     context = _make_context(http_client=_FakeClient(response=response))
     result = await HttpProtocolAdapter().invoke(_make_operation(), {}, context)
