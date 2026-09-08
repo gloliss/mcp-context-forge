@@ -1869,6 +1869,12 @@ async def enforce_admin_csrf(request: Request) -> None:
     Raises:
         HTTPException: If origin validation fails or CSRF token validation fails.
     """
+    if not settings.csrf_enabled:
+        # CSRF protection is disabled by default (see config.csrf_enabled).
+        # Mirror CSRFMiddleware's gate so this per-route dependency does not
+        # enforce what the middleware itself skips.
+        return
+
     if request.method.upper() in {"GET", "HEAD", "OPTIONS", "TRACE"}:
         return
 

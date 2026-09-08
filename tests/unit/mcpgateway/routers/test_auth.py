@@ -1010,20 +1010,31 @@ class TestCookieOnlySessionSmoke:
         assert "jwt_token" in response.cookies
 
     def test_refresh_with_cookie_only_without_csrf_rejected(self):
-        """POST /auth/refresh cookie-only without a CSRF token is rejected (path not exempt)."""
+        """POST /auth/refresh cookie-only without a CSRF token is rejected when CSRF_ENABLED=true.
+
+        CSRF protection is disabled by default (settings.csrf_enabled=False), so the
+        shared ``mcpgateway.main.app`` has no CSRFMiddleware in its stack. Assemble a
+        minimal app with CSRF enabled to pin the denial behavior (path not exempt).
+        """
         # Third-Party
         from fastapi.testclient import TestClient
         import jwt as jwt_lib
 
         # First-Party
-        from mcpgateway.main import app
+        from fastapi import FastAPI
+        from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
+        from mcpgateway.routers.auth import auth_router
 
         payload = self._payload()
         token = jwt_lib.encode(payload, self.SECRET, algorithm="HS256")
 
         with ExitStack() as stack:
             self._smoke_patches(stack, payload)
-            client = TestClient(app)
+            stack.enter_context(patch("mcpgateway.middleware.auth_context_stack.settings.csrf_enabled", True))
+            test_app = FastAPI()
+            register_auth_context_middleware(test_app)
+            test_app.include_router(auth_router)
+            client = TestClient(test_app)
             client.cookies.set("jwt_token", token)
             response = client.post("/auth/refresh")
 

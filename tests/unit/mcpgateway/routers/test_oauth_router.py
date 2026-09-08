@@ -135,6 +135,14 @@ def mock_current_user():
 class TestEnforceFetchToolsCsrf:
     """Tests for enforce_fetch_tools_csrf."""
 
+    @pytest.fixture(autouse=True)
+    def _csrf_enabled(self):
+        """CSRF protection is disabled by default (settings.csrf_enabled=False);
+        these tests exercise enforcement, which only runs when CSRF is on.
+        """
+        with patch("mcpgateway.routers.oauth_router.settings.csrf_enabled", True):
+            yield
+
     @pytest.fixture
     def csrf_request(self):
         request = Mock(spec=Request)

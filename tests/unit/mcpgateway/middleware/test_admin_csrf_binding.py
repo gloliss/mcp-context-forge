@@ -81,6 +81,17 @@ def _shadow_settings(**overrides):
                 settings_wrapper.__dict__[key] = value
 
 
+@pytest.fixture(autouse=True)
+def _csrf_enabled_for_binding_tests():
+    """Enable CSRF for this module's binding regression tests.
+
+    CSRF protection is disabled by default (settings.csrf_enabled=False); these
+    tests exercise enforcement behaviour, which only runs when CSRF is on.
+    """
+    with _shadow_settings(csrf_enabled=True):
+        yield
+
+
 @pytest.mark.asyncio
 async def test_csrf_token_bound_to_user_id_fails_middleware_validation():
     """Reproduces the bug: a token bound to EmailUser.id (the old admin.py
