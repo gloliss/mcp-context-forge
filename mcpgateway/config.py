@@ -409,7 +409,7 @@ class Settings(BaseSettings):
     )
 
     # CSRF Protection Configuration
-    csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
+    csrf_enabled: bool = Field(default=False, description="Enable CSRF protection for state-changing operations (off by default for direct HTTP access; set CSRF_ENABLED=true to enable)")
     csrf_secret_key: SecretStr = Field(
         default=SecretStr(""),
         description="Secret key for CSRF token generation. Falls back to jwt_secret_key when unset; set explicitly so the two keys can be rotated independently.",
@@ -417,7 +417,7 @@ class Settings(BaseSettings):
     csrf_token_name: str = Field(default="X-CSRF-Token", description="HTTP header name for CSRF token")
     csrf_cookie_name: str = Field(default="mcpgateway_csrf_token", description="Cookie name for CSRF token")
     csrf_token_expiry: int = Field(default=3600, description="CSRF token expiration time in seconds")
-    csrf_cookie_secure: bool = Field(default=True, description="Set Secure flag on CSRF cookie (HTTPS only)")
+    csrf_cookie_secure: bool = Field(default=False, description="Set Secure flag on CSRF cookie (HTTPS only; off by default for plain-HTTP access)")
     csrf_cookie_samesite: str = Field(default="Strict", description="SameSite attribute for CSRF cookie (Strict, Lax, or None)")
     csrf_cookie_httponly: bool = Field(default=False, description="Set HttpOnly flag on CSRF cookie (False allows JavaScript to read for API calls)")
     csrf_check_referer: bool = Field(default=True, description="Validate Referer header for CSRF protection")
@@ -1364,7 +1364,7 @@ class Settings(BaseSettings):
         return value
 
     # Security settings
-    secure_cookies: bool = Field(default=True)
+    secure_cookies: bool = Field(default=False)
     cookie_samesite: str = Field(default="lax")
 
     # CORS settings

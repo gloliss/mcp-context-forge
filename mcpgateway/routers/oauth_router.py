@@ -162,6 +162,11 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
     Also enforces same-origin via Origin/Referer header check to prevent
     cross-site request forgery on this state-changing endpoint.
     """
+    if not settings.csrf_enabled:
+        # Mirror CSRFMiddleware and enforce_admin_csrf: no enforcement when
+        # CSRF protection is disabled (the default).
+        return
+
     auth_header = get_auth_header_value(request.headers) or ""
     scheme, separator, token = auth_header.partition(" ")
     if separator and scheme.lower() == "bearer" and token.strip():

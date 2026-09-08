@@ -294,7 +294,7 @@ def test_csrf_name_override_warns_at_startup(caplog):
     """
     caplog.set_level("WARNING", logger="mcpgateway.config")
 
-    Settings(csrf_cookie_name="csrf_token", csrf_token_name="X-Probe-Csrf", environment="development", _env_file=None)
+    Settings(csrf_enabled=True, csrf_cookie_name="csrf_token", csrf_token_name="X-Probe-Csrf", environment="development", _env_file=None)
 
     warnings = _csrf_warnings(caplog)
     assert any("CSRF_COOKIE_NAME" in msg and "csrf_token" in msg for msg in warnings), warnings
@@ -334,7 +334,7 @@ def test_csrf_cookie_name_case_variant_warns(caplog):
     """
     caplog.set_level("WARNING", logger="mcpgateway.config")
 
-    Settings(csrf_cookie_name="MCPGateway_CSRF_Token", environment="development", _env_file=None)
+    Settings(csrf_enabled=True, csrf_cookie_name="MCPGateway_CSRF_Token", environment="development", _env_file=None)
 
     warnings = _csrf_warnings(caplog)
     assert any("CSRF_COOKIE_NAME" in msg for msg in warnings), warnings

@@ -417,6 +417,26 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/mcp
 | `REQUIRE_TOKEN_EXPIRATION` | 要求 Token 带 exp 声明 | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | 允许公开用户自助注册 | `false` |
 
+### 🔓 便于调用的默认（CSRF 默认关闭、HTTP 直连）
+
+为便于 API 直连调试与内网容器交付，以下安全开关**默认关闭**，可通过环境变量按需开启：
+
+| 变量 | 说明 | 默认值 |
+|----------|-------------|---------|
+| `CSRF_ENABLED` | CSRF 防护（CSRF 中间件 + Admin/OAuth 路由级校验） | `false` |
+| `SECURE_COOKIES` | 登录/会话 Cookie 打 `Secure` 标记（仅 HTTPS 下发） | `false` |
+| `CSRF_COOKIE_SECURE` | CSRF Cookie 打 `Secure` 标记 | `false` |
+
+- **CSRF 默认关闭**：curl、脚本与跨源客户端可直接调用所有接口，无需同源
+  Origin/Referer 与 `X-CSRF-Token` 双提交。认证不受影响：`AUTH_REQUIRED`
+  与 Bearer Token 校验仍默认开启。
+- **HTTP 直连默认可用**：Cookie 不强制 `Secure`，`http://` 下 Admin UI 登录与
+  调用开箱即用。
+- **生产收紧**：面向公网部署建议改回 `CSRF_ENABLED=true`、
+  `SECURE_COOKIES=true`（HTTPS），并配置 UAID 白名单（见下文）。开启 CSRF 后
+  的契约：状态变更请求需携带同源 Origin/Referer、`X-CSRF-Token` 请求头与
+  `mcpgateway_csrf_token` Cookie（双提交 + HMAC 会话绑定，Admin UI 自动处理）。
+
 ### 🌐 UAID 跨网关路由安全
 
 跨网关 UAID 路由需要显式安全配置：

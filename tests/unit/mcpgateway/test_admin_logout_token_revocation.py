@@ -184,6 +184,15 @@ class TestAdminLogoutTokenRevocation:
 class TestAdminLogoutDenyPaths:
     """Deny-path regression tests required by AGENTS.md for security-sensitive changes."""
 
+    @pytest.fixture(autouse=True)
+    def _csrf_enabled(self):
+        """CSRF protection is disabled by default (settings.csrf_enabled=False);
+        these deny-path tests exercise the real enforce_admin_csrf dependency,
+        which only runs when CSRF is on.
+        """
+        with patch("mcpgateway.admin.settings.csrf_enabled", True):
+            yield
+
     def test_post_with_jwt_cookie_but_no_csrf_token_is_rejected(self, client: TestClient) -> None:
         """Cookie auth + state-changing POST without a CSRF token must return 403.
 

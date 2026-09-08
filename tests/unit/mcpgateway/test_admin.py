@@ -24622,6 +24622,14 @@ class TestLoadSriHashes:
 class TestAdminCsrfProtection:
     """Regression tests for admin CSRF enforcement helper."""
 
+    @pytest.fixture(autouse=True)
+    def _csrf_enabled(self):
+        """CSRF protection is disabled by default (settings.csrf_enabled=False);
+        these tests exercise enforcement, which only runs when CSRF is on.
+        """
+        with patch("mcpgateway.admin.settings.csrf_enabled", True):
+            yield
+
     @staticmethod
     def _make_request(
         method: str = "POST",
