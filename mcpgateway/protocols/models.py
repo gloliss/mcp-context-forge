@@ -122,6 +122,10 @@ class InvocationContext:
         validate_header_mapping_targets: Header mapping target validator.
         invalid_header_value_chars: Compiled regex of illegal header chars.
         child_span_factory: ``create_child_span`` context-manager factory.
+        protocol_config: The tool's ``protocol_config`` (PR2, §9.11).  When
+            present, the HTTP adapter takes the new RequestBuilder /
+            ResponseDecoder / RedirectSecurity path; ``None`` (legacy tools)
+            keeps the extracted legacy path unchanged.
     """
 
     tool_name: str
@@ -139,3 +143,4 @@ class InvocationContext:
     validate_header_mapping_targets: Optional[Callable[..., None]] = None
     invalid_header_value_chars: Any = None
     child_span_factory: Optional[Callable[..., Any]] = None
+    protocol_config: Optional[Dict[str, Any]] = None

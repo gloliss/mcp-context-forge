@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, call, MagicMock, patch
 from urllib.parse import urlparse
 
 # Third-Party
+import httpx
 import jsonschema
 import orjson
 import pytest
@@ -228,6 +229,7 @@ def mock_tool(mock_gateway):
     tool.auth_type = None
     tool.auth_value = None
     tool.oauth_config = None
+    tool.protocol_config = None  # PR2: NULL keeps legacy tools on the legacy adapter path
     tool.gateway_id = "gw-1"
     tool.gateway = mock_gateway
     tool.gateway_slug = "test-gateway"
@@ -7303,7 +7305,16 @@ class TestInvokeToolRestErrorResponse:
         mock_response.status_code = status_code
         mock_response.json = MagicMock(return_value=json_return)
         mock_response.text = text_body
-        mock_response.raise_for_status = MagicMock()
+        # Realistic httpx behaviour: non-2xx responses raise from raise_for_status.
+        # The PR2 adapter classifies errors via httpx.HTTPStatusError instead of
+        # its own success-status whitelist.
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "HTTP error",
+                request=httpx.Request("GET", "http://upstream.invalid"),
+                response=httpx.Response(status_code, request=httpx.Request("GET", "http://upstream.invalid")),
+            )
+        )
 
         async def fake_get(*a, **kw):
             return mock_response
@@ -7359,7 +7370,7 @@ class TestInvokeToolRestErrorResponse:
 
     @pytest.mark.asyncio
     async def test_rest_non_standard_status_non_json(self, tool_service):
-        """REST tool 207 Multi-Status with non-JSON body."""
+        """REST tool 207 Multi-Status with a non-JSON body is success (§9.8)."""
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
 
@@ -7391,7 +7402,10 @@ class TestInvokeToolRestErrorResponse:
             tool_service._http_client.get = fake_get
 
             result = await tool_service.invoke_tool(db, "test_tool", {})
-        assert result.is_error is True
+        # §9.8: 207 Multi-Status is a success status; the non-JSON body is
+        # preserved via the response_text fallback rather than an error.
+        assert result.is_error is False
+        assert "multi-status response" in result.content[0].text
 
 
 # ---------------------------------------------------------------------------
@@ -7652,6 +7666,7 @@ class TestInvokeToolGatewayQueryParams:
         mock_tool.timeout_ms = None
         mock_tool.enabled = True
         mock_tool.reachable = True
+        mock_tool.protocol_config = None  # PR2: NULL keeps this legacy REST tool on the legacy adapter path
 
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = [mock_tool]

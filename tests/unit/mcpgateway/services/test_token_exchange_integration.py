@@ -984,6 +984,7 @@ class TestRestIntegrationB2Wiring:
         mock_tool.query_mapping = None
         mock_tool.header_mapping = None
         mock_tool.timeout_ms = None
+        mock_tool.protocol_config = None  # PR2: NULL keeps this legacy REST tool on the legacy adapter path
 
         test_db = MagicMock()
         mock_scalar_tool = Mock()

@@ -1513,6 +1513,7 @@ class ToolService(BaseService):
             "version": getattr(tool, "version", 1),
             "query_mapping": tool.query_mapping,
             "header_mapping": tool.header_mapping,
+            "protocol_config": getattr(tool, "protocol_config", None),
         }
 
         gateway_payload = None
@@ -2432,6 +2433,7 @@ class ToolService(BaseService):
                 allowlist=tool.allowlist if tool.integration_type == "REST" else None,
                 plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
                 plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
+                protocol_config=tool.protocol_config if tool.integration_type == "REST" else None,
             )
             db.add(db_tool)
             db.commit()
@@ -2916,6 +2918,7 @@ class ToolService(BaseService):
                         set_semantic_field("allowlist", tool.allowlist)
                         set_semantic_field("plugin_chain_pre", tool.plugin_chain_pre)
                         set_semantic_field("plugin_chain_post", tool.plugin_chain_post)
+                        set_semantic_field("protocol_config", tool.protocol_config)
 
                     existing_tool.modified_by = created_by
                     existing_tool.modified_from_ip = created_from_ip
@@ -3053,6 +3056,7 @@ class ToolService(BaseService):
             allowlist=tool.allowlist if tool.integration_type == "REST" else None,
             plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
             plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
+            protocol_config=tool.protocol_config if tool.integration_type == "REST" else None,
         )
 
     async def list_tools(
@@ -6213,6 +6217,7 @@ class ToolService(BaseService):
                         validate_header_mapping_targets=_validate_header_mapping_targets,
                         invalid_header_value_chars=_INVALID_HEADER_VALUE_CHARS,
                         child_span_factory=create_child_span,
+                        protocol_config=tool_payload.get("protocol_config"),
                     )
                     try:
                         protocol_result = await protocol_registry.invoke("http", rest_operation, arguments, protocol_context)
@@ -6293,7 +6298,9 @@ class ToolService(BaseService):
                             raise protocol_error
                     else:
                         metric_status_code = str(protocol_result.metadata["status_code"])
-                        if protocol_result.data is None and protocol_result.metadata["status_code"] == 204:
+                        if protocol_result.data is None:
+                            # Bodyless 2xx successes (204 No Content, 205 Reset
+                            # Content, HEAD) decode to data=None (§9.8).
                             tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
                             success = True
                         else:
@@ -7970,6 +7977,7 @@ class ToolService(BaseService):
                 "allowlist",
                 "plugin_chain_pre",
                 "plugin_chain_post",
+                "protocol_config",
             }
             blocked_fields = sorted(provided_fields & source_managed_fields) if source_managed and not source_sync else []
             # Metadata enrichment clients historically echo the immutable Tool
@@ -8111,6 +8119,7 @@ class ToolService(BaseService):
                 "allowlist",
                 "plugin_chain_pre",
                 "plugin_chain_post",
+                "protocol_config",
             ):
                 value = getattr(tool_update, field_name, None)
                 if value is not None:
