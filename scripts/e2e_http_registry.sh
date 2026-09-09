@@ -212,7 +212,9 @@ jq_assert "DELETE /v1/pets/{petId} returns 204 No Content" '.result.content[0].t
 # ---------------------------------------------------------------------------
 HEALTH_RESPONSE=$(curl -fsS -X POST "$GATEWAY_URL/admin/http/$SERVICE_ID/health" -H "$AUTH_HEADER")
 jq_assert "health check reports healthy" '.healthy == true' "$HEALTH_RESPONSE"
-jq_assert "health check marks the service reachable" '.reachable == true' "$HEALTH_RESPONSE"
+# reachability lives on the service read model, not the check-result payload.
+SERVICE_READ=$(curl -fsS "$GATEWAY_URL/admin/http/$SERVICE_ID" -H "$AUTH_HEADER")
+jq_assert "health check marks the service reachable" '.reachable == true' "$SERVICE_READ"
 
 # ---------------------------------------------------------------------------
 # Step 6: v2 drift → candidate → diff → preview → activate
