@@ -270,6 +270,12 @@ templating = [
     "cookiecutter>=2.7.1",
 ]
 
+# XML / XSD support (PR4).  Design-document §29 keeps SOAP out of this
+# extra: the SOAP extra pulls in zeep on top of xmlschema separately.
+xml = [
+    "xmlschema>=4.3.0",
+]
+
 # External plugin packages (optional)
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [

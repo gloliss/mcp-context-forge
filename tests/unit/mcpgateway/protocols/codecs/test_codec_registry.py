@@ -64,8 +64,18 @@ class TestCodecRegistryResolution:
         """Unrecognized media types fall back to the BinaryCodec."""
         registry = _make_registry()
 
-        assert isinstance(registry.resolve("application/xml"), BinaryCodec)
+        assert isinstance(registry.resolve("application/pdf"), BinaryCodec)
         assert isinstance(registry.resolve("image/png"), BinaryCodec)
+
+    def test_xml_media_types_resolve_to_xml_codec(self):
+        """PR4: application/xml, text/xml and the +xml suffix resolve to XmlCodec."""
+        registry = _make_registry()
+        from mcpgateway.protocols.codecs.xml import XmlCodec
+
+        assert isinstance(registry.resolve("application/xml"), XmlCodec)
+        assert isinstance(registry.resolve("text/xml"), XmlCodec)
+        assert isinstance(registry.resolve("application/soap+xml"), XmlCodec)
+        assert isinstance(registry.resolve("application/atom+xml"), XmlCodec)
 
     def test_missing_media_type_falls_back_to_binary(self):
         """A None/empty media type resolves to the BinaryCodec."""

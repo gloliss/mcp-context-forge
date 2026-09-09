@@ -34,6 +34,7 @@ _CODEC_NAME_MEDIA_TYPES = {
     "binary": "application/octet-stream",
     "form": "application/x-www-form-urlencoded",
     "multipart": "multipart/form-data",
+    "xml": "application/xml",
 }
 
 
