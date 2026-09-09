@@ -1577,10 +1577,15 @@ export const editTool = async function (toolId) {
       JSON.stringify(tool.annotations || {}),
       "Annotations"
     );
+    const protocolConfigValidation = validateJson(
+      tool.protocolConfig ? JSON.stringify(tool.protocolConfig) : "",
+      "Protocol Config"
+    );
 
     const headersField = safeGetElement("edit-tool-headers");
     const schemaField = safeGetElement("edit-tool-schema");
     const outputSchemaField = safeGetElement("edit-tool-output-schema");
+    const protocolConfigField = safeGetElement("edit-tool-protocol-config");
     const annotationsField = safeGetElement("edit-tool-annotations");
 
     if (headersField && headersValidation.valid) {
@@ -1605,6 +1610,15 @@ export const editTool = async function (toolId) {
         2
       );
     }
+    if (protocolConfigField) {
+      if (tool.protocolConfig) {
+        protocolConfigField.value = protocolConfigValidation.valid
+          ? JSON.stringify(protocolConfigValidation.value, null, 2)
+          : "";
+      } else {
+        protocolConfigField.value = "";
+      }
+    }
 
     // Update CodeMirror editors if they exist
     if (window.editToolHeadersEditor && headersValidation.valid) {
@@ -1628,6 +1642,16 @@ export const editTool = async function (toolId) {
         window.editToolOutputSchemaEditor.setValue("");
       }
       window.editToolOutputSchemaEditor.refresh();
+    }
+    if (window.editToolProtocolConfigEditor) {
+      if (tool.protocolConfig && protocolConfigValidation.valid) {
+        window.editToolProtocolConfigEditor.setValue(
+          JSON.stringify(protocolConfigValidation.value, null, 2)
+        );
+      } else {
+        window.editToolProtocolConfigEditor.setValue("");
+      }
+      window.editToolProtocolConfigEditor.refresh();
     }
 
     // Prefill integration type from DB and set request types accordingly
@@ -1700,6 +1724,9 @@ export const editTool = async function (toolId) {
         if (outputSchemaField) {
           outputSchemaField.setAttribute("readonly", "readonly");
         }
+        if (protocolConfigField) {
+          protocolConfigField.setAttribute("readonly", "readonly");
+        }
         if (editAuthTokenField) {
           editAuthTokenField.setAttribute("readonly", "readonly");
         }
@@ -1711,6 +1738,9 @@ export const editTool = async function (toolId) {
         }
         if (window.editToolOutputSchemaEditor) {
           window.editToolOutputSchemaEditor.setOption("readOnly", true);
+        }
+        if (window.editToolProtocolConfigEditor) {
+          window.editToolProtocolConfigEditor.setOption("readOnly", true);
         }
       } else {
         typeField.disabled = false;
@@ -1729,6 +1759,9 @@ export const editTool = async function (toolId) {
         if (outputSchemaField) {
           outputSchemaField.removeAttribute("readonly");
         }
+        if (protocolConfigField) {
+          protocolConfigField.removeAttribute("readonly");
+        }
         if (editAuthTokenField) {
           editAuthTokenField.removeAttribute("readonly");
         }
@@ -1740,6 +1773,9 @@ export const editTool = async function (toolId) {
         }
         if (window.editToolOutputSchemaEditor) {
           window.editToolOutputSchemaEditor.setOption("readOnly", false);
+        }
+        if (window.editToolProtocolConfigEditor) {
+          window.editToolProtocolConfigEditor.setOption("readOnly", false);
         }
       }
       // Update request types and URL field

@@ -3837,6 +3837,21 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Protocol Config (JSON)</label
+                >
+                <textarea
+                  name="protocol_config"
+                  id="protocol-config-editor"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  placeholder="{&quot;request&quot;: {&quot;method&quot;: &quot;GET&quot;}, &quot;response&quot;: {}}"
+                ></textarea>
+                <p class="mt-1 text-xs text-gray-500 dark:text-indigo-300">
+                  Optional HTTP runtime configuration (request/response codec and redirect policy). Leave empty to use the legacy REST path.
+                </p>
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Json Path Filter</label
                 >
                 <input
@@ -9093,6 +9108,21 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       ></textarea>
                       <p class="mt-1 text-xs text-gray-500 dark:text-indigo-300">
                         Optional JSON Schema for validating structured tool output. Per MCP spec, servers should return structured results that conform to this schema.
+                      </p>
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Protocol Config (JSON)</label
+                      >
+                      <textarea
+                        name="protocol_config"
+                        id="edit-tool-protocol-config"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="{&quot;request&quot;: {&quot;method&quot;: &quot;GET&quot;}, &quot;response&quot;: {}}"
+                      ></textarea>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-indigo-300">
+                        Optional HTTP runtime configuration (request/response codec and redirect policy). Leave empty to use the legacy REST path.
                       </p>
                     </div>
                     <div>

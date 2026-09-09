@@ -124,9 +124,19 @@ export const initializeCodeMirrorEditors = function () {
       varName: "outputSchemaEditor",
     },
     {
+      id: "protocol-config-editor",
+      mode: "application/json",
+      varName: "protocolConfigEditor",
+    },
+    {
       id: "edit-tool-output-schema",
       mode: "application/json",
       varName: "editToolOutputSchemaEditor",
+    },
+    {
+      id: "edit-tool-protocol-config",
+      mode: "application/json",
+      varName: "editToolProtocolConfigEditor",
     },
     {
       id: "edit-resource-content",
