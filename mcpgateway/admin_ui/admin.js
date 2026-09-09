@@ -307,6 +307,7 @@ import {
   submitApiKeyForm,
   toggleGrpcTlsFields,
   viewGrpcMethods,
+  viewHttpOperations,
 } from "./modals.js";
 
 Admin.closeApiKeyModal = closeApiKeyModal;
@@ -315,6 +316,7 @@ Admin.showApiKeyModal = showApiKeyModal;
 Admin.submitApiKeyForm = submitApiKeyForm;
 Admin.toggleGrpcTlsFields = toggleGrpcTlsFields;
 Admin.viewGrpcMethods = viewGrpcMethods;
+Admin.viewHttpOperations = viewHttpOperations;
 
 // Navigation
 import { navigateAdmin } from "./navigation.js";

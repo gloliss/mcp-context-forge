@@ -1326,3 +1326,118 @@ export const handleGrpcServiceFormSubmit = async function (e) {
     }
   }
 };
+
+/**
+ * Handle HTTP service registration form submission
+ * Builds an HttpServiceCreate payload and posts it to /admin/http.
+ * @param {Event} e - Submit event
+ */
+export const handleHttpServiceFormSubmit = async function (e) {
+  e.preventDefault();
+
+  const form = e.target;
+  const formData = new FormData(form);
+  const status = safeGetElement("httpFormError");
+  const loading = safeGetElement("add-http-loading");
+  const submitButton = form.querySelector('button[type="submit"]');
+
+  try {
+    const name = formData.get("name");
+    const baseUrl = formData.get("base_url");
+
+    // Basic validation
+    const nameValidation = validateInputName(name, "HTTP service");
+    if (!nameValidation.valid) {
+      throw new Error(nameValidation.error);
+    }
+
+    if (!baseUrl || !/^https?:\/\/[^\s]+$/i.test(baseUrl)) {
+      throw new Error(
+        "Base URL must be a valid http:// or https:// URL"
+      );
+    }
+
+    // Disable submit button during request
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+
+    if (loading) {
+      loading.classList.remove("hidden");
+    }
+
+    if (status) {
+      status.textContent = "";
+      status.classList.add("hidden");
+    }
+
+    // Build JSON payload matching HttpServiceCreate schema
+    const payload = {
+      name,
+      base_url: baseUrl,
+      description: formData.get("description") || null,
+      discovery_mode: "manual",
+      discovery_config: {},
+      runtime_config: {},
+      health_check_enabled: formData.get("health_check_enabled") === "on",
+      health_check_interval: Number(
+        formData.get("health_check_interval") || 60
+      ),
+      health_check_timeout: Number(formData.get("health_check_timeout") || 5),
+      health_failure_threshold: 3,
+      tags: [],
+      visibility: formData.get("visibility") || "public",
+    };
+
+    // Add team_id if present
+    const teamIdFromForm = formData.get("team_id");
+    const teamIdFromUrl = new URL(window.location.href).searchParams.get(
+      "team_id"
+    );
+    const teamId = teamIdFromForm || teamIdFromUrl;
+    if (teamId) {
+      payload.team_id = teamId;
+    }
+
+    const response = await fetch(`${window.ROOT_PATH}/admin/http`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      credentials: "include", // pragma: allowlist secret
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        errorData.detail ||
+          `Failed to register HTTP service (${response.status})`
+      );
+    }
+
+    // Success - redirect to HTTP services panel
+    const searchParams = new URLSearchParams();
+    if (teamId) {
+      searchParams.set("team_id", teamId);
+    }
+
+    navigateAdmin("http-services", searchParams);
+  } catch (error) {
+    console.error("Add HTTP Service Error:", error);
+    if (status) {
+      status.textContent =
+        error.message ||
+        "An error occurred while registering the HTTP service.";
+      status.classList.remove("hidden");
+    }
+    showErrorMessage(error.message);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+    }
+    if (loading) {
+      loading.classList.add("hidden");
+    }
+  }
+};

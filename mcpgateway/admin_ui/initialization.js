@@ -31,6 +31,7 @@ import {
   handleEditToolFormSubmit,
   handleGatewayFormSubmit,
   handleGrpcServiceFormSubmit,
+  handleHttpServiceFormSubmit,
   handlePromptFormSubmit,
   handleResourceFormSubmit,
   handleServerFormSubmit,
@@ -525,6 +526,7 @@ export const setupFormHandlers = function () {
     true
   );
   registerFormListeners("add-grpc-service-form", handleGrpcServiceFormSubmit);
+  registerFormListeners("add-http-service-form", handleHttpServiceFormSubmit);
 
   // Setup search functionality for selectors
   setupSelectorSearch();

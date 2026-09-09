@@ -814,6 +814,8 @@ class ToolCreate(BaseModel):
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
     protocol_config: Optional[Dict[str, Any]] = Field(None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path.")
+    http_service_id: Optional[str] = Field(None, description="ID of the HTTP service this tool is generated from (registry sync)")
+    http_schema_artifact_id: Optional[str] = Field(None, description="ID of the HTTP schema artifact that produced this tool revision (registry sync)")
 
     @field_validator("tags")
     @classmethod
@@ -1851,6 +1853,8 @@ class ToolRead(BaseModelWithConfigDict):
     gateway_id: Optional[str]
     grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
     grpc_schema_artifact_id: Optional[str] = Field(None, description="ID of the immutable gRPC schema artifact that produced this tool revision")
+    http_service_id: Optional[str] = Field(None, description="ID of the HTTP service this tool was generated from")
+    http_schema_artifact_id: Optional[str] = Field(None, description="ID of the immutable HTTP schema artifact that produced this tool revision")
     sql_table_id: Optional[str] = Field(None, description="ID of the SQL table backing a generated SQL tool")
     source_operation: Optional[str] = Field(None, description="Source operation such as query, insert, update, or delete")
     execution_count: Optional[int] = Field(None)
@@ -8498,6 +8502,350 @@ class GrpcRegistryViewRead(BaseModel):
     total_services: int = Field(default=0)
     total_schema_versions: int = Field(default=0)
     total_methods: int = Field(default=0)
+    total_exposed_tools: int = Field(default=0)
+
+
+class HttpServiceCreate(BaseModel):
+    """Schema for creating a new HTTP service."""
+
+    name: str = Field(..., min_length=1, max_length=255, description="Unique name for the HTTP service")
+    base_url: str = Field(..., description="HTTP API base URL (http:// or https://)")
+    description: Optional[str] = Field(None, description="Description of the HTTP service")
+    discovery_mode: Literal["manual"] = Field(default="manual", description="Discovery mode (manual OpenAPI import in this release)")
+    discovery_config: Dict[str, Any] = Field(default_factory=dict, description="Discovery configuration (manifest path or source URL)")
+    runtime_config: Dict[str, Any] = Field(default_factory=dict, description="Non-sensitive HTTP runtime policy")
+    health_check_enabled: bool = Field(default=True, description="Enable periodic health checks")
+    health_check_interval: int = Field(default_factory=lambda: settings.mcpgateway_http_health_interval, ge=10, le=3600, description="Health-check interval in seconds")
+    health_check_timeout: int = Field(default_factory=lambda: settings.mcpgateway_http_health_timeout, ge=1, le=60, description="Health-check timeout in seconds")
+    health_failure_threshold: int = Field(default_factory=lambda: settings.mcpgateway_http_health_failure_threshold, ge=1, le=20, description="Failures before unhealthy")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Tags for categorization")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
+    visibility: Literal["private", "team", "public"] = Field(default="public", description="Visibility level: private, team, or public")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate service name.
+
+        Args:
+            v: Service name to validate
+
+        Returns:
+            Validated service name
+        """
+        return SecurityValidator.validate_name(v, "HTTP service name")
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: str) -> str:
+        """Validate the base URL scheme.
+
+        Args:
+            v: Base URL to validate
+
+        Returns:
+            Validated base URL
+
+        Raises:
+            ValueError: If the URL is not http(s)
+        """
+        if not v or not v.lower().startswith(("http://", "https://")):
+            raise ValueError("Base URL must start with http:// or https://")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Validate description.
+
+        Args:
+            v: Description to validate
+
+        Returns:
+            Validated and sanitized description
+        """
+        if v is None:
+            return None
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+            logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
+            return SecurityValidator.sanitize_display_text(truncated, "Description")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+
+class HttpServiceUpdate(BaseModel):
+    """Schema for updating an existing HTTP service."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255, description="Service name")
+    base_url: Optional[str] = Field(None, description="HTTP API base URL (http:// or https://)")
+    description: Optional[str] = Field(None, description="Service description")
+    discovery_mode: Optional[Literal["manual"]] = Field(None, description="Discovery mode (manual OpenAPI import in this release)")
+    discovery_config: Optional[Dict[str, Any]] = Field(None, description="Discovery configuration (manifest path or source URL)")
+    runtime_config: Optional[Dict[str, Any]] = Field(None, description="Non-sensitive HTTP runtime policy")
+    health_check_enabled: Optional[bool] = Field(None, description="Enable health checks")
+    health_check_interval: Optional[int] = Field(None, ge=10, le=3600, description="Health-check interval")
+    health_check_timeout: Optional[int] = Field(None, ge=1, le=60, description="Health-check timeout")
+    health_failure_threshold: Optional[int] = Field(None, ge=1, le=20, description="Failures before unhealthy")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Service tags")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        """Validate service name.
+
+        Args:
+            v: Service name to validate
+
+        Returns:
+            Validated service name or None
+        """
+        if v is None:
+            return None
+        return SecurityValidator.validate_name(v, "HTTP service name")
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: Optional[str]) -> Optional[str]:
+        """Validate the base URL scheme.
+
+        Args:
+            v: Base URL to validate
+
+        Returns:
+            Validated base URL or None
+
+        Raises:
+            ValueError: If the URL is not http(s)
+        """
+        if v is None:
+            return None
+        if not v.lower().startswith(("http://", "https://")):
+            raise ValueError("Base URL must start with http:// or https://")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Validate description.
+
+        Args:
+            v: Description to validate
+
+        Returns:
+            Validated and sanitized description
+        """
+        if v is None:
+            return None
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+            logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
+            return SecurityValidator.sanitize_display_text(truncated, "Description")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+
+class HttpServiceRead(BaseModel):
+    """Schema for reading HTTP service information."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Unique service identifier")
+    name: str = Field(..., description="Service name")
+    slug: str = Field(..., description="URL-safe slug")
+    base_url: str = Field(..., description="HTTP API base URL")
+    description: Optional[str] = Field(None, description="Service description")
+
+    # Configuration
+    discovery_mode: Literal["manual"] = Field(default="manual", description="Discovery mode (manual OpenAPI import in this release)")
+    discovery_config: Dict[str, Any] = Field(default_factory=dict, description="Discovery configuration (manifest path or source URL)")
+    runtime_config: Dict[str, Any] = Field(default_factory=dict, description="Non-sensitive HTTP runtime policy")
+    active_artifact_id: Optional[str] = Field(None, description="Active OpenAPI artifact ID")
+    candidate_artifact_id: Optional[str] = Field(None, description="Latest non-activated candidate artifact ID")
+    active_schema_hash: Optional[str] = Field(None, description="Active contract SHA-256")
+    discovered_schema_hash: Optional[str] = Field(None, description="Latest imported contract SHA-256")
+    schema_drift: bool = Field(default=False, description="Imported and active contract differ")
+    operation_count: int = Field(default=0, description="Number of operations compiled")
+    discovered_operations: Dict[str, Any] = Field(default_factory=dict, description="Compiled operation summaries")
+    last_discovery: Optional[datetime] = Field(None, description="Last import/discovery timestamp")
+    last_discovery_error: Optional[str] = Field(None, description="Last import/discovery failure reason; null on success")
+
+    # Status
+    enabled: bool = Field(..., description="Service enabled")
+    reachable: bool = Field(..., description="Service reachable")
+    health_check_enabled: bool = Field(default=True, description="Health monitoring enabled")
+    health_check_interval: int = Field(default=60, description="Health-check interval")
+    health_check_timeout: int = Field(default=5, description="Health-check timeout")
+    health_failure_threshold: int = Field(default=3, description="Failure threshold")
+    health_status: str = Field(default="unknown", description="Current health status")
+    consecutive_failures: int = Field(default=0, description="Consecutive failed checks")
+    last_health_check: Optional[datetime] = Field(None, description="Latest health check")
+    last_health_success: Optional[datetime] = Field(None, description="Latest successful health check")
+    last_health_error: Optional[str] = Field(None, description="Latest sanitized health error")
+
+    # Tags
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Service tags")
+
+    # Timestamps
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+
+    # Team scoping
+    team_id: Optional[str] = Field(None, description="Team ID")
+    team: Optional[str] = Field(None, description="Name of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Owner email")
+    visibility: Literal["private", "team", "public"] = Field(default="public", description="Visibility level: private, team, or public")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
+
+    @field_validator("discovery_mode", mode="before")
+    @classmethod
+    def default_legacy_discovery_mode(cls, value: Any) -> str:
+        """Default rows created before artifact import to manual mode."""
+        return value or "manual"
+
+    @field_validator("schema_drift", mode="before")
+    @classmethod
+    def default_legacy_schema_drift(cls, value: Any) -> bool:
+        """Treat an unset legacy drift flag as no known drift."""
+        return False if value is None else value
+
+    @field_validator("health_check_enabled", mode="before")
+    @classmethod
+    def default_legacy_health_enabled(cls, value: Any) -> bool:
+        """Enable health checks for legacy rows when HTTP monitoring is enabled."""
+        return True if value is None else value
+
+    @field_validator("health_check_interval", "health_check_timeout", "health_failure_threshold", "consecutive_failures", mode="before")
+    @classmethod
+    def default_legacy_health_numbers(cls, value: Any, info: ValidationInfo) -> int:
+        """Supply health defaults for rows predating monitoring columns."""
+        defaults = {"health_check_interval": 60, "health_check_timeout": 5, "health_failure_threshold": 3, "consecutive_failures": 0}
+        return defaults[info.field_name] if value is None else value
+
+    @field_validator("health_status", mode="before")
+    @classmethod
+    def default_legacy_health_status(cls, value: Any) -> str:
+        """Represent an unset legacy health state as unknown."""
+        return value or "unknown"
+
+    @field_serializer("runtime_config")
+    def mask_runtime_config(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """Mask all runtime configuration values in API responses."""
+        return {key: "********" for key in value}
+
+
+class HttpSchemaArtifactRead(BaseModel):
+    """Safe metadata for an imported OpenAPI contract artifact."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    http_service_id: str
+    version: int
+    source_type: Literal["openapi", "swagger", "wsdl", "xsd", "manual"]
+    artifact_format: str
+    content_hash: str
+    source_info: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_by: Optional[str] = None
+    created_at: datetime
+    activated_at: Optional[datetime] = None
+
+
+class HttpSchemaDiff(BaseModel):
+    """Operation-level contract comparison between two artifacts."""
+
+    from_artifact_id: str
+    to_artifact_id: str
+    added_operations: List[str] = Field(default_factory=list)
+    removed_operations: List[str] = Field(default_factory=list)
+    changed_operations: List[str] = Field(default_factory=list)
+
+
+class HttpToolSyncPreview(BaseModel):
+    """Read-only preview of what tool synchronization would do for a candidate artifact.
+
+    Computed against the candidate artifact without mutating the Tool table or
+    activating anything. The four lists classify the would-be sync outcomes:
+    - added_tools: operations in the candidate catalog with no current Tool row
+    - modified_tools: operations whose Tool row would be updated (description,
+      schemas, or base URL)
+    - disabled_tools: current tools whose operation vanished from the candidate
+      (soft-disable triad)
+    - operations_needing_reapproval: operations present on both sides whose
+      input schema changed
+    """
+
+    service_id: str
+    candidate_artifact_id: str
+    added_tools: List[str] = Field(default_factory=list)
+    modified_tools: List[str] = Field(default_factory=list)
+    disabled_tools: List[str] = Field(default_factory=list)
+    operations_needing_reapproval: List[str] = Field(default_factory=list)
+    warning: Optional[str] = None
+
+
+class HttpRegistryOperationRead(BaseModel):
+    """One compiled operation within a schema version: contract shape and exposure state."""
+
+    key: str
+    method: str = ""
+    path: str = ""
+    summary: str = ""
+    tool_id: Optional[str] = None
+    tool_enabled: bool = False
+    tool_deprecated: bool = False
+    tool_reachable: bool = False
+    exposed: bool = Field(default=False, description="A live, enabled, non-deprecated tool backs this operation")
+
+
+class HttpRegistrySchemaRead(BaseModel):
+    """One schema version with its compiled operations, without the artifact bytes."""
+
+    artifact_id: str
+    version: int
+    source_type: Literal["openapi", "swagger", "wsdl", "xsd", "manual"]
+    artifact_format: str
+    content_hash: str
+    is_active: bool
+    created_by: Optional[str] = None
+    created_at: datetime
+    activated_at: Optional[datetime] = None
+    operations: List[HttpRegistryOperationRead] = Field(default_factory=list)
+
+
+class HttpRegistryServiceRead(BaseModel):
+    """Service-level registry summary with nested schema versions and tools."""
+
+    id: str
+    name: str
+    slug: str
+    base_url: str
+    description: Optional[str] = None
+    enabled: bool
+    reachable: bool
+    health_status: str = Field(default="unknown")
+    operation_count: int = Field(default=0)
+    active_schema_hash: Optional[str] = None
+    schema_drift: bool = False
+    team_id: Optional[str] = None
+    owner_email: Optional[str] = None
+    visibility: Literal["private", "team", "public"] = Field(default="public")
+    schema_versions: List[HttpRegistrySchemaRead] = Field(default_factory=list)
+    tool_count: int = Field(default=0, description="Total tool rows bound to this service")
+    exposed_tool_count: int = Field(default=0, description="Live enabled, non-deprecated tool rows")
+
+
+class HttpRegistryViewRead(BaseModel):
+    """Top-level registry view: services with their schema/operation/tool state."""
+
+    services: List[HttpRegistryServiceRead] = Field(default_factory=list)
+    total_services: int = Field(default=0)
+    total_schema_versions: int = Field(default=0)
+    total_operations: int = Field(default=0)
     total_exposed_tools: int = Field(default=0)
 
 

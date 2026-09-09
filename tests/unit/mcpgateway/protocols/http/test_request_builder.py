@@ -169,3 +169,92 @@ class TestBodyEncoding:
 
         assert built.method == "GET"
         assert built.url_path == ""
+
+
+class TestGroupedArguments:
+    """PR3 structured argument groups (§16) split into dimensions."""
+
+    def test_path_group_renders_template(self):
+        """Placeholders resolve from the path group, not flat keys."""
+        built = _make_builder().build(
+            {"path": {"lotId": "L1"}, "query": {"page": "2"}},
+            {"method": "GET", "pathTemplate": "/v1/lots/{lotId}"},
+        )
+
+        assert built.url_path == "/v1/lots/L1"
+        assert built.query_params == {"page": "2"}
+        assert built.body is None
+
+    def test_groups_land_in_independent_dimensions(self):
+        """path/query/headers/cookies/body groups never cross dimensions."""
+        built = _make_builder().build(
+            {
+                "path": {"id": "7"},
+                "query": {"page": "2"},
+                "headers": {"x-token": "t"},
+                "cookies": {"sid": "c"},
+                "body": {"payload": {"k": "v"}},
+            },
+            {
+                "method": "POST",
+                "pathTemplate": "/items/{id}",
+                "preferredContentType": "application/json",
+            },
+        )
+
+        assert built.url_path == "/items/7"
+        assert built.query_params == {"page": "2"}
+        assert built.headers == {"x-token": "t"}
+        assert built.cookies == {"sid": "c"}
+        assert built.body.mode == "json"
+        assert built.body.value == {"payload": {"k": "v"}}
+
+    def test_absent_groups_are_empty(self):
+        """Only the provided groups participate; the rest stay empty."""
+        built = _make_builder().build(
+            {"query": {"q": "1"}},
+            {"method": "GET", "pathTemplate": "/search"},
+        )
+
+        assert built.url_path == "/search"
+        assert built.query_params == {"q": "1"}
+        assert built.headers == {}
+        assert built.cookies == {}
+        assert built.body is None
+
+    def test_scalar_body_group_is_allowed(self):
+        """A text body group may hold a scalar (not a mapping)."""
+        built = _make_builder().build(
+            {"body": "plain text payload"},
+            {"method": "POST", "pathTemplate": "/r", "preferredContentType": "text/plain"},
+        )
+
+        assert built.body.mode == "content"
+        assert built.body.value == b"plain text payload"
+
+    def test_empty_body_group_produces_no_body(self):
+        """An empty body group behaves like the flat path (None body)."""
+        built = _make_builder().build(
+            {"body": {}},
+            {"method": "POST", "pathTemplate": "/r", "preferredContentType": "application/json"},
+        )
+
+        assert built.body is None
+
+    def test_flat_tools_with_group_named_args_stay_flat(self):
+        """Flat legacy arguments keep the flat path even when names collide."""
+        built = _make_builder().build(
+            {"query": 1, "body": "x"},
+            {"method": "POST", "pathTemplate": "/r", "preferredContentType": "application/json"},
+        )
+
+        assert built.query_params == {}
+        assert built.body.value == {"query": 1, "body": "x"}
+
+    def test_empty_arguments_are_flat_not_grouped(self):
+        """An empty argument dict takes the flat path (GET → empty query)."""
+        built = _make_builder().build({}, {"method": "GET", "pathTemplate": "/r"})
+
+        assert built.url_path == "/r"
+        assert built.query_params == {}
+        assert built.body is None

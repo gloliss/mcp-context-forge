@@ -13,8 +13,20 @@ regular package alongside the planned PR2 modules.
 # First-Party
 from mcpgateway.protocols.http.adapter import HttpProtocolAdapter
 from mcpgateway.protocols.http.legacy_contract import LegacyRestContractBuilder
+from mcpgateway.protocols.http.models import (
+    HttpBodyVariant,
+    HttpParameter,
+    HttpRequestContract,
+    HttpResponseContract,
+    HttpResponseVariant,
+)
 
 __all__ = [
+    "HttpBodyVariant",
+    "HttpParameter",
     "HttpProtocolAdapter",
+    "HttpRequestContract",
+    "HttpResponseContract",
+    "HttpResponseVariant",
     "LegacyRestContractBuilder",
 ]

@@ -357,7 +357,7 @@
           </div>
 
           <!-- Agents Section -->
-          {% if (a2a_enabled and 'agents' not in hidden_sections) or (grpc_enabled and 'grpc-services' not in hidden_sections) %}
+          {% if (a2a_enabled and 'agents' not in hidden_sections) or (grpc_enabled and 'grpc-services' not in hidden_sections) or (http_enabled and 'http-services' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Agents</span>
           </div>
@@ -378,6 +378,15 @@
                data-action-click="showTab" data-arg0="grpc-services">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔌</span>
               <span x-show="!sidebarCollapsed">gRPC Services</span>
+            </a>
+            {% endif %}
+            {% if http_enabled and 'http-services' not in hidden_sections %}
+            <a href="#http-services" id="tab-http-services" data-testid="http-services-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               data-action-click="showTab" data-arg0="http-services">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌐</span>
+              <span x-show="!sidebarCollapsed">HTTP Services</span>
             </a>
             {% endif %}
           </div>
@@ -8089,6 +8098,257 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {% endfor %}
             {% else %}
               <p class="text-gray-500 dark:text-gray-400">No gRPC services registered yet.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if http_enabled and 'http-services' not in hidden_sections %}
+      <div id="http-services-panel" class="tab-panel hidden">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-2xl font-bold dark:text-gray-200">
+            HTTP Services Registry
+          </h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Manage HTTP APIs exposed as MCP tools via imported OpenAPI contracts
+          </p>
+        </div>
+
+        <!-- HTTP Service Add Form -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
+            Register New HTTP Service
+          </h3>
+          <form method="POST" id="add-http-service-form">
+            <div class="grid grid-cols-1 gap-7 sm:grid-cols-2">
+              <!-- Service Name -->
+              <div class="relative">
+                <label
+                  for="http-service-name"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Service Name</label
+                >
+                <input
+                  type="text"
+                  name="name"
+                  required
+                  id="http-service-name"
+                  placeholder="my-http-service"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Service Name is required.</p>
+              </div>
+
+              <!-- Base URL -->
+              <div>
+                <label
+                  for="http-service-base-url"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Base URL (http:// or https://)</label
+                >
+                <input
+                  type="text"
+                  id="http-service-base-url"
+                  name="base_url"
+                  required
+                  placeholder="http://127.0.0.1:8899"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Description -->
+              <div class="sm:col-span-2">
+                <label
+                  for="http-service-description"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Description</label
+                >
+                <textarea
+                  id="http-service-description"
+                  name="description"
+                  rows="2"
+                  placeholder="Optional description of the HTTP service"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                ></textarea>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="http-health-check-enabled"
+                  name="health_check_enabled"
+                  checked
+                  class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                />
+                <label
+                  for="http-health-check-enabled"
+                  class="ml-2 block text-sm text-gray-900 dark:text-gray-400"
+                  >Enable health monitoring</label
+                >
+              </div>
+
+              <div>
+                <label for="http-health-check-interval" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Health interval (seconds)</label>
+                <input type="number" id="http-health-check-interval" name="health_check_interval" min="10" max="3600" value="60" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300" />
+              </div>
+
+              <div>
+                <label for="http-health-check-timeout" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Health timeout (seconds)</label>
+                <input type="number" id="http-health-check-timeout" name="health_check_timeout" min="1" max="60" value="5" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300" />
+              </div>
+
+              <!-- Team Selection -->
+              {% if teams %}
+              <div>
+                <label
+                  for="http-service-team-id"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Team</label
+                >
+                <select
+                  id="http-service-team-id"
+                  name="team_id"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                >
+                  <option value="">No Team (Global)</option>
+                  {% for team in teams %}
+                  <option value="{{ team.id }}">{{ team.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              {% endif %}
+
+              <!-- Visibility -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-2">Visibility</label>
+                <div class="flex items-center space-x-4">
+
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="http-visibility-public" checked />
+                    <label for="http-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Public</label>
+                  </div>
+
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="http-visibility-team" />
+                    <label for="http-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Team</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="http-visibility-private" />
+                    <label for="http-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Private</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-6">
+              <button
+                type="submit"
+                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Register HTTP Service
+              </button>
+            </div>
+            <!-- Loading Indicator -->
+            <div
+              id="add-http-loading"
+              class="hidden text-sm text-gray-500 mt-2"
+            >
+              Submitting...
+            </div>
+          </form>
+          <!-- Error Message Display -->
+          <div id="httpFormError" class="mt-4 text-red-600 dark:text-red-400 hidden"></div>
+        </div>
+
+        <!-- Registered HTTP Services List -->
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
+            Registered HTTP Services
+          </h3>
+          <div class="space-y-4" id="http-services-list">
+            {% if http_services %}
+              {% for service in http_services %}
+              <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3">
+                <div class="flex items-start justify-between">
+                  <div class="flex-1">
+                    <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">
+                      {{ service.name }}
+                    </h4>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                      {{ (service.description or "") | decode_html }}
+                    </p>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if service.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
+                        {% if service.enabled %}Active{% else %}Inactive{% endif %}
+                      </span>
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if service.reachable %}bg-blue-100 text-blue-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                        {% if service.reachable %}Reachable{% else %}Unreachable{% endif %}
+                      </span>
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if service.health_status == 'healthy' %}bg-green-100 text-green-800{% elif service.health_status == 'unhealthy' %}bg-red-100 text-red-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                        Health: {{ service.health_status }}
+                      </span>
+                      {% if service.schema_drift %}
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">Schema drift</span>
+                      {% endif %}
+                    </div>
+                    <div class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                      <p><strong>Base URL:</strong> {{ service.base_url }}</p>
+                      <p><strong>Operations:</strong> {{ service.operation_count }} | <strong>Failures:</strong> {{ service.consecutive_failures }}</p>
+                      {% if service.active_schema_hash %}<p><strong>Active schema:</strong> {{ service.active_schema_hash[:12] }}</p>{% endif %}
+                      {% if service.last_discovery %}<p><strong>Last import:</strong> {{ service.last_discovery }}</p>{% endif %}
+                      {% if service.last_health_check %}<p><strong>Last health check:</strong> {{ service.last_health_check }}</p>{% endif %}
+                    </div>
+                    <details class="http-lineage mt-2" data-service-id="{{ service.id }}">
+                      <summary class="cursor-pointer font-medium">Artifact lineage</summary>
+                      <div class="http-lineage-list mt-2 space-y-2 text-sm text-gray-600 dark:text-gray-400">Loading…</div>
+                      <div class="http-lineage-diff mt-2 hidden border border-indigo-200 dark:border-indigo-800 rounded-lg p-3 bg-indigo-50 dark:bg-indigo-900/20 space-y-2">
+                        <span class="text-xs font-medium text-indigo-800 dark:text-indigo-300">Schema diff</span>
+                        <div class="flex items-center gap-2">
+                          <select class="http-diff-from px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"></select>
+                          <span class="text-xs text-gray-500">→</span>
+                          <select class="http-diff-to px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"></select>
+                          <button type="button" class="http-diff-run px-3 py-1 text-xs font-medium bg-indigo-100 text-indigo-800 rounded-md hover:bg-indigo-200">Diff</button>
+                        </div>
+                        <div class="http-diff-result text-xs text-gray-700 dark:text-gray-300"></div>
+                      </div>
+                    </details>
+                  </div>
+                  <div class="flex flex-col space-y-2 ml-4">
+                    <button type="button" class="http-state-toggle px-3 py-1 text-sm font-medium rounded-md {% if service.enabled %}bg-yellow-100 text-yellow-800 hover:bg-yellow-200{% else %}bg-green-100 text-green-800 hover:bg-green-200{% endif %}" data-service-id="{{ service.id }}" data-activate="{{ 'false' if service.enabled else 'true' }}">
+                      {% if service.enabled %}Deactivate{% else %}Activate{% endif %}
+                    </button>
+                    <button
+                      data-action-click="viewHttpOperations" data-arg0="{{ service.id|tojson_attr }}"
+                      class="px-3 py-1 text-sm font-medium bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200"
+                    >
+                      View Operations
+                    </button>
+                    <button type="button" class="http-health-check px-3 py-1 text-sm font-medium bg-green-100 text-green-800 rounded-md hover:bg-green-200" data-service-id="{{ service.id }}">Check Health</button>
+                    <form class="http-schema-upload space-y-1" data-service-id="{{ service.id }}">
+                      <input type="file" name="artifact" required accept=".json,.yaml,.yml,.zip" class="block w-48 text-xs text-gray-600 dark:text-gray-300" />
+                      <label class="block text-xs text-gray-600 dark:text-gray-300"><input type="checkbox" name="activate" checked /> Activate</label>
+                      <button type="submit" class="px-3 py-1 text-sm font-medium bg-indigo-100 text-indigo-800 rounded-md hover:bg-indigo-200">Import Schema</button>
+                    </form>
+                    <div class="http-sync-preview space-y-2" data-service-id="{{ service.id }}"{% if service.candidate_artifact_id %} data-candidate-id="{{ service.candidate_artifact_id }}"{% endif %}>
+                      <button type="button" class="http-sync-preview-toggle px-3 py-1 text-sm font-medium bg-teal-100 text-teal-800 rounded-md hover:bg-teal-200{% if not service.candidate_artifact_id %} hidden{% endif %}">
+                        Preview Tool Sync
+                      </button>
+                      <div class="http-sync-preview-panel hidden border border-teal-200 dark:border-teal-800 rounded-lg p-3 bg-teal-50 dark:bg-teal-900/20 space-y-2 text-xs text-gray-700 dark:text-gray-300">
+                        <div class="flex items-center justify-between">
+                          <span class="font-medium text-teal-800 dark:text-teal-300">Tool Sync Preview</span>
+                          <button type="button" class="http-sync-preview-close text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">✕</button>
+                        </div>
+                        <div class="http-sync-preview-body">Loading…</div>
+                      </div>
+                    </div>
+                    <button type="button" class="http-delete px-3 py-1 text-sm font-medium bg-red-100 text-red-800 rounded-md hover:bg-red-200" data-service-id="{{ service.id }}">Delete</button>
+                  </div>
+                </div>
+              </div>
+              {% endfor %}
+            {% else %}
+              <p class="text-gray-500 dark:text-gray-400">No HTTP services registered yet.</p>
             {% endif %}
           </div>
         </div>

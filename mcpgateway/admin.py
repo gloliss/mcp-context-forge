@@ -45,7 +45,7 @@ import urllib.parse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
@@ -300,6 +300,8 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     "agents": "a2a.read",
     # gRPC services (separate from A2A - requires admin.grpc)
     "grpc-services": "admin.grpc",
+    # HTTP services (separate from gRPC - requires admin.http)
+    "http-services": "admin.http",
     # Overview and roots
     "overview": "admin.overview",  # Requires admin permission
     "roots": "admin.system_config",  # Roots routes use admin.system_config
@@ -753,6 +755,7 @@ UI_ACTION_PERMISSIONS = {
     "can_create_token": "tokens.read",  # Token creation uses tokens.read, setting nosec cause this is false positive as router uses this permission key.  # nosec B105
     "can_create_agent": "a2a.create",
     "can_manage_grpc": "admin.grpc",
+    "can_manage_http": "admin.http",
     # Composite gRPC-to-data views must not reveal SQL catalog/source metadata
     # to callers who can administer gRPC but lack the corresponding SQL access.
     "can_read_sql_tables": "sql.tables.read",
@@ -875,6 +878,16 @@ import_service: ImportService = ImportService()
 a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
 # Initialize gRPC service only if gRPC features are enabled AND grpcio is installed
 grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_enabled and GRPC_AVAILABLE and GrpcService is not None) else None
+# Initialize HTTP registry service only when the feature is enabled
+from mcpgateway.schemas import HttpSchemaArtifactRead, HttpServiceCreate, HttpServiceRead, HttpServiceUpdate  # pylint: disable=wrong-import-position  # noqa: E402
+from mcpgateway.services.http_monitoring_service import get_http_monitoring_service  # pylint: disable=wrong-import-position  # noqa: E402
+from mcpgateway.services.http_service import (  # pylint: disable=wrong-import-position  # noqa: E402
+    HttpService,
+    HttpServiceError,
+    HttpServiceNameConflictError,
+    HttpServiceNotFoundError,
+)
+http_service_mgr: Optional[Any] = HttpService() if settings.mcpgateway_http_registry_enabled else None
 
 # Set up basic authentication
 
@@ -1923,9 +1936,11 @@ admin_router = APIRouter(
 # Imported here (after enforce_admin_csrf is defined) to avoid circular imports.
 from mcpgateway.routers.api_debug import router as api_debug_router  # pylint: disable=wrong-import-position  # noqa: E402
 from mcpgateway.routers.grpc_schema import router as grpc_schema_router  # pylint: disable=wrong-import-position  # noqa: E402
+from mcpgateway.routers.http_schema import router as http_schema_router  # pylint: disable=wrong-import-position  # noqa: E402
 from mcpgateway.routers.sql_data import admin_router as sql_admin_router  # pylint: disable=wrong-import-position  # noqa: E402
 
 admin_router.include_router(grpc_schema_router)
+admin_router.include_router(http_schema_router)
 admin_router.include_router(sql_admin_router)
 admin_router.include_router(api_debug_router)
 
@@ -4271,6 +4286,23 @@ async def admin_ui(
         LOGGER.exception("Failed to load gRPC services: %s", e)
         grpc_services = []
 
+    # Load HTTP registry services if enabled
+    http_services = []
+    try:
+        if "http-services" not in hidden_sections and http_service_mgr and settings.mcpgateway_http_registry_enabled:
+            http_services_raw, _ = await http_service_mgr.list_services(
+                db,
+                include_inactive=include_inactive,
+                user_email=scoped_user_email,
+                team_id=selected_team_id,
+                token_teams=token_teams,
+            )
+            http_services = [service.model_dump(by_alias=True) for service in http_services_raw]
+            http_services = _to_dict_and_filter(http_services) if isinstance(http_services, (list, tuple)) else http_services
+    except Exception as e:
+        LOGGER.exception("Failed to load HTTP services: %s", e)
+        http_services = []
+
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
@@ -4290,6 +4322,7 @@ async def admin_ui(
             "gateways": gateways,
             "a2a_agents": a2a_agents,
             "grpc_services": grpc_services,
+            "http_services": http_services,
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
@@ -4300,6 +4333,7 @@ async def admin_ui(
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
             "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
+            "http_enabled": bool(settings.mcpgateway_http_registry_enabled),
             "sql_api_enabled": settings.mcpgateway_sql_api_enabled,
             "api_debug_enabled": settings.mcpgateway_api_debug_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
@@ -17470,6 +17504,333 @@ async def admin_get_grpc_methods(
         return ORJSONResponse(content={"methods": methods})
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# HTTP Registry Service Management Endpoints
+
+
+@admin_router.get("/http", response_model=PaginatedResponse)
+@require_permission("admin.http", allow_admin_bypass=False)
+async def admin_list_http_services(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    include_inactive: bool = False,
+    team_id: Optional[str] = Depends(_validated_team_id_param),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """List all HTTP registry services for the admin UI with pagination.
+
+    Args:
+        request: Current request used to resolve canonical token scope
+        page: Page number (1-indexed) for offset pagination
+        per_page: Number of items per page
+        include_inactive: Whether to include inactive services in the results
+        team_id: Optional team ID to filter by specific team
+        db: Database session dependency
+        user: Authenticated user dependency
+
+    Returns:
+        Paginated HTTP service records, pagination metadata, and links.
+
+    Raises:
+        HTTPException: If the HTTP registry feature is disabled
+    """
+    if not settings.mcpgateway_http_registry_enabled:
+        raise HTTPException(status_code=404, detail="HTTP Registry support is not available or disabled")
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+
+    paginated_result = await http_service_mgr.list_services(
+        db=db,
+        include_inactive=include_inactive,
+        page=page,
+        per_page=per_page,
+        user_email=user_email,
+        team_id=team_id,
+        token_teams=token_teams,
+    )
+
+    return {
+        "data": [service.model_dump(by_alias=True) for service in paginated_result["data"]],
+        "pagination": paginated_result["pagination"].model_dump(),
+        "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+    }
+
+
+@admin_router.post("/http")
+@require_permission("admin.http", allow_admin_bypass=False)
+async def admin_create_http_service(
+    service: HttpServiceCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Create a new HTTP registry service.
+
+    Args:
+        service: HTTP service creation data
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Created HTTP service
+
+    Raises:
+        HTTPException: If the feature is disabled or creation fails
+    """
+    if not settings.mcpgateway_http_registry_enabled:
+        raise HTTPException(status_code=404, detail="HTTP Registry support is not available or disabled")
+
+    try:
+        _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+        user_email = get_user_email(user)
+        result = await http_service_mgr.register_service(db, service, user_email, metadata)
+        return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
+    except HttpServiceNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except HttpServiceError as e:
+        LOGGER.error(f"HTTP service error: {e}")
+        raise HTTPException(status_code=500, detail="HTTP service error")
+
+
+@admin_router.get("/http/{service_id}", response_model=HttpServiceRead)
+@require_permission("admin.http", allow_admin_bypass=False)
+async def admin_get_http_service(
+    service_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Get a specific HTTP registry service.
+
+    Args:
+        service_id: Service ID
+        request: Current request used to resolve canonical token scope
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        The HTTP service
+
+    Raises:
+        HTTPException: If the feature is disabled or the service is not found
+    """
+    if not settings.mcpgateway_http_registry_enabled:
+        raise HTTPException(status_code=404, detail="HTTP Registry support is not available or disabled")
+
+    try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        return await http_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
+    except HttpServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@admin_router.put("/http/{service_id}")
+@require_permission("admin.http", allow_admin_bypass=False)
+async def admin_update_http_service(
+    service_id: str,
+    service: HttpServiceUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Update an HTTP registry service.
+
+    Args:
+        service_id: Service ID
+        service: Update data
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Updated HTTP service
+
+    Raises:
+        HTTPException: If the feature is disabled or update fails
+    """
+    if not settings.mcpgateway_http_registry_enabled:
+        raise HTTPException(status_code=404, detail="HTTP Registry support is not available or disabled")
+
+    try:
+        _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
+        metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        await http_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
+        result = await http_service_mgr.update_service(db, service_id, service, user_email, metadata)
+        return ORJSONResponse(content=jsonable_encoder(result))
+    except HttpServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HttpServiceNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except HttpServiceError as e:
+        LOGGER.error(f"HTTP service error: {e}")
+        raise HTTPException(status_code=500, detail="HTTP service error")
+
+
+@admin_router.patch("/http/{service_id}/state")
+@require_permission("admin.http", allow_admin_bypass=False)
+async def admin_set_http_service_state(
+    service_id: str,
+    request: Request,
+    activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Set an HTTP registry service's enabled state.
+
+    Args:
+        service_id: Service ID
+        request: Current request used to resolve canonical token scope
+        activate: If provided, sets enabled to this value. If None, inverts
+            the current state (legacy behavior)
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Updated HTTP service
+
+    Raises:
+        HTTPException: If the feature is disabled or state change fails
+    """
+    if not settings.mcpgateway_http_registry_enabled:
+        raise HTTPException(status_code=404, detail="HTTP Registry support is not available or disabled")
+
+    try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        scoped_service = await http_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
+        if activate is None:
+            # Legacy toggle behavior - invert current state
+            activate = not scoped_service.enabled
+        result = await http_service_mgr.set_service_state(db, service_id, activate)
+        return ORJSONResponse(content=jsonable_encoder(result))
+    except HttpServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@admin_router.delete("/http/{service_id}")
+@require_permission("admin.http", allow_admin_bypass=False)
+async def admin_delete_http_service(
+    service_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Delete an HTTP registry service and its generated tools.
+
+    Args:
+        service_id: Service ID
+        request: Current request used to resolve canonical token scope
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        No content response
+
+    Raises:
+        HTTPException: If the feature is disabled or deletion fails
+    """
+    if not settings.mcpgateway_http_registry_enabled:
+        raise HTTPException(status_code=404, detail="HTTP Registry support is not available or disabled")
+
+    try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        await http_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
+        await http_service_mgr.delete_service(db, service_id)
+        return Response(status_code=204)
+    except HttpServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@admin_router.post("/http/{service_id}/import", response_model=HttpSchemaArtifactRead, status_code=201)
+@require_permission("admin.http", allow_admin_bypass=False)
+async def admin_import_http_schema(
+    service_id: str,
+    request: Request,
+    artifact: UploadFile = File(...),
+    activate: bool = Form(True),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Import an OpenAPI document as an immutable schema artifact.
+
+    Args:
+        service_id: Owning service ID
+        request: Current request used to resolve canonical token scope
+        artifact: Uploaded OpenAPI JSON/YAML/ZIP file
+        activate: Whether to promote the artifact to active immediately
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        The stored (or reused) artifact metadata
+
+    Raises:
+        HTTPException: If the feature is disabled, the upload is oversized
+            or malformed, or the service is not found
+    """
+    if not settings.mcpgateway_http_registry_enabled:
+        raise HTTPException(status_code=404, detail="HTTP Registry support is not available or disabled")
+
+    try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        await http_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
+    except HttpServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    payload = await artifact.read(settings.mcpgateway_http_max_upload_bytes + 1)
+    if len(payload) > settings.mcpgateway_http_max_upload_bytes:
+        raise HTTPException(status_code=413, detail="OpenAPI artifact exceeds the upload limit")
+    filename = artifact.filename or "openapi.json"
+    if not filename.lower().endswith((".json", ".yaml", ".yml", ".zip")):
+        raise HTTPException(status_code=415, detail="Expected .json, .yaml, .yml or .zip artifact")
+    try:
+        return await http_service_mgr.import_schema(db, service_id, payload, filename, user_email, activate=activate)
+    except HttpServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HttpServiceError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@admin_router.post("/http/{service_id}/health")
+@require_permission("admin.http", allow_admin_bypass=False)
+async def admin_check_http_service_health(
+    service_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Run an immediate SSRF-checked health check for one HTTP service.
+
+    Args:
+        service_id: Service ID
+        request: Current request used to resolve canonical token scope
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Current health state payload
+
+    Raises:
+        HTTPException: If the feature is disabled or the service is not found
+    """
+    if not settings.mcpgateway_http_registry_enabled:
+        raise HTTPException(status_code=404, detail="HTTP Registry support is not available or disabled")
+
+    try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        await http_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
+    except HttpServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    result = await get_http_monitoring_service().check_service(service_id)
+    if result.get("status") == "missing":
+        raise HTTPException(status_code=404, detail="HTTP service not found")
+    return result
 
 
 @admin_router.get("/sections/resources")

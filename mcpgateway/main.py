@@ -1793,6 +1793,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await get_proto_scan_service().start()
             logger.info("Proto manifest scanner initialized")
 
+        if settings.mcpgateway_http_registry_enabled and settings.mcpgateway_http_health_enabled:
+            # First-Party
+            from mcpgateway.services.http_monitoring_service import get_http_monitoring_service  # pylint: disable=import-outside-toplevel
+
+            await get_http_monitoring_service().start()
+            logger.info("HTTP health monitoring service initialized")
+
+        if settings.mcpgateway_http_registry_enabled and settings.mcpgateway_http_yaml_scan_enabled:
+            # First-Party
+            from mcpgateway.services.http_yaml_service import get_http_yaml_scan_service  # pylint: disable=import-outside-toplevel
+
+            await get_http_yaml_scan_service().start()
+            logger.info("HTTP YAML manifest scanner initialized")
+
         # Initialize metrics cleanup service for automatic deletion of old metrics
         if settings.metrics_cleanup_enabled:
             # First-Party
@@ -2044,6 +2058,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             from mcpgateway.services.proto_scan_service import get_proto_scan_service  # pylint: disable=import-outside-toplevel
 
             services_to_shutdown.insert(0, get_proto_scan_service())
+
+        if settings.mcpgateway_http_registry_enabled and settings.mcpgateway_http_health_enabled:
+            # First-Party
+            from mcpgateway.services.http_monitoring_service import get_http_monitoring_service  # pylint: disable=import-outside-toplevel
+
+            services_to_shutdown.insert(0, get_http_monitoring_service())
+
+        if settings.mcpgateway_http_registry_enabled and settings.mcpgateway_http_yaml_scan_enabled:
+            # First-Party
+            from mcpgateway.services.http_yaml_service import get_http_yaml_scan_service  # pylint: disable=import-outside-toplevel
+
+            services_to_shutdown.insert(0, get_http_yaml_scan_service())
 
         # Add metrics rollup service if enabled (shutdown before cleanup)
         if settings.metrics_rollup_enabled:

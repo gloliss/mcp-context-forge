@@ -7,10 +7,21 @@ Contract layer public API.
 """
 
 # First-Party
-from mcpgateway.protocols.contracts.base import ContractBuilder
-from mcpgateway.protocols.contracts.models import OperationDefinition
+from mcpgateway.protocols.contracts.base import ContractBuilder, ContractProvider
+from mcpgateway.protocols.contracts.models import (
+    ContractArtifact,
+    ContractDiagnostic,
+    DiscoveryContext,
+    OperationCatalog,
+    OperationDefinition,
+)
 
 __all__ = [
+    "ContractArtifact",
     "ContractBuilder",
+    "ContractDiagnostic",
+    "ContractProvider",
+    "DiscoveryContext",
+    "OperationCatalog",
     "OperationDefinition",
 ]

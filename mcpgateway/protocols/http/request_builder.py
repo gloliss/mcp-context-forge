@@ -3,13 +3,19 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-HTTP request builder (PR2).
+HTTP request builder (PR2, extended by PR3).
 
 Assembles an outbound HTTP request from a tool's ``protocol_config``
 (design-document §18) and invocation arguments.  Unlike the legacy adapter,
 which mutated a single ``payload`` dict and folded query params into the
 body with ``payload.update(query_params)``, this builder keeps path, query,
 header, cookie, and body fully independent (design-document §9.6).
+
+PR3 adds support for structured argument groups (design-document §16):
+registry-compiled tools pass ``{path, query, headers, cookies, body}``
+groups, which are split straight into the independent dimensions.  Flat
+legacy argument handling (with or without a ``parameters`` list) is
+unchanged.
 """
 
 # Standard
@@ -26,6 +32,11 @@ _BODYLESS_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "DELETE"})
 
 # Locations design-document §9.4 recognises for request parameters.
 _PARAM_LOCATIONS = frozenset({"path", "query", "header", "cookie"})
+
+# PR3 structured argument groups (design §16): every top-level key must
+# belong to this set for grouped detection.  Note the group names are the
+# plural ``headers``/``cookies`` (unlike the §9.4 parameter locations).
+_GROUPED_ARG_KEYS = frozenset({"path", "query", "headers", "cookies", "body"})
 
 
 @dataclass
@@ -78,14 +89,21 @@ class RequestBuilder:
         path_template = str(request_config.get("pathTemplate") or "")
 
         # 1. Substitute {param} placeholders in the path template and split
-        #    the remaining arguments into independent dimensions.
-        url_path, remaining = self._render_path(path_template, arguments)
-        # ``path_params`` is intentionally unused: ``_render_path`` already
-        # substituted the {placeholder}s, so location="path" leftovers from
-        # the parameters list have no template slot to fill.
-        _path_params, query_params, headers, cookies, body_value = self._split(
-            remaining, request_config.get("parameters"), method
-        )
+        #    the remaining arguments into independent dimensions.  Registry
+        #    tools (PR3) pass structured argument groups (§16:
+        #    {path, query, headers, cookies, body}); legacy tools pass flat
+        #    arguments (with or without a ``parameters`` list).
+        if self._is_grouped(arguments):
+            url_path, _unused = self._render_path(path_template, dict(arguments.get("path") or {}))
+            _path_params, query_params, headers, cookies, body_value = self._split_grouped(arguments)
+        else:
+            url_path, remaining = self._render_path(path_template, arguments)
+            # ``path_params`` is intentionally unused: ``_render_path`` already
+            # substituted the {placeholder}s, so location="path" leftovers from
+            # the parameters list have no template slot to fill.
+            _path_params, query_params, headers, cookies, body_value = self._split(
+                remaining, request_config.get("parameters"), method
+            )
 
         # 2. Encode the body when this method carries one.
         body = None
@@ -182,6 +200,53 @@ class RequestBuilder:
         else:
             body = dict(arguments)
         return path_params, query_params, headers, cookies, body
+
+    def _is_grouped(self, arguments: Dict[str, Any]) -> bool:
+        """Detect PR3 structured argument groups (§16).
+
+        Grouped arguments are recognised when every top-level key belongs to
+        the five group names and the non-body groups are mappings (the body
+        group may hold any JSON value: object, array, or scalar for
+        text/binary bodies).  Flat legacy tools whose argument names happen
+        to be ``query``/``body`` with non-mapping values keep the flat path.
+
+        Args:
+            arguments: The invocation arguments.
+
+        Returns:
+            ``True`` when ``arguments`` is a structured argument group.
+        """
+        if not arguments or not set(arguments) <= _GROUPED_ARG_KEYS:
+            return False
+        non_body_keys = set(arguments) - {"body"}
+        return all(isinstance(arguments[key], dict) for key in non_body_keys)
+
+    def _split_grouped(
+        self,
+        arguments: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, str], Dict[str, str], Optional[Any]]:
+        """Split structured argument groups into independent dimensions.
+
+        Args:
+            arguments: Structured groups ``{path, query, headers, cookies,
+                body}`` (each optional, each a mapping).
+
+        Returns:
+            A ``(path_params, query_params, headers, cookies, body)`` tuple
+            matching ``_split``.  Path params are informational: the path
+            template placeholders were already substituted by
+            ``_render_path`` from the ``path`` group.
+        """
+        path_params: Dict[str, Any] = dict(arguments.get("path") or {})
+        query_params: Dict[str, Any] = dict(arguments.get("query") or {})
+        headers: Dict[str, str] = {
+            str(key): str(value) for key, value in (arguments.get("headers") or {}).items()
+        }
+        cookies: Dict[str, str] = {
+            str(key): str(value) for key, value in (arguments.get("cookies") or {}).items()
+        }
+        body = arguments.get("body")
+        return path_params, query_params, headers, cookies, body or None
 
     def _encode_body(
         self,
