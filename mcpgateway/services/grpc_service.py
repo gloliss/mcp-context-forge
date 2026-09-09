@@ -15,6 +15,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone
+import json
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
@@ -104,6 +105,50 @@ def _masked_call_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
         values = metadata.get(section) or {}
         result[section] = {key: ["********"] if any(fragment in key.lower() for fragment in _SENSITIVE_METADATA_FRAGMENTS) else value for key, value in values.items()}
     return result
+
+
+def _serialize_item(item: Any) -> str:
+    """Serialise one stream item for byte-accounting (design §44)."""
+    if isinstance(item, (dict, list)):
+        return json.dumps(item, ensure_ascii=False, default=str)
+    return str(item)
+
+
+async def _collect_bounded_stream(
+    stream: Any,
+    max_items: int = 100,
+    max_bytes: int = 0,
+    stream_callback: Optional[Callable[[Any], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    """Collect items from an async stream until an item/byte limit is hit (§44).
+
+    Args:
+        stream: An async iterator of stream items.
+        max_items: Maximum item count (0 disables the item cap).
+        max_bytes: Maximum accumulated serialised bytes (0 disables).
+        stream_callback: Optional async per-item callback.
+
+    Returns:
+        ``{"items": [...], "truncated": True}`` when a limit was reached,
+        otherwise ``{"items": [...], "truncated": False}``.
+    """
+    items: List[Dict[str, Any]] = []
+    total_bytes = 0
+    truncated = False
+    async for item in stream:
+        if max_items and len(items) >= max_items:
+            truncated = True
+            break
+        if max_bytes:
+            item_bytes = len(_serialize_item(item))
+            if item_bytes and total_bytes + item_bytes > max_bytes:
+                truncated = True
+                break
+            total_bytes += item_bytes
+        items.append(item)
+        if stream_callback is not None:
+            await stream_callback(item)
+    return {"items": items, "truncated": truncated}
 
 
 def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
@@ -416,6 +461,7 @@ class GrpcService:
             tls_cert_path=service_data.tls_cert_path,
             tls_key_path=service_data.tls_key_path,
             grpc_metadata=_encrypt_metadata(service_data.grpc_metadata or {}),
+            runtime_config=service_data.runtime_config,
             discovery_mode=service_data.discovery_mode,
             health_check_enabled=service_data.health_check_enabled,
             health_check_interval=service_data.health_check_interval,
@@ -639,9 +685,7 @@ class GrpcService:
 
         # Check name conflict if name is being changed
         if service_data.name and service_data.name != service.name:
-            existing = db.execute(
-                select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))
-            ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+            existing = db.execute(select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))).scalar_one_or_none()  # pylint: disable=comparison-with-callable
 
             if existing:
                 raise GrpcServiceNameConflictError(name=service_data.name, is_active=existing.enabled, service_id=existing.id)
@@ -1372,19 +1416,21 @@ class GrpcService:
             if method_info and method_info.get("client_streaming"):
                 raise GrpcServiceError("Client-streaming and bidirectional gRPC methods are not supported")
             if method_info and method_info.get("server_streaming"):
+                # Configurable stream limits (design-document §42/§44): the
+                # old hard-coded 100-item cap is replaced by the service's
+                # runtime_config.streaming policy.
+                streaming = (service.runtime_config or {}).get("streaming") or {}
+                max_items = int(streaming.get("maxItems", 100))
+                max_bytes = int(streaming.get("maxBytes", 0))
 
                 async def collect_stream() -> Dict[str, Any]:
-                    """Collect at most 100 server-stream items before returning to MCP."""
-                    items: List[Dict[str, Any]] = []
-                    truncated = False
-                    async for item in endpoint.invoke_streaming(service_name, method, request_data, timeout=remaining_timeout()):
-                        if len(items) >= 100:
-                            truncated = True
-                            break
-                        items.append(item)
-                        if stream_callback is not None:
-                            await stream_callback(item)
-                    return {"items": items, "truncated": truncated}
+                    """Collect server-stream items until a limit is reached (§44)."""
+                    return await _collect_bounded_stream(
+                        endpoint.invoke_streaming(service_name, method, request_data, timeout=remaining_timeout()),
+                        max_items=max_items,
+                        max_bytes=max_bytes,
+                        stream_callback=stream_callback,
+                    )
 
                 response = await asyncio.wait_for(collect_stream(), timeout=remaining_timeout())
                 if capture_call_metadata:

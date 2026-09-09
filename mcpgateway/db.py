@@ -5576,6 +5576,7 @@ class GrpcService(Base):
     tls_cert_path: Mapped[Optional[str]] = mapped_column(String(767))
     tls_key_path: Mapped[Optional[str]] = mapped_column(String(767))
     grpc_metadata: Mapped[Dict[str, str]] = mapped_column(JSON, default=dict)  # gRPC metadata headers
+    runtime_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # per-service gRPC runtime policy (PR6 §42)
     discovery_mode: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)
     active_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     candidate_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
