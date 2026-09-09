@@ -25,11 +25,11 @@ from mcpgateway.protocols.contracts.models import (
     DiscoveryContext,
 )
 from mcpgateway.protocols.contracts.openapi import (
+    empty_request_parameters,
+    load_openapi,
     OpenAPIContractProvider,
     OpenAPIRequestShim,
     OpenAPIResponseShim,
-    empty_request_parameters,
-    load_openapi,
     validate_openapi_request,
     validate_openapi_response,
 )
@@ -52,10 +52,26 @@ def _artifact(payload: bytes) -> ContractArtifact:
 
 async def _discover(spec: dict, **limits) -> tuple:
     """Compile a spec dict and return ``(operations, diagnostics)``."""
-    catalog = await OpenAPIContractProvider().discover(
-        _artifact(orjson.dumps(spec)), DiscoveryContext(limits=dict(limits))
-    )
+    catalog = await OpenAPIContractProvider().discover(_artifact(orjson.dumps(spec)), DiscoveryContext(limits=dict(limits)))
     return catalog.operations, catalog.diagnostics
+
+
+def _contains_ref(node) -> bool:
+    """Return True when any mapping in the subtree carries a ``$ref`` key.
+
+    Args:
+        node: The compiled schema subtree (dict/list/scalar).
+
+    Returns:
+        True when a dangling reference survives compilation.
+    """
+    if isinstance(node, dict):
+        if "$ref" in node:
+            return True
+        return any(_contains_ref(value) for value in node.values())
+    if isinstance(node, list):
+        return any(_contains_ref(item) for item in node)
+    return False
 
 
 class TestOpenAPIContractProvider:
@@ -66,9 +82,7 @@ class TestOpenAPIContractProvider:
         """A GET operation compiles with the stable key and typed request."""
         spec = _spec()
         spec["paths"]["/v1/lots/{lotId}"] = {
-            "parameters": [
-                {"name": "lotId", "in": "path", "required": True, "schema": {"type": "string"}}
-            ],
+            "parameters": [{"name": "lotId", "in": "path", "required": True, "schema": {"type": "string"}}],
             "get": {
                 "operationId": "getLot",
                 "summary": "Fetch one lot",
@@ -180,9 +194,7 @@ class TestOpenAPIContractProvider:
         spec["components"] = {"schemas": {"Pet": {"type": "object"}}}
         spec["paths"]["/pets"] = {
             "post": {
-                "requestBody": {
-                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}
-                },
+                "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}},
                 "responses": {"200": {"description": "ok"}},
             }
         }
@@ -222,9 +234,7 @@ class TestOpenAPIContractProvider:
         spec = _spec()
         spec["paths"]["/pets"] = {
             "get": {
-                "parameters": [
-                    {"name": "q", "in": "query", "schema": {"$ref": "https://example.com/q.json"}}
-                ],
+                "parameters": [{"name": "q", "in": "query", "schema": {"$ref": "https://example.com/q.json"}}],
                 "responses": {"200": {"description": "ok"}},
             }
         }
@@ -305,9 +315,7 @@ class TestOpenAPIContractProvider:
             return original(self, key, path, method, operation, path_parameters, resolver)
 
         with patch.object(OpenAPIContractProvider, "_compile_operation", _boom):
-            catalog = await OpenAPIContractProvider().discover(
-                _artifact(orjson.dumps(spec)), DiscoveryContext()
-            )
+            catalog = await OpenAPIContractProvider().discover(_artifact(orjson.dumps(spec)), DiscoveryContext())
 
         assert [op.key for op in catalog.operations] == ["GET /good"]
         errors = [d for d in catalog.diagnostics if d.code == "operation-compilation-failed"]
@@ -390,15 +398,103 @@ class TestOpenAPIContractProvider:
         """A path item that is itself a $ref resolves through components (3.1)."""
         spec = _spec()
         spec["openapi"] = "3.1.0"
-        spec["components"] = {
-            "pathItems": {"PingItem": {"get": {"responses": {"200": {"description": "ok"}}}}}
-        }
+        spec["components"] = {"pathItems": {"PingItem": {"get": {"responses": {"200": {"description": "ok"}}}}}}
         spec["paths"]["/ping"] = {"$ref": "#/components/pathItems/PingItem"}
 
         operations, diagnostics = await _discover(spec)
 
         assert [op.key for op in operations] == ["GET /ping"]
         assert diagnostics == ()
+
+    async def test_nested_refs_inlined_in_response_schema(self):
+        """Response schemas are self-contained: nested $refs are inlined."""
+        spec = _spec()
+        spec["components"] = {"schemas": {"Pet": {"type": "object", "properties": {"name": {"type": "string"}}}}}
+        spec["paths"]["/pets"] = {
+            "get": {
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {"$ref": "#/components/schemas/Pet"},
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+        }
+
+        operations, diagnostics = await _discover(spec)
+
+        assert diagnostics == ()
+        schema = operations[0].response.variants[0].schema
+        assert schema == {
+            "type": "array",
+            "items": {"type": "object", "properties": {"name": {"type": "string"}}},
+        }
+        assert not _contains_ref(schema)
+
+    async def test_nested_refs_inlined_in_body_and_parameter_schemas(self):
+        """Body and parameter schemas are self-contained: nested refs inlined."""
+        spec = _spec()
+        spec["components"] = {
+            "schemas": {
+                "Tag": {"type": "string", "maxLength": 20},
+                "NewPet": {
+                    "type": "object",
+                    "properties": {"tag": {"$ref": "#/components/schemas/Tag"}},
+                },
+            }
+        }
+        spec["paths"]["/pets"] = {
+            "post": {
+                "parameters": [
+                    {
+                        "name": "verbose",
+                        "in": "query",
+                        "schema": {"allOf": [{"$ref": "#/components/schemas/Tag"}]},
+                    }
+                ],
+                "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/NewPet"}}}},
+                "responses": {"200": {"description": "ok"}},
+            }
+        }
+
+        operations, diagnostics = await _discover(spec)
+
+        assert diagnostics == ()
+        request = operations[0].request
+        assert request.parameters[0].schema == {"allOf": [{"type": "string", "maxLength": 20}]}
+        assert not _contains_ref(request.parameters[0].schema)
+        assert request.bodies[0].schema == {
+            "type": "object",
+            "properties": {"tag": {"type": "string", "maxLength": 20}},
+        }
+        assert not _contains_ref(request.bodies[0].schema)
+
+    def test_ref_resolver_materialize_back_edge_collapses(self):
+        """Materialise collapses a circular back-edge to a permissive schema."""
+        document = {
+            "components": {
+                "schemas": {
+                    "Node": {
+                        "type": "object",
+                        "properties": {"child": {"$ref": "#/components/schemas/Node"}},
+                    }
+                }
+            }
+        }
+        resolver = openapi_module._RefResolver(document)  # pylint: disable=protected-access
+
+        result = resolver.materialize({"type": "array", "items": {"$ref": "#/components/schemas/Node"}})
+
+        assert result["items"]["properties"]["child"] == {}
+        assert any("Circular $ref chain detected" in w for w in resolver.warnings)
+        assert not _contains_ref(result)
 
 
 class TestOpenAPICoreShim:
