@@ -262,7 +262,9 @@ if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/n
   # metric rows can hit a FOREIGN KEY failure when the E2E service is
   # cascade-deleted before the flush lands (pre-existing product
   # behaviour, also affects gRPC tools).  Every other traceback fails.
-  BAD_TRACEBACKS=$(docker logs "$CONTAINER_NAME" --since 5m 2>&1 | "$PYTHON_BIN" - <<'PYEOF'
+  # NOTE: use -c (not a heredoc) — a heredoc would override python's
+  # stdin and SIGPIPE docker logs, aborting the run under pipefail.
+  BAD_TRACEBACKS=$(docker logs "$CONTAINER_NAME" --since 5m 2>&1 | "$PYTHON_BIN" -c '
 import sys
 
 KNOWN_RACE = ("Failed to flush tool metrics to database", "FOREIGN KEY constraint failed")
@@ -270,8 +272,7 @@ bad = [line for line in sys.stdin if "Traceback" in line and not all(m in line f
 print(len(bad))
 for line in bad[:5]:
     print(line[:240])
-PYEOF
-)
+')
   BAD_COUNT="$(echo "$BAD_TRACEBACKS" | head -1)"
   if [[ "$BAD_COUNT" -eq 0 ]]; then
     echo "✅ No unexpected Traceback in $CONTAINER_NAME logs (last 5m)"
