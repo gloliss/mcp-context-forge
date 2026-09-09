@@ -195,6 +195,45 @@ class _RefResolver:
             return None
         return self.resolve(target, seen + (ref,))
 
+    def materialize(self, node: Any, seen: tuple[str, ...] = ()) -> Any:
+        """Inline every local ``$ref`` nested anywhere inside ``node``.
+
+        ``resolve`` only dereferences a node that is itself a ``$ref``;
+        schemas embedding further references (e.g. an ``items`` entry)
+        would otherwise carry dangling pointers into tool input/output
+        schemas, which jsonschema validates standalone.  This walk
+        returns a self-contained copy of the subtree.
+
+        Args:
+            node: The subtree to materialise (dict/list/scalar).
+            seen: Pointer chain already visited, for cycle detection.
+
+        Returns:
+            A copy of the subtree with local refs inlined.  Circular
+            back-edges collapse to a permissive ``{}`` schema and
+            non-local/unresolvable refs are kept verbatim (a warning is
+            recorded in both cases).
+        """
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str):
+                if not ref.startswith("#"):
+                    self.warnings.append(f"Non-local $ref left unresolved: {ref}")
+                    return node
+                if ref in seen:
+                    self.warnings.append(f"Circular $ref chain detected: {ref}")
+                    return {}
+                try:
+                    target = json_pointer_get(self._document, ref)
+                except (KeyError, ValueError, IndexError) as exc:
+                    self.warnings.append(f"Unresolvable $ref {ref}: {exc}")
+                    return node
+                return self.materialize(target, seen + (ref,))
+            return {key: self.materialize(value, seen) for key, value in node.items()}
+        if isinstance(node, list):
+            return [self.materialize(item, seen) for item in node]
+        return node
+
 
 class OpenAPIContractProvider:
     """Compile an OpenAPI 3.x artifact into an operation catalog (design §15)."""
@@ -229,9 +268,7 @@ class OpenAPIContractProvider:
         # materialised.
         non_local = _collect_non_local_refs(document)
         if non_local:
-            raise ContractProviderError(
-                f"OpenAPI artifact contains non-local $ref values (not materialised): {non_local[0]}"
-            )
+            raise ContractProviderError(f"OpenAPI artifact contains non-local $ref values (not materialised): {non_local[0]}")
 
         # Whole-document structural validation: an invalid spec is a hard
         # failure, never an empty catalog (§15).  RecursionError covers
@@ -306,9 +343,7 @@ class OpenAPIContractProvider:
 
         # Reference-resolution warnings become catalog diagnostics.
         for warning in resolver.warnings:
-            diagnostics.append(
-                ContractDiagnostic(severity="warning", code="ref-unresolved", message=warning)
-            )
+            diagnostics.append(ContractDiagnostic(severity="warning", code="ref-unresolved", message=warning))
 
         return OperationCatalog(
             source_type="openapi",
@@ -419,7 +454,7 @@ class OpenAPIContractProvider:
         schema_node = param.get("schema")
         schema: dict[str, Any] = {}
         if schema_node is not None:
-            resolved = resolver.resolve(schema_node)
+            resolved = resolver.materialize(schema_node)
             if isinstance(resolved, dict):
                 schema = resolved
             elif isinstance(schema_node, dict):
@@ -459,7 +494,7 @@ class OpenAPIContractProvider:
             if schema_node is not None:
                 if isinstance(schema_node, dict) and isinstance(schema_node.get("$ref"), str):
                     schema_ref = schema_node["$ref"]
-                resolved = resolver.resolve(schema_node)
+                resolved = resolver.materialize(schema_node)
                 if isinstance(resolved, dict):
                     schema = resolved
                 elif isinstance(schema_node, dict):
@@ -498,9 +533,7 @@ class OpenAPIContractProvider:
             description = resp_obj.get("description")
             content = resp_obj.get("content") or {}
             if not content:
-                variants.append(
-                    HttpResponseVariant(status_code=str(status), media_type="", schema=None, description=description)
-                )
+                variants.append(HttpResponseVariant(status_code=str(status), media_type="", schema=None, description=description))
                 continue
             for media_type, media_obj in content.items():
                 if not isinstance(media_obj, dict):
@@ -508,7 +541,7 @@ class OpenAPIContractProvider:
                 schema_node = media_obj.get("schema")
                 schema = None
                 if schema_node is not None:
-                    resolved = resolver.resolve(schema_node)
+                    resolved = resolver.materialize(schema_node)
                     if isinstance(resolved, dict):
                         schema = resolved
                     elif isinstance(schema_node, dict):
@@ -637,9 +670,7 @@ def validate_openapi_request(openapi: OpenAPI, request: OpenAPIRequestShim) -> N
         raise ValueError(f"Request validation failed: {exc}") from exc
 
 
-def validate_openapi_response(
-    openapi: OpenAPI, request: OpenAPIRequestShim, response: OpenAPIResponseShim
-) -> None:
+def validate_openapi_response(openapi: OpenAPI, request: OpenAPIRequestShim, response: OpenAPIResponseShim) -> None:
     """Validate a response shim against the spec for the given request.
 
     Args:
