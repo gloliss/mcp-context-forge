@@ -26,6 +26,7 @@ from sqlalchemy import select
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session
+from mcpgateway.db import HttpHealthSample
 from mcpgateway.db import HttpService as DbHttpService
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -134,6 +135,19 @@ class HttpMonitoringService:
             status = service.health_status
             last_health_success = service.last_health_success.isoformat() if service.last_health_success else None
             service_slug = service.slug
+
+            # Per-check history (design §57): one immutable sample row per
+            # round-trip, mirroring grpc_health_samples.
+            write_db.add(
+                HttpHealthSample(
+                    http_service_id=service_id,
+                    timestamp=now_utc,
+                    healthy=healthy,
+                    status_code=status_code,
+                    latency_ms=latency_ms,
+                    error_message=error,
+                )
+            )
 
         return {
             "status": status,
