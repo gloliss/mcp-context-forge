@@ -15,7 +15,6 @@ from importlib import resources
 from io import BytesIO
 import json
 from pathlib import Path, PurePosixPath
-import stat
 import tempfile
 from typing import Any, Iterable, Optional
 import zipfile
@@ -32,11 +31,11 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import GrpcSchemaArtifact, GrpcService
 from mcpgateway.schemas import GrpcSchemaDiff
+from mcpgateway.utils.artifact_security import ArtifactSecurityError, safe_zip_members
 from mcpgateway.utils.grpc_validation import GrpcServiceError
 
 _MAX_DESCRIPTOR_COUNT = 1024
 _MAX_DESCRIPTOR_BYTES = 8 * 1024 * 1024
-_MAX_ZIP_RATIO = 100
 
 
 class GrpcSchemaService:
@@ -241,27 +240,22 @@ class GrpcSchemaService:
 
     @staticmethod
     def _safe_zip_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
-        """Validate ZIP paths, expansion size, entry count, and compression ratio."""
-        members = archive.infolist()
-        if len(members) > settings.mcpgateway_proto_max_zip_entries:
-            raise GrpcServiceError("Proto ZIP contains too many entries")
-        expanded = 0
-        safe: list[zipfile.ZipInfo] = []
-        for member in members:
-            path = PurePosixPath(member.filename)
-            mode = member.external_attr >> 16
-            if path.is_absolute() or ".." in path.parts or not path.parts or stat.S_ISLNK(mode):
-                raise GrpcServiceError(f"Unsafe Proto ZIP entry: {member.filename}")
-            expanded += member.file_size
-            if expanded > settings.mcpgateway_proto_max_uncompressed_bytes:
-                raise GrpcServiceError("Proto ZIP expanded size exceeds the configured limit")
-            if member.compress_size == 0 and member.file_size > 0:
-                raise GrpcServiceError("Proto ZIP contains an invalid compressed entry")
-            if member.compress_size and member.file_size / member.compress_size > _MAX_ZIP_RATIO:
-                raise GrpcServiceError("Proto ZIP compression ratio exceeds the safety limit")
-            if not member.is_dir():
-                safe.append(member)
-        return safe
+        """Validate ZIP paths, expansion size, entry count, and compression ratio.
+
+        Thin wrapper over the shared ``utils.artifact_security.safe_zip_members``
+        (extracted by PR3 §14 so the HTTP contract artifact service reuses the
+        same rules); converts the neutral error back to ``GrpcServiceError``
+        with the exact pre-PR3 messages.
+        """
+        try:
+            return safe_zip_members(
+                archive,
+                max_entries=settings.mcpgateway_proto_max_zip_entries,
+                max_uncompressed_bytes=settings.mcpgateway_proto_max_uncompressed_bytes,
+                label="Proto ZIP",
+            )
+        except ArtifactSecurityError as exc:
+            raise GrpcServiceError(str(exc)) from exc
 
     @classmethod
     def compile_proto_artifact(cls, payload: bytes, filename: str) -> tuple[bytes, dict[str, Any]]:

@@ -3,13 +3,17 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Legacy REST tool contract compiler (PR1).
+Legacy REST tool contract compiler (PR1, extended by PR3).
 
 Compiles the pre-existing REST tool table (``integration_type == "REST"``)
 into an ``OperationDefinition`` without any database migration.  The
 ``tool_payload`` dict is the authoritative source because the cache-hit
 invocation path resolves the tool from the in-memory payload and may pass
 ``tool=None``; the ORM row is only a fallback for identity fields.
+
+PR3 adds the registry-tool branch: tools carrying a ``protocol_config``
+compile to an ``http:registry:`` operation whose runtime URL comes from
+``base_url`` and whose method/path come from the config itself.
 """
 
 # Standard
@@ -54,6 +58,34 @@ class LegacyRestContractBuilder:
         method = request_type.upper() if request_type else "POST"
         query_mapping = payload.get("query_mapping")
         header_mapping = payload.get("header_mapping")
+        protocol_config = payload.get("protocol_config")
+        extensions = {
+            "tool_id": tool_id,
+            "gateway_id": payload.get("gateway_id"),
+            "tool_name_computed": payload.get("name"),
+        }
+        # Registry-compiled tools (PR3) carry a protocol_config; their
+        # runtime URL comes from the tool's base_url column (written by the
+        # HTTP registry sync to http_service.base_url) and the request
+        # method/path from the config itself.
+        if isinstance(protocol_config, dict):
+            request_config = protocol_config.get("request") or {}
+            return OperationDefinition(
+                key=f"http:registry:{tool_id}",
+                protocol="http",
+                source_operation_id=protocol_config.get("operationRef") or tool_id or None,
+                title=payload.get("name"),
+                description=payload.get("description"),
+                request={
+                    "base_url": payload.get("base_url") or payload.get("url"),
+                    "method": str(request_config.get("method") or method).upper(),
+                    "path_template": request_config.get("pathTemplate"),
+                },
+                response={
+                    "output_schema": payload.get("output_schema"),
+                },
+                extensions=extensions,
+            )
         return OperationDefinition(
             key=f"http:rest:{tool_id}",
             protocol="http",
@@ -69,9 +101,5 @@ class LegacyRestContractBuilder:
                 "output_schema": payload.get("output_schema"),
                 "jsonpath_filter": payload.get("jsonpath_filter"),
             },
-            extensions={
-                "tool_id": tool_id,
-                "gateway_id": payload.get("gateway_id"),
-                "tool_name_computed": payload.get("name"),
-            },
+            extensions=extensions,
         )

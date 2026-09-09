@@ -501,7 +501,7 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ## 新增功能
 
-本仓库基于上游 ContextForge 增强的三大功能模块：**gRPC 增强（Schema 服务与健康监控）**、**受管外部 SQL 数据 API**、以及**统一 API 调试平台**。源码安全兜底默认关闭这些实验功能；本项目的内网发行镜像、Compose 和 Helm 配置会显式启用 gRPC，SQL 与统一 API 调试平台仍需显式开启。
+本仓库基于上游 ContextForge 增强的四大功能模块：**gRPC 增强（Schema 服务与健康监控）**、**HTTP Registry（OpenAPI Contract → MCP Tool）**、**受管外部 SQL 数据 API**、以及**统一 API 调试平台**。源码安全兜底默认关闭这些实验功能；本项目的内网发行镜像、Compose 和 Helm 配置会显式启用 gRPC，HTTP Registry、SQL 与统一 API 调试平台仍需显式开启。
 
 ### gRPC Schema 服务与健康监控
 
@@ -543,6 +543,44 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 | `MCPGATEWAY_PROTO_MAX_UNCOMPRESSED_BYTES` | ZIP 展开后的最大体积 | `33554432` (32MB) |
 
 该功能扫描配置根目录下的 `grpc-service.yaml` manifest，把 .proto 编译为 descriptor 并注入网关 —— 适用于**未启用 gRPC reflection** 的服务器。
+
+### HTTP Registry（OpenAPI Contract → MCP Tool）
+
+| 环境变量 | 说明 | 默认 |
+|----------|------|------|
+| `MCPGATEWAY_HTTP_REGISTRY_ENABLED` | 启用 HTTP Registry（OpenAPI 契约导入 + MCP 工具同步，实验特性） | `false` |
+| `MCPGATEWAY_HTTP_HEALTH_ENABLED` | 启用 HTTP 服务健康监控（依赖 Registry 开关） | `true` |
+| `MCPGATEWAY_HTTP_HEALTH_INTERVAL` | 健康检查间隔（秒，10–3600） | `60` |
+| `MCPGATEWAY_HTTP_HEALTH_TIMEOUT` | 健康检查超时（秒，1–60） | `5` |
+| `MCPGATEWAY_HTTP_HEALTH_FAILURE_THRESHOLD` | 判定不健康的连续失败次数（1–20） | `3` |
+| `MCPGATEWAY_HTTP_MAX_UPLOAD_BYTES` | 单个 OpenAPI JSON/YAML/ZIP 上传上限 | `8388608` (8MB) |
+| `MCPGATEWAY_HTTP_MAX_ZIP_ENTRIES` | 单个 ZIP 允许的最大条目数 | `1024` |
+| `MCPGATEWAY_HTTP_MAX_UNCOMPRESSED_BYTES` | ZIP 展开后的最大体积 | `33554432` (32MB) |
+| `MCPGATEWAY_HTTP_SPEC_MAX_BYTES` | URL/外部 $ref 下载的 spec 最大字节 | `10485760` (10MB) |
+| `MCPGATEWAY_HTTP_YAML_SCAN_ENABLED` | 启用基于 manifest 的 HTTP 服务 YAML 目录扫描 | `false` |
+| `MCPGATEWAY_HTTP_YAML_SCAN_ROOTS` | 允许扫描的根目录（含 http-service.yaml manifest 的 CSV/JSON 列表） | `[]`（空则禁用） |
+| `MCPGATEWAY_HTTP_YAML_SCAN_INTERVAL` | 扫描间隔（秒，10–3600） | `60` |
+
+**Schema 管理端点**（`/admin/http/*`）：
+- `GET   /admin/http` —— 列出 HTTP 服务
+- `POST  /admin/http` —— 注册 HTTP 服务
+- `GET   /admin/http/{service_id}` —— 服务详情（含 candidate/active/schema_drift）
+- `PUT   /admin/http/{service_id}` —— 更新服务
+- `PATCH /admin/http/{service_id}/state` —— 启停服务
+- `DELETE /admin/http/{service_id}` —— 删除服务
+- `POST  /admin/http/{service_id}/schemas/import` —— 导入 OpenAPI JSON/YAML/ZIP 产物
+- `GET   /admin/http/{service_id}/schemas` —— 列出 schema 版本
+- `GET   /admin/http/{service_id}/schemas/diff` —— 对比 schema 操作指纹
+- `GET   /admin/http/{service_id}/schemas/{artifact_id}/preview` —— 工具同步预览
+- `POST  /admin/http/{service_id}/schemas/{artifact_id}/activate` —— 激活候选版本并同步工具
+- `GET   /admin/http/registry` —— Registry 只读视图
+- `GET   /admin/http/{service_id}/registry` —— 单服务 Registry 视图
+- `GET   /admin/http/{service_id}/schemas/{artifact_id}/registry` —— 单 schema 版本 Registry 视图
+- `POST  /admin/http/{service_id}/health` —— 触发一次健康检查
+
+导入 → 不可变 artifact → candidate → diff/preview → activate 的完整生命周期与 gRPC Registry 一致；激活后按 OpenAPI 操作生成 REST 工具（`integration_type=REST`），schema 变更时旧操作对应的工具软禁用。外部 `$ref` 物化走 SSRF 校验管线（YAML manifest 中需显式开启 `references.allowRemote`）。
+
+目录扫描读取配置根目录下的 `http-service.yaml` manifest 并导入其 OpenAPI 源（本地文件或经 SSRF 校验的 http(s) 下载），适用于**自动化发布 OpenAPI 契约**的场景。manifest 严格 allowlist 校验，禁止存放明文密码/token/API Key 等高敏感值。
 
 ### 受管外部 SQL 数据 API
 

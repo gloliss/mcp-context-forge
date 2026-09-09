@@ -384,3 +384,42 @@ export const viewGrpcMethods = function (serviceId) {
       alert("Error fetching methods: " + error);
     });
 };
+
+/**
+ * View HTTP service operations (compiled OpenAPI contract) in a modal or alert
+ * @param {string} serviceId - The HTTP service ID
+ */
+export const viewHttpOperations = function (serviceId) {
+  const rootPath = window.ROOT_PATH || "";
+
+  fetch(`${rootPath}/admin/http/${serviceId}/registry`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + (getCookie("jwt_token") || ""),
+    },
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      const schemaVersions = data.schema_versions || [];
+      if (schemaVersions.length > 0) {
+        let operationsList = `HTTP Operations (${data.name || ""}):\n\n`;
+        schemaVersions.forEach((schemaVersion) => {
+          operationsList += `v${schemaVersion.version}${schemaVersion.is_active ? " (active)" : ""}:\n`;
+          (schemaVersion.operations || []).forEach((operation) => {
+            operationsList += `  ${operation.key}\n`;
+            operationsList += `    Tool: ${operation.tool_id || "not exposed"}\n`;
+            operationsList += `    Exposed: ${operation.exposed ? "yes" : "no"}\n\n`;
+          });
+        });
+        alert(operationsList);
+      } else {
+        alert(
+          "No operations imported for this service yet. Import an OpenAPI document first."
+        );
+      }
+    })
+    .catch((error) => {
+      alert("Error fetching operations: " + error);
+    });
+};

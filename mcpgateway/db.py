@@ -1386,6 +1386,7 @@ class Permissions:
     ADMIN_DASHBOARD = "admin.dashboard"
     ADMIN_EVENTS = "admin.events"
     ADMIN_GRPC = "admin.grpc"
+    ADMIN_HTTP = "admin.http"
     ADMIN_SQL_SOURCES = "admin.sql_sources"
     ADMIN_PLUGINS = "admin.plugins"
     ADMIN_METRICS = "admin.metrics"
@@ -3487,6 +3488,12 @@ class Tool(Base):
     grpc_service: Mapped[Optional["GrpcService"]] = relationship("GrpcService", back_populates="tools")
     grpc_schema_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("grpc_schema_artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
     grpc_schema_artifact: Mapped[Optional["GrpcSchemaArtifact"]] = relationship("GrpcSchemaArtifact", back_populates="tools")
+
+    # Federation relationship with an HTTP service
+    http_service_id: Mapped[Optional[str]] = mapped_column(ForeignKey("http_services.id", ondelete="CASCADE"))
+    http_service: Mapped[Optional["HttpService"]] = relationship("HttpService", back_populates="tools")
+    http_schema_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("http_schema_artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    http_schema_artifact: Mapped[Optional["HttpSchemaArtifact"]] = relationship("HttpSchemaArtifact", back_populates="tools")
 
     # Direct binding for generated SQL tools. Manual catalog bindings are stored
     # separately and deliberately do not grant database access.
@@ -5637,6 +5644,121 @@ class GrpcService(Base):
             str: A formatted string containing the service's ID, name, and target.
         """
         return f"<GrpcService(id='{self.id}', name='{self.name}', target='{self.target}')>"
+
+
+class HttpService(Base):
+    """
+    ORM model for HTTP services with OpenAPI-contract-based tool generation.
+
+    HTTP services represent external REST APIs whose OpenAPI documents are imported
+    as immutable schema artifacts. Each compiled operation becomes a generated MCP
+    tool; the active artifact and the generated tools stay in lock-step through the
+    same candidate/activate lifecycle used by the gRPC registry.
+    """
+
+    __tablename__ = "http_services"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    base_url: Mapped[str] = mapped_column(String(767), nullable=False)
+
+    # Configuration
+    discovery_mode: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
+    discovery_config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    runtime_config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    active_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    candidate_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    active_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    discovered_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    schema_drift: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    operation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    discovered_operations: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)  # Compiled operation summaries
+    last_discovery: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_discovery_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Health monitoring configuration and current state.
+    health_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    health_check_interval: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    health_check_timeout: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    health_failure_threshold: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    health_status: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_health_check: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_health_success: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_health_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Status
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    reachable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Tags for categorization
+    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Relationship with tools generated from this HTTP service
+    tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="http_service", cascade="all, delete-orphan")
+    # Immutable OpenAPI artifacts imported for this service.
+    artifacts: Mapped[List["HttpSchemaArtifact"]] = relationship("HttpSchemaArtifact", back_populates="http_service", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the HttpService instance.
+
+        Returns:
+            str: A formatted string containing the service's ID, name, and base URL.
+        """
+        return f"<HttpService(id='{self.id}', name='{self.name}', base_url='{self.base_url}')>"
+
+
+class HttpSchemaArtifact(Base):
+    """Immutable OpenAPI document version for an HTTP service."""
+
+    __tablename__ = "http_schema_artifacts"
+    __table_args__ = (
+        UniqueConstraint("http_service_id", "version", name="uq_http_schema_artifact_version"),
+        UniqueConstraint("http_service_id", "content_hash", name="uq_http_schema_artifact_hash"),
+        Index("ix_http_schema_artifacts_service_active", "http_service_id", "is_active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    http_service_id: Mapped[str] = mapped_column(String(36), ForeignKey("http_services.id", ondelete="CASCADE"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    artifact_format: Mapped[str] = mapped_column(String(20), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    source_info: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    http_service: Mapped["HttpService"] = relationship("HttpService", back_populates="artifacts")
+    tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="http_schema_artifact")
 
 
 class SessionRecord(Base):

@@ -16,6 +16,7 @@ import urllib.parse
 import orjson
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.services.http_client_service import get_isolated_http_client
 
@@ -51,8 +52,10 @@ def _resolve_schema(schema_obj: Optional[dict], components_schemas: dict) -> Opt
     return schema_obj if schema_obj is not None else None
 
 
-# 10 MiB — generous for any realistic OpenAPI spec, prevents memory exhaustion from malicious servers.
-_MAX_SPEC_BYTES = 10 * 1024 * 1024
+# Default cap for OpenAPI spec downloads.  Bound to the PR3 setting
+# (``mcpgateway_http_spec_max_bytes``) so deployments can tune it; kept as a
+# module constant for compatibility with existing callers and tests.
+_MAX_SPEC_BYTES = settings.mcpgateway_http_spec_max_bytes
 
 
 async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:

@@ -104,3 +104,69 @@ def test_empty_payload_yields_post_operation_with_empty_identity():
     assert operation.key == "http:rest:"
     assert operation.request["method"] == "POST"
     assert operation.request["url"] is None
+
+
+def _registry_protocol_config() -> dict:
+    """Build a §18-shaped protocol_config for registry-branch tests."""
+    return {
+        "version": 1,
+        "operationRef": "GET /v1/lots/{lotId}",
+        "request": {
+            "method": "GET",
+            "pathTemplate": "/v1/lots/{lotId}",
+            "preferredContentType": "application/json",
+        },
+        "response": {"codec": "auto", "preferredMediaTypes": ["application/json"]},
+        "streaming": {"mode": "none"},
+    }
+
+
+def test_registry_tool_uses_http_registry_key():
+    """Registry tools with protocol_config compile to http:registry:<tool_id>."""
+    payload = _make_payload(protocol_config=_registry_protocol_config())
+    operation = LegacyRestContractBuilder.from_tool(None, payload)
+    assert operation.key == "http:registry:tool-1"
+    assert operation.protocol == "http"
+    assert operation.source_operation_id == "GET /v1/lots/{lotId}"
+
+
+def test_registry_tool_request_carries_base_url_method_and_path():
+    """Registry request carries base_url (column fallback), method, pathTemplate."""
+    payload = _make_payload(
+        protocol_config=_registry_protocol_config(),
+        base_url="https://api.example.com",
+        url="https://legacy.example.com",
+    )
+    operation = LegacyRestContractBuilder.from_tool(None, payload)
+    assert operation.request["base_url"] == "https://api.example.com"
+    assert operation.request["method"] == "GET"
+    assert operation.request["path_template"] == "/v1/lots/{lotId}"
+    assert operation.request.get("query_mapping") is None
+
+
+def test_registry_tool_base_url_falls_back_to_url_column():
+    """base_url falls back to the legacy url column when unset."""
+    payload = _make_payload(protocol_config=_registry_protocol_config())
+    operation = LegacyRestContractBuilder.from_tool(None, payload)
+    assert operation.request["base_url"] == "https://api.example.com/data"
+
+
+def test_registry_tool_method_falls_back_to_request_type():
+    """A config without request.method falls back to request_type.upper()."""
+    config = _registry_protocol_config()
+    config["request"].pop("method")
+    payload = _make_payload(protocol_config=config, request_type="post")
+    operation = LegacyRestContractBuilder.from_tool(None, payload)
+    assert operation.request["method"] == "POST"
+
+
+def test_registry_tool_keeps_identity_extensions():
+    """The registry branch keeps the same identity-only extensions."""
+    operation = LegacyRestContractBuilder.from_tool(None, _make_payload(protocol_config=_registry_protocol_config()))
+    assert operation.extensions == {"tool_id": "tool-1", "gateway_id": "gw-1", "tool_name_computed": "demo_tool"}
+
+
+def test_registry_tool_ignores_jsonpath_filter():
+    """Registry responses go through the PR2 decoder, not the jq pipeline."""
+    operation = LegacyRestContractBuilder.from_tool(None, _make_payload(protocol_config=_registry_protocol_config()))
+    assert operation.response == {"output_schema": {"type": "object"}}

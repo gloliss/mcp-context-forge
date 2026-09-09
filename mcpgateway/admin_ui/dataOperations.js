@@ -967,8 +967,308 @@ const setupGrpcOperations = () => {
     });
 };
 
+
+const showHttpSyncPreview = async (box) => {
+  const serviceId = box.dataset.serviceId;
+  const candidateId = box.dataset.candidateId;
+  const panel = box.querySelector(".http-sync-preview-panel");
+  const body = box.querySelector(".http-sync-preview-body");
+  if (!serviceId || !candidateId || !panel || !body) return;
+  const toggle = box.querySelector(".http-sync-preview-toggle");
+  if (toggle) toggle.classList.remove("hidden");
+  panel.classList.remove("hidden");
+  body.textContent = "Loading…";
+  try {
+    const preview = await requestJson(
+      `/admin/http/${serviceId}/schemas/${candidateId}/preview`
+    );
+    const rows = [
+      ["Added", "added_tools", "bg-green-100 text-green-800"],
+      ["Modified", "modified_tools", "bg-yellow-100 text-yellow-800"],
+      ["Disabled", "disabled_tools", "bg-red-100 text-red-800"],
+      ["Re-approval", "operations_needing_reapproval", "bg-orange-100 text-orange-800"],
+    ];
+    const listHtml = (items, chipClass) =>
+      items.length
+        ? `<ul class="space-y-0.5">${items
+          .map((item) => `<li><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${chipClass}">${escapeHtml(item)}</span></li>`)
+          .join("")}</ul>`
+        : '<p class="text-gray-500 dark:text-gray-400">None</p>';
+    const rendered = rows
+      .map(
+        ([label, key, chip]) =>
+          `<div>
+            <div class="flex items-center gap-2">
+              <span class="font-medium">${label}</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">${(preview[key] || []).length}</span>
+            </div>
+            ${listHtml(preview[key] || [], chip)}
+          </div>`
+      )
+      .join("");
+    const warning = preview.warning
+      ? `<p class="text-amber-700 dark:text-amber-400 mt-1">⚠️ ${escapeHtml(preview.warning)}</p>`
+      : "";
+    body.innerHTML = `<div class="space-y-2">${rendered}${warning}</div>`;
+  } catch (error) {
+    body.textContent = `Preview failed: ${error.message}`;
+  }
+};
+
+const loadHttpLineage = async (details) => {
+  const serviceId = details.dataset.serviceId;
+  const list = details.querySelector(".http-lineage-list");
+  if (!serviceId || !list) return;
+  list.textContent = "Loading…";
+  try {
+    const schemas = await requestJson(`/admin/http/${serviceId}/schemas`);
+    renderHttpLineage(details, schemas);
+  } catch (error) {
+    list.textContent = `Lineage unavailable: ${error.message}`;
+  }
+};
+
+const renderHttpLineage = (details, schemas) => {
+  const list = details.querySelector(".http-lineage-list");
+  const diffBox = details.querySelector(".http-lineage-diff");
+  const fromSelect = details.querySelector(".http-diff-from");
+  const toSelect = details.querySelector(".http-diff-to");
+  const result = details.querySelector(".http-diff-result");
+  if (!list || !diffBox || !fromSelect || !toSelect || !result) return;
+  list.replaceChildren();
+  fromSelect.replaceChildren();
+  toSelect.replaceChildren();
+  if (!schemas.length) {
+    list.textContent = "No schema artifacts imported yet.";
+    diffBox.classList.add("hidden");
+    return;
+  }
+  const sorted = [...schemas].sort((a, b) => b.version - a.version);
+  const option = (artifact) => {
+    const el = document.createElement("option");
+    el.value = artifact.id;
+    el.textContent = `v${artifact.version}${artifact.is_active ? " (active)" : ""}`;
+    return el;
+  };
+  sorted.forEach((artifact) => {
+    fromSelect.append(option(artifact));
+    toSelect.append(option(artifact).cloneNode(true));
+  });
+  const active = sorted.find((artifact) => artifact.is_active);
+  const candidate = sorted.find((artifact) => !artifact.is_active);
+  if (active) fromSelect.value = active.id;
+  if (candidate) toSelect.value = candidate.id;
+  sorted.forEach((artifact) => {
+    const row = document.createElement("div");
+    row.className =
+      "flex items-center justify-between gap-2 rounded-md border border-gray-200 dark:border-gray-700 p-2";
+    const label = document.createElement("span");
+    const date = artifact.created_at
+      ? new Date(artifact.created_at).toLocaleString()
+      : "";
+    label.innerHTML = `v${escapeHtml(artifact.version)}${
+      artifact.is_active
+        ? ' <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800">Active</span>'
+        : ""
+    } <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(
+      artifact.source_type || "openapi"
+    )} · ${escapeHtml(date)}</span>`;
+    row.append(label);
+    if (!artifact.is_active) {
+      const activate = document.createElement("button");
+      activate.type = "button";
+      activate.className =
+        "px-3 py-1 text-xs font-medium bg-indigo-100 text-indigo-800 rounded-md hover:bg-indigo-200";
+      activate.textContent = "Activate";
+      activate.addEventListener("click", async () => {
+        activate.disabled = true;
+        try {
+          await requestJson(
+            `/admin/http/${details.dataset.serviceId}/schemas/${artifact.id}/activate`,
+            { method: "POST" }
+          );
+          window.location.reload();
+        } catch (error) {
+          activate.textContent = error.message;
+          activate.disabled = false;
+        }
+      });
+      row.append(activate);
+    }
+    list.append(row);
+  });
+  diffBox.classList.remove("hidden");
+  const diffRun = details.querySelector(".http-diff-run");
+  if (diffRun) {
+    diffRun.onclick = async () => {
+      result.textContent = "Diffing…";
+      try {
+        const diff = await requestJson(
+          `/admin/http/${details.dataset.serviceId}/schemas/diff?from=${encodeURIComponent(
+            fromSelect.value
+          )}&to=${encodeURIComponent(toSelect.value)}`
+        );
+        const rows = [
+          ["Added", "added_operations", "bg-green-100 text-green-800"],
+          ["Changed", "changed_operations", "bg-yellow-100 text-yellow-800"],
+          ["Removed", "removed_operations", "bg-red-100 text-red-800"],
+        ];
+        const listHtml = (items, chipClass) =>
+          items.length
+            ? `<ul class="space-y-0.5">${items
+              .map((item) => `<li><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${chipClass}">${escapeHtml(item)}</span></li>`)
+              .join("")}</ul>`
+            : '<p class="text-gray-500 dark:text-gray-400">None</p>';
+        result.innerHTML = `<div class="space-y-2">${rows
+          .map(
+            ([label, key, chip]) =>
+              `<div class="flex items-center gap-2"><span class="font-medium">${label}</span><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">${
+                (diff[key] || []).length
+              }</span></div>${listHtml(diff[key] || [], chip)}</div>`
+          )
+          .join("")}</div>`;
+      } catch (error) {
+        result.textContent = `Diff failed: ${error.message}`;
+      }
+    };
+  }
+};
+
+const setupHttpOperations = () => {
+  document.querySelectorAll(".http-schema-upload").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('button[type="submit"]');
+      const original = submit.textContent;
+      const activateCheckbox = form.querySelector('input[name="activate"]');
+      // A bare unchecked checkbox sends nothing, and FastAPI's Form(default=True)
+      // would treat the candidate as an activation. Send activate=false explicitly.
+      const activate = activateCheckbox?.checked ?? true;
+      submit.disabled = true;
+      submit.textContent = "Importing…";
+      try {
+        const fd = new FormData(form);
+        if (!activate) fd.set("activate", "false");
+        const artifact = await requestJson(
+          `/admin/http/${form.dataset.serviceId}/schemas/import`,
+          {
+            method: "POST",
+            body: fd,
+          }
+        );
+        submit.textContent = `Imported v${artifact.version}`;
+        if (artifact && !artifact.is_active && artifact.id) {
+          window.setTimeout(() => {
+            const previewBox = form.parentElement.querySelector(".http-sync-preview");
+            if (previewBox) {
+              previewBox.dataset.candidateId = artifact.id;
+              const toggle = previewBox.querySelector(".http-sync-preview-toggle");
+              if (toggle) toggle.classList.remove("hidden");
+              showHttpSyncPreview(previewBox);
+            }
+            const lineage = form.closest(".border")?.querySelector(".http-lineage");
+            if (lineage) {
+              lineage.open = true;
+              loadHttpLineage(lineage);
+            }
+          }, 200);
+        } else {
+          window.setTimeout(() => window.location.reload(), 500);
+        }
+      } catch (error) {
+        submit.textContent = error.message;
+        window.setTimeout(() => {
+          submit.textContent = original;
+          submit.disabled = false;
+        }, 3000);
+      }
+    });
+  });
+  document.querySelectorAll(".http-sync-preview").forEach((box) => {
+    const toggle = box.querySelector(".http-sync-preview-toggle");
+    const close = box.querySelector(".http-sync-preview-close");
+    const panel = box.querySelector(".http-sync-preview-panel");
+    if (toggle) {
+      toggle.addEventListener("click", () => {
+        if (panel) {
+          if (panel.classList.contains("hidden")) {
+            showHttpSyncPreview(box);
+          } else {
+            panel.classList.add("hidden");
+          }
+        }
+      });
+    }
+    if (close) {
+      close.addEventListener("click", () => {
+        if (panel) panel.classList.add("hidden");
+      });
+    }
+  });
+  document.querySelectorAll(".http-health-check").forEach((control) => {
+    control.addEventListener("click", async () => {
+      control.disabled = true;
+      try {
+        const result = await requestJson(
+          `/admin/http/${control.dataset.serviceId}/health`,
+          { method: "POST" }
+        );
+        control.textContent = `${result.status} · ${Math.round(result.latency_ms || 0)} ms`;
+      } catch (error) {
+        control.textContent = error.message;
+      } finally {
+        window.setTimeout(() => {
+          control.disabled = false;
+        }, 1000);
+      }
+    });
+  });
+  document.querySelectorAll(".http-state-toggle").forEach((control) => {
+    control.addEventListener("click", async () => {
+      control.disabled = true;
+      try {
+        await requestJson(
+          `/admin/http/${control.dataset.serviceId}/state?activate=${control.dataset.activate}`,
+          { method: "PATCH" }
+        );
+        window.location.reload();
+      } catch (error) {
+        control.textContent = error.message;
+        control.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll(".http-delete").forEach((control) => {
+    control.addEventListener("click", async () => {
+      if (
+        !window.confirm(
+          "Are you sure you want to delete this HTTP service? Its generated tools will be removed."
+        )
+      ) {
+        return;
+      }
+      control.disabled = true;
+      try {
+        await requestJson(`/admin/http/${control.dataset.serviceId}`, {
+          method: "DELETE",
+        });
+        window.location.reload();
+      } catch (error) {
+        control.textContent = error.message;
+        control.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll(".http-lineage").forEach((details) => {
+    details.addEventListener("toggle", () => {
+      if (details.open) loadHttpLineage(details);
+    });
+  });
+};
+
 export const initializeDataOperations = function () {
   setupSqlPanel();
   setupDebugPanel();
   setupGrpcOperations();
+  setupHttpOperations();
 };

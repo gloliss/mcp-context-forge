@@ -1226,6 +1226,20 @@ class Settings(BaseSettings):
     mcpgateway_proto_max_zip_entries: int = Field(default=1024, ge=1, le=10000, description="Maximum entries accepted from a Proto ZIP")
     mcpgateway_proto_max_uncompressed_bytes: int = Field(default=33554432, ge=1024, le=268435456, description="Maximum expanded size accepted from a Proto ZIP")
 
+    # HTTP Registry Support (EXPERIMENTAL - disabled by default; PR3)
+    mcpgateway_http_registry_enabled: bool = Field(default=False, description="Enable the HTTP Registry (OpenAPI contract import and MCP tool sync, experimental feature)")
+    mcpgateway_http_health_enabled: bool = Field(default=True, description="Enable HTTP service health monitoring when the HTTP registry is enabled")
+    mcpgateway_http_health_interval: int = Field(default=60, ge=10, le=3600, description="Default HTTP health-check interval in seconds")
+    mcpgateway_http_health_timeout: int = Field(default=5, ge=1, le=60, description="Default HTTP health-check timeout in seconds")
+    mcpgateway_http_health_failure_threshold: int = Field(default=3, ge=1, le=20, description="Consecutive failures before an HTTP service is unhealthy")
+    mcpgateway_http_max_upload_bytes: int = Field(default=8388608, ge=1024, le=67108864, description="Maximum OpenAPI JSON/YAML/ZIP upload size in bytes")
+    mcpgateway_http_max_zip_entries: int = Field(default=1024, ge=1, le=10000, description="Maximum entries accepted from an HTTP artifact ZIP")
+    mcpgateway_http_max_uncompressed_bytes: int = Field(default=33554432, ge=1024, le=268435456, description="Maximum expanded size accepted from an HTTP artifact ZIP")
+    mcpgateway_http_spec_max_bytes: int = Field(default=10485760, ge=1024, le=67108864, description="Maximum OpenAPI spec size accepted from a URL or external $ref download")
+    mcpgateway_http_yaml_scan_enabled: bool = Field(default=False, description="Enable manifest-based HTTP service YAML directory scanning")
+    mcpgateway_http_yaml_scan_roots: Annotated[list[str], NoDecode] = Field(default_factory=list, description="CSV/JSON list of allowed roots containing http-service.yaml manifests")
+    mcpgateway_http_yaml_scan_interval: int = Field(default=60, ge=10, le=3600, description="HTTP manifest scan interval in seconds")
+
     # External SQL data API and unified debugger are disabled by default.
     mcpgateway_sql_api_enabled: bool = Field(default=False, description="Enable governed external SQL discovery and data APIs")
     mcpgateway_sql_default_limit: int = Field(default=100, ge=1, le=1000, description="Default SQL data query row limit")
