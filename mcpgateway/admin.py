@@ -12288,6 +12288,7 @@ async def admin_add_tool(
       - headers (JSON string)
       - input_schema (JSON string)
       - output_schema (JSON string, optional)
+      - protocol_config (JSON string, optional)
       - jsonpath_filter (optional)
       - auth_type (optional)
       - auth_username (optional)
@@ -12347,6 +12348,7 @@ async def admin_add_tool(
     input_schema_raw = form.get("input_schema")
     output_schema_raw = form.get("output_schema")
     annotations_raw = form.get("annotations")
+    protocol_config_raw = form.get("protocol_config")
 
     # Parse JSON fields with validation
     try:
@@ -12354,6 +12356,7 @@ async def admin_add_tool(
         input_schema = orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}")
         output_schema = orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None
         annotations = orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}")
+        protocol_config = orjson.loads(protocol_config_raw) if isinstance(protocol_config_raw, str) and protocol_config_raw.strip() else None
         query_mapping = orjson.loads(form.get("query_mapping") or "{}")
         header_mapping = orjson.loads(form.get("header_mapping") or "{}")
         allowlist = orjson.loads(form.get("allowlist") or "[]")
@@ -12376,6 +12379,7 @@ async def admin_add_tool(
         "headers": headers,
         "input_schema": input_schema,
         "output_schema": output_schema,
+        "protocol_config": protocol_config,
         "annotations": annotations,
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth": auth_obj,
@@ -12452,6 +12456,7 @@ async def admin_edit_tool(
       - headers (as a JSON string)
       - input_schema (as a JSON string)
       - output_schema (as a JSON string, optional)
+      - protocol_config (as a JSON string, optional)
       - jsonpathFilter (optional)
       - auth_type (optional, string: "basic", "bearer", or empty)
       - auth_username (optional, for basic auth)
@@ -12509,6 +12514,7 @@ async def admin_edit_tool(
     input_schema_raw2 = form.get("input_schema")
     output_schema_raw2 = form.get("output_schema")
     annotations_raw2 = form.get("annotations")
+    protocol_config_raw2 = form.get("protocol_config")
 
     # Parse JSON fields with validation
     try:
@@ -12516,6 +12522,7 @@ async def admin_edit_tool(
         input_schema = orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}")
         output_schema = orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None
         annotations = orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}")
+        protocol_config = orjson.loads(protocol_config_raw2) if isinstance(protocol_config_raw2, str) and protocol_config_raw2.strip() else None
     except orjson.JSONDecodeError as ex:
         LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
         return ORJSONResponse(
@@ -12532,6 +12539,7 @@ async def admin_edit_tool(
         "headers": headers,
         "input_schema": input_schema,
         "output_schema": output_schema,
+        "protocol_config": protocol_config,
         "annotations": annotations,
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth": auth_obj,

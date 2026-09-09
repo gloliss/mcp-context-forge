@@ -735,6 +735,9 @@ export const handleToolFormSubmit = async function (event) {
     if (window.outputSchemaEditor) {
       window.outputSchemaEditor.save();
     }
+    if (window.protocolConfigEditor) {
+      window.protocolConfigEditor.save();
+    }
 
     // Snapshot form data AFTER editors are flushed.
     const formData = new FormData(form);
@@ -804,6 +807,9 @@ export const handleEditToolFormSubmit = async function (event) {
     }
     if (window.editToolOutputSchemaEditor) {
       window.editToolOutputSchemaEditor.save();
+    }
+    if (window.editToolProtocolConfigEditor) {
+      window.editToolProtocolConfigEditor.save();
     }
 
     // Snapshot form data AFTER editors are flushed.

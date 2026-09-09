@@ -1732,6 +1732,128 @@ class TestAdminToolRoutes:
         assert not ({"name", "url", "integration_type", "request_type", "headers", "input_schema", "auth", "visibility"} & submitted.model_fields_set)
 
     @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_protocol_config(self, mock_register_tool, mock_request, mock_db):
+        """Adding a tool with a protocol_config form field forwards it to ToolCreate."""
+        form_data = FakeForm(
+            {
+                "name": "test-tool-protocol",
+                "url": "http://example.com",
+                "description": "Test tool with protocol_config",
+                "requestType": "POST",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "protocol_config": '{"request": {"method": "POST"}, "response": {"preferredMediaTypes": ["application/json"]}}',
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_register_tool.assert_called_once()
+        call_tool = mock_register_tool.call_args[0][1]
+        assert call_tool.protocol_config == {
+            "request": {"method": "POST"},
+            "response": {"preferredMediaTypes": ["application/json"]},
+        }
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_without_protocol_config_is_none(self, mock_register_tool, mock_request, mock_db):
+        """Adding a tool without protocol_config keeps it None (legacy path)."""
+        form_data = FakeForm(
+            {
+                "name": "test-tool-no-protocol",
+                "url": "http://example.com",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_register_tool.assert_called_once()
+        call_tool = mock_register_tool.call_args[0][1]
+        assert call_tool.protocol_config is None
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_invalid_protocol_config_json(self, mock_register_tool, mock_request, mock_db):
+        """Adding a tool with invalid protocol_config JSON returns 422."""
+        form_data = FakeForm(
+            {
+                "name": "test-tool-bad-protocol",
+                "url": "http://example.com",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "protocol_config": "{broken json",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
+        mock_register_tool.assert_not_called()
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_protocol_config(self, mock_update_tool, mock_request, mock_db):
+        """Editing a tool with a protocol_config form field forwards it to ToolUpdate."""
+        form_data = FakeForm(
+            {
+                "name": "Updated_Tool",
+                "customName": "Updated_Tool",
+                "url": "http://updated.com",
+                "requestType": "POST",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "protocol_config": '{"response": {"preferredMediaTypes": ["text/plain"]}}',
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+
+        assert result.status_code == 200
+        submitted = mock_update_tool.call_args.args[2]
+        assert submitted.protocol_config == {"response": {"preferredMediaTypes": ["text/plain"]}}
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_invalid_protocol_config_json(self, mock_update_tool, mock_request, mock_db):
+        """Editing a tool with invalid protocol_config JSON returns 422."""
+        form_data = FakeForm(
+            {
+                "name": "Updated_Tool",
+                "customName": "Updated_Tool",
+                "url": "http://updated.com",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "protocol_config": "{not json",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        mock_update_tool.assert_not_called()
+
+    @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_basic_auth(self, mock_register_tool, mock_request, mock_db):
         """Test adding tool with basic authentication - covers auth_type=basic branch."""
         form_data = FakeForm(
