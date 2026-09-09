@@ -161,17 +161,21 @@ jq_assert "v1 artifact imported and active" '.is_active == true' "$IMPORT_V1"
 TOOLS_LIST=$(curl -fsS -X POST "$GATEWAY_URL/rpc" \
   -H "$AUTH_HEADER" -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "id": "e2e-http-tools-list", "method": "tools/list", "params": {}}')
-jq_assert "tools/list shows 8 registry tools" '.result.tools | length == 8' "$TOOLS_LIST"
+# Scope to this run's service: the live gateway may already host tools
+# from other integrations (gRPC/SQL), so global counts are unreliable.
+jq_assert "tools/list shows 8 registry tools for $SERVICE_NAME" \
+  ".result.tools | map(select(.name | contains(\"$SERVICE_NAME\"))) | length == 8" "$TOOLS_LIST"
 for needle in listpets createpet deletepet echoform; do
-  jq_assert "tools/list contains $needle" ".result.tools | any(.name; contains(\"$needle\"))" "$TOOLS_LIST"
+  jq_assert "tools/list contains $needle" \
+    ".result.tools | map(select(.name | contains(\"$SERVICE_NAME\"))) | any(.name; contains(\"$needle\"))" "$TOOLS_LIST"
 done
 
 # ---------------------------------------------------------------------------
 # Step 4: MCP tools/call — GET query, POST JSON, DELETE 204
 # ---------------------------------------------------------------------------
-LISTPETS_NAME="$(echo "$TOOLS_LIST" | jq -r '.result.tools[] | select(.name | contains("listpets")) | .name')"
-CREATEPET_NAME="$(echo "$TOOLS_LIST" | jq -r '.result.tools[] | select(.name | contains("createpet")) | .name')"
-DELETEPET_NAME="$(echo "$TOOLS_LIST" | jq -r '.result.tools[] | select(.name | contains("deletepet")) | .name')"
+LISTPETS_NAME="$(echo "$TOOLS_LIST" | jq -r ".result.tools[] | select(.name | contains(\"$SERVICE_NAME\")) | select(.name | contains(\"listpets\")) | .name" | head -1)"
+CREATEPET_NAME="$(echo "$TOOLS_LIST" | jq -r ".result.tools[] | select(.name | contains(\"$SERVICE_NAME\")) | select(.name | contains(\"createpet\")) | .name" | head -1)"
+DELETEPET_NAME="$(echo "$TOOLS_LIST" | jq -r ".result.tools[] | select(.name | contains(\"$SERVICE_NAME\")) | select(.name | contains(\"deletepet\")) | .name" | head -1)"
 
 RPC_CALL=$(curl -fsS -X POST "$GATEWAY_URL/rpc" \
   -H "$AUTH_HEADER" -H "Content-Type: application/json" \
@@ -226,8 +230,10 @@ jq_assert "schema_drift cleared after activation" '.schema_drift == false' "$SER
 TOOLS_LIST=$(curl -fsS -X POST "$GATEWAY_URL/rpc" \
   -H "$AUTH_HEADER" -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "id": "e2e-http-tools-list-2", "method": "tools/list", "params": {}}')
-jq_assert "tools/list shows the new filter tool" ".result.tools | any(.name; contains(\"filterpets\"))" "$TOOLS_LIST"
-jq_assert "tools/list no longer lists echo-form" ".result.tools | all(.name; (contains(\"echoform\") | not))" "$TOOLS_LIST"
+jq_assert "tools/list shows the new filter tool" \
+  ".result.tools | map(select(.name | contains(\"$SERVICE_NAME\"))) | any(.name; contains(\"filterpets\"))" "$TOOLS_LIST"
+jq_assert "tools/list no longer lists echo-form" \
+  ".result.tools | map(select(.name | contains(\"$SERVICE_NAME\"))) | all(.name; (contains(\"echoform\") | not))" "$TOOLS_LIST"
 
 # ---------------------------------------------------------------------------
 # Step 7: gateway logs must be clean
