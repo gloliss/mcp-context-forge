@@ -68,13 +68,15 @@ class TestCodecRegistryResolution:
         assert isinstance(registry.resolve("image/png"), BinaryCodec)
 
     def test_xml_media_types_resolve_to_xml_codec(self):
-        """PR4: application/xml, text/xml and the +xml suffix resolve to XmlCodec."""
+        """PR4/PR5: application/xml, text/xml and generic +xml suffixes resolve to XmlCodec."""
         registry = _make_registry()
+        from mcpgateway.protocols.codecs.soap import SoapCodec
         from mcpgateway.protocols.codecs.xml import XmlCodec
 
         assert isinstance(registry.resolve("application/xml"), XmlCodec)
         assert isinstance(registry.resolve("text/xml"), XmlCodec)
-        assert isinstance(registry.resolve("application/soap+xml"), XmlCodec)
+        # application/soap+xml is claimed by SoapCodec (PR5); other +xml stays XML.
+        assert isinstance(registry.resolve("application/soap+xml"), SoapCodec)
         assert isinstance(registry.resolve("application/atom+xml"), XmlCodec)
 
     def test_missing_media_type_falls_back_to_binary(self):

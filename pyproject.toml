@@ -276,6 +276,13 @@ xml = [
     "xmlschema>=4.3.0",
 ]
 
+# SOAP / WSDL support (PR5).  Design-document §35 adds zeep as an optional
+# dependency; it is used for WSDL parsing only, never for the business
+# call chain (design §32).
+soap = [
+    "zeep>=4.3.0",
+]
+
 # External plugin packages (optional)
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
