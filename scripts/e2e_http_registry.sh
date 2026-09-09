@@ -35,6 +35,13 @@
 #   KEEP_SERVICE=1   skip the final service deletion (debugging)
 #   SKIP_PETSTORE=1  reuse an already-running petstore server
 #   CONTAINER_NAME   default mcpgateway (for the log-scan step)
+#   TEAM_IDS         comma-separated team IDs for the admin JWT (required:
+#                    the admin gate denies tokens with an empty teams claim
+#                    as public-only). Example: TEAM_IDS=team-a,team-b
+#
+# The JWT mint runs on the host, so BOTH gateway secrets must be exported
+# (config.py rejects placeholder values otherwise):
+#   JWT_SECRET_KEY + AUTH_ENCRYPTION_SECRET
 
 set -euo pipefail
 
@@ -70,6 +77,10 @@ for bin in curl jq "$PYTHON_BIN"; do
 done
 if [[ -z "${JWT_SECRET_KEY:-}" ]]; then
   echo "❌ JWT_SECRET_KEY must be set to the gateway's signing secret" >&2
+  exit 1
+fi
+if [[ -z "${TEAM_IDS:-}" ]]; then
+  echo "❌ TEAM_IDS must be set (the admin gate denies tokens with an empty teams claim)" >&2
   exit 1
 fi
 
@@ -134,7 +145,11 @@ if ! wait_for_http "$GATEWAY_URL/health" 30; then
 fi
 echo "✅ Gateway /health reachable"
 
-TOKEN="$("$PYTHON_BIN" -m mcpgateway.utils.create_jwt_token --username "$ADMIN_EMAIL" --secret "$JWT_SECRET_KEY" --exp 600 2>/dev/null)"
+MINT_ARGS=(--username "$ADMIN_EMAIL" --secret "$JWT_SECRET_KEY" --exp 600 --admin)
+if [[ -n "${TEAM_IDS:-}" ]]; then
+  MINT_ARGS+=(--teams "$TEAM_IDS")
+fi
+TOKEN="$("$PYTHON_BIN" -m mcpgateway.utils.create_jwt_token "${MINT_ARGS[@]}" 2>/dev/null)"
 AUTH_HEADER="Authorization: Bearer $TOKEN"
 echo "✅ Admin JWT minted for $ADMIN_EMAIL"
 
