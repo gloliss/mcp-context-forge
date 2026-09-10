@@ -740,6 +740,7 @@ markers = [
     "iframe: marks tests that run inside an iframe host page",
     "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
+    "contracts: marks HTTP contract tests (require a live gateway; set CONTRACT_BASE_URL)",
 ]
 
 # Playwright-specific test discovery patterns

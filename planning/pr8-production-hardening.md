@@ -23,8 +23,8 @@
 | 任务 | 内容 | 依赖 | 状态 |
 |---|---|---|---|
 | T8.1 | HttpMonitoringService + `http_health_samples` 表 + 迁移 `6d7e8f9a0b1c`（§57） | — | ✅ `208d896` |
-| T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ⏳ 见下「T8.2 细化」（本地单测可跑，live 套件待 E2E） |
-| T8.3 | Activation Gate off/warn/strict（§59） | T8.2 | ✅ `e3508e2`（Gate 配置+决策；schemathesis 执行待 T8.2） |
+| T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ✅ 见下「T8.2 细化」（本地已验证；真实网关待 E2E） |
+| T8.3 | Activation Gate off/warn/strict（§59） | T8.2 | ✅ `e3508e2`（Gate 配置+决策；已被 T8.2 契约套件消费） |
 | T8.4a | `test_http_full_chain` 最小集扩展（§61） | — | ⏳（依赖 E2E 环境） |
 | T8.4b | `test_xml_http_full_chain`（§62） | T4.x | ⏳ |
 | T8.4c | `test_soap_full_chain`（§63） | T5.x | ⏳ |
@@ -113,7 +113,14 @@
 3. `tests/contracts/http/test_contract_checks.py`：上述纯逻辑单测（本地全跑）
 4. `tests/contracts/http/test_gateway_contract.py`：schemathesis 驱动的 live 套件；`CONTRACT_BASE_URL` 未设置则 `pytest.skip`（待 E2E）
 
-**范围边界**：本任务只建基建与判定逻辑；**不**新增生产代码（Gate 逻辑已在 T8.3）。真实网关上的 schemathesis 执行与 `tests/contracts/http/` 全量通过依赖 E2E 环境。
+**范围边界**：本任务只建基建与判定逻辑；**不**新增生产代码（Gate 逻辑已在 T8.3）。
+
+**本地验证结论（2026-09-10）**
+- 纯逻辑单测 38 个通过（`tests/contracts/http/test_contract_checks.py`），含 `load_openapi_document` 对本地 HTTP server 的真实加载。
+- live 套件用**本地 stand-in 网关**实测通过（合规网关 3 passed / 1 skipped），并确认能**真实捕获**违约：对返回 `{"items":"NOT-AN-ARRAY"}` 的 200 报 `response_schema_mismatch`、对 500 报 `server_error`（非空跑）。
+- 无 `CONTRACT_BASE_URL` 时全程 skip、不触网（collection 阶段也不加载文档）。
+
+**待 E2E 的增量**：schema 驱动的 hypothesis 模糊测试用例生成（schemathesis 4.x 的 `get_case_strategy` 集成）留作 E2E 阶段扩展；当前以「有效请求 + 缺参请求」两类用例覆盖 §58 的四项判定。
 
 **验收**
 - `collect_operations` 正确枚举 OpenAPI paths（含 `default` 响应）

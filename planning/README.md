@@ -28,13 +28,13 @@ Phase 4  Production    [PR8 Production Hardening]
 | PR5 | [pr5-soap-wsdl.md](pr5-soap-wsdl.md) | [pr5-soap-wsdl-test.md](pr5-soap-wsdl-test.md) | T5.1–5.5 完成；T5.6 待办（含已识别 3 项缺口） |
 | PR6 | [pr6-grpc-correctness.md](pr6-grpc-correctness.md) | [pr6-grpc-correctness-test.md](pr6-grpc-correctness-test.md) | 全量完成 |
 | PR7 | [pr7-grpc-streaming-aio.md](pr7-grpc-streaming-aio.md) | [pr7-grpc-streaming-aio-test.md](pr7-grpc-streaming-aio-test.md) | 部分完成（T7.1/7.2/7.3/7.7） |
-| PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | [pr8-production-hardening-test.md](pr8-production-hardening-test.md) | 部分完成（T8.1/8.6/8.7；T8.5a/b 已由 PR3 覆盖） |
+| PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | [pr8-production-hardening-test.md](pr8-production-hardening-test.md) | 部分完成（T8.1/8.2/8.3/8.6/8.7；T8.5a/b 已由 PR3 覆盖） |
 
 ## 总任务状态（截至 2026-09-10）
 
-- **已完成**：T4.1–4.3/4.5–4.7、T5.1–5.5、T6.1–6.9、T7.1–7.3/7.7、T8.1/8.3/8.6/8.7
+- **已完成**：T4.1–4.3/4.5–4.7、T5.1–5.5、T6.1–6.9、T7.1–7.3/7.7、T8.1/8.2/8.3/8.6/8.7
 - **PR3 已实现（不重复做）**：T8.5a/T8.5b（§66 SafeReferenceFetcher/ContractArtifactResolver 在 `services/safe_reference_fetcher.py`）
-- **待办**：T4.4、T5.6、T7.4–7.6/7.8/7.9、T8.2/8.4
+- **待办**：T4.4、T5.6、T8.4；**T7.4–7.6/7.8/7.9 推迟为 grpc.aio 独立专项**（见 pr7 文档「T7.4 细化」）
 
 ## 横切约束（所有 PR 必须遵守）
 
