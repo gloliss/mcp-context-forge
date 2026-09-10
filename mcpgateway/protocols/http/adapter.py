@@ -75,6 +75,63 @@ REST_HTTP_STATUS_ERROR = "REST_HTTP_STATUS_ERROR"
 REST_UNEXPECTED_STATUS = "REST_UNEXPECTED_STATUS"
 
 
+def map_http_status_to_category(status_code: Optional[int]) -> ErrorCategory:
+    """Map an HTTP status code to a canonical error category (design §73).
+
+    Args:
+        status_code: The upstream HTTP status code.
+
+    Returns:
+        The mapped :class:`ErrorCategory`, defaulting to ``UPSTREAM_ERROR``.
+    """
+    if status_code is None:
+        return ErrorCategory.UPSTREAM_ERROR
+    if status_code == 400:
+        return ErrorCategory.INVALID_ARGUMENT
+    if status_code == 401:
+        return ErrorCategory.UNAUTHENTICATED
+    if status_code == 403:
+        return ErrorCategory.PERMISSION_DENIED
+    if status_code == 404:
+        return ErrorCategory.NOT_FOUND
+    if status_code == 409:
+        return ErrorCategory.CONFLICT
+    if status_code == 429:
+        return ErrorCategory.RATE_LIMITED
+    if status_code == 503:
+        return ErrorCategory.UNAVAILABLE
+    return ErrorCategory.UPSTREAM_ERROR
+
+
+# Methods that are safe to retry automatically on 5xx/429 (design §68).
+_RETRYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Idempotent methods: retry allowed only with an idempotency policy (§68).
+_IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
+
+
+def is_retryable_http_method(method: str, *, status_code: Optional[int] = None) -> bool:
+    """Return whether a method/status combination may be auto-retried (§68).
+
+    GET/HEAD/OPTIONS are always retryable.  PUT/DELETE are only retryable on
+    transient statuses (429/5xx) because they are idempotent; POST/PATCH are
+    never auto-retried by the gateway.
+
+    Args:
+        method: The HTTP method (upper-cased by the caller).
+        status_code: Optional upstream status; transient statuses permit
+            retry of idempotent-but-mutating methods.
+
+    Returns:
+        ``True`` when a same-argument retry is safe.
+    """
+    normalized = (method or "").upper()
+    if normalized in _RETRYABLE_METHODS:
+        return True
+    if normalized in _IDEMPOTENT_METHODS:
+        return status_code is not None and (status_code == 429 or status_code >= 500)
+    return False
+
+
 def _handle_json_parse_error(response: Any, error: Any, is_error_response: bool = False) -> dict:
     """Handle JSON parsing failures with graceful fallback to raw text.
 
@@ -209,9 +266,7 @@ class HttpProtocolAdapter(ProtocolAdapter):
             try:
                 response = await asyncio.wait_for(
                     context.send_with_retry(
-                        lambda call_headers, _url=target.url: self._send_new(
-                            context, built.method, _url, call_headers, request_options, body_kwargs
-                        ),
+                        lambda call_headers, _url=target.url: self._send_new(context, built.method, _url, call_headers, request_options, body_kwargs),
                         hop_headers,
                     ),
                     timeout=context.remaining_timeout(),
@@ -599,11 +654,11 @@ class HttpProtocolAdapter(ProtocolAdapter):
                 else:
                     error_val = f"HTTP {response.status_code}"
                 raise ProtocolError(
-                    category=ErrorCategory.UPSTREAM_ERROR,
+                    category=map_http_status_to_category(response.status_code),
                     code=REST_HTTP_STATUS_ERROR,
                     message=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode(),
                     origin="http",
-                    retryable=False,
+                    retryable=is_retryable_http_method(method, status_code=response.status_code),
                     protocol_status=response.status_code,
                 )
 
