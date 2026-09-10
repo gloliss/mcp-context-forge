@@ -42,6 +42,7 @@ from mcpgateway.db import HttpService as DbHttpService
 from mcpgateway.schemas import HttpServiceCreate, HttpServiceUpdate
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.http_service import HttpService
+from mcpgateway.protocols.http.activation_gate import ACTIVATION_GATES
 from mcpgateway.utils.http_validation import HttpServiceError
 from mcpgateway.utils.primary_worker import is_primary_worker
 
@@ -51,7 +52,7 @@ _MANIFEST_KIND = "HttpService"
 # Strict per-level field allowlists (§21).  Unknown keys are errors.
 _TOP_LEVEL_FIELDS = {"apiVersion", "kind", "metadata", "spec"}
 _METADATA_FIELDS = {"name", "description", "team", "visibility", "tags"}
-_SPEC_FIELDS = {"baseUrl", "discovery", "runtime", "validation", "operations", "health"}
+_SPEC_FIELDS = {"baseUrl", "discovery", "runtime", "validation", "testing", "operations", "health"}
 _DISCOVERY_FIELDS = {"mode", "source", "references"}
 _SOURCE_FIELDS = {"url"}
 _REFERENCES_FIELDS = {"allowRemote"}
@@ -59,6 +60,7 @@ _RUNTIME_FIELDS = {"http2", "redirects", "timeout", "limits"}
 _REDIRECTS_FIELDS = {"follow"}
 _OPERATIONS_FIELDS = {"include"}
 _HEALTH_FIELDS = {"enabled", "interval", "timeout", "failureThreshold"}
+_TESTING_FIELDS = {"allowMutatingOperations"}
 
 _ALLOWED_SUFFIXES = (".json", ".yaml", ".yml", ".zip")
 
@@ -292,6 +294,15 @@ class HttpYamlScanService:
                 raise HttpServiceError("spec.runtime.limits must be a mapping")
         if "validation" in spec and not isinstance(spec["validation"], dict):
             raise HttpServiceError("spec.validation must be a mapping")
+        # §59 Activation Gate: off/warn/strict (mutating contract tests are
+        # opt-in via spec.testing.allowMutatingOperations).
+        activation_gate = (spec.get("validation") or {}).get("activationGate")
+        if activation_gate is not None and activation_gate not in ACTIVATION_GATES:
+            raise HttpServiceError(f"spec.validation.activationGate must be one of {', '.join(ACTIVATION_GATES)}")
+        if "testing" in spec:
+            testing = _mapping(spec["testing"], "spec.testing", _TESTING_FIELDS)
+            if "allowMutatingOperations" in testing and not isinstance(testing["allowMutatingOperations"], bool):
+                raise HttpServiceError("spec.testing.allowMutatingOperations must be a boolean")
         if "operations" in spec:
             operations = _mapping(spec["operations"], "spec.operations", _OPERATIONS_FIELDS)
             include = operations.get("include") or []
@@ -463,9 +474,7 @@ class HttpYamlScanService:
                             metadata={"created_via": "http-yaml-scan"},
                         )
                         service = db.get(DbHttpService, created.id)
-                        await self.http.import_schema(
-                            db, service.id, payload, filename, "system", activate=True, allow_remote=allow_remote
-                        )
+                        await self.http.import_schema(db, service.id, payload, filename, "system", activate=True, allow_remote=allow_remote)
                         action = "created"
                     else:
                         update_fields = {key: value for key, value in fields.items() if key != "team_id"}
@@ -478,9 +487,7 @@ class HttpYamlScanService:
                         )
                         service = db.get(DbHttpService, service.id)
                         service.team_id = team_id
-                        await self.http.import_schema(
-                            db, service.id, payload, filename, "system", activate=False, allow_remote=allow_remote
-                        )
+                        await self.http.import_schema(db, service.id, payload, filename, "system", activate=False, allow_remote=allow_remote)
                         action = "updated"
                     if service is None:
                         raise HttpServiceError("Unable to load scanned HTTP service")

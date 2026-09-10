@@ -157,6 +157,35 @@ def test_manifest_rejects_high_entropy_tokens_but_accepts_prose(tmp_path):
     assert data["spec"]["validation"]["note"].startswith("This is a long")
 
 
+def test_manifest_accepts_activation_gate_and_testing(tmp_path):
+    """§59 activationGate and testing.allowMutatingOperations parse cleanly."""
+    root = _write_scan_root(tmp_path, f"yaml-gate-{next(_UNIQUE)}", extra_manifest="\n  validation:\n    activationGate: strict\n  testing:\n    allowMutatingOperations: true\n")
+    manifest_path = root / "http-service.yaml"
+
+    data = HttpYamlScanService._load_manifest(manifest_path)  # pylint: disable=protected-access
+
+    assert data["spec"]["validation"]["activationGate"] == "strict"
+    assert data["spec"]["testing"]["allowMutatingOperations"] is True
+
+
+def test_manifest_rejects_invalid_activation_gate(tmp_path):
+    """An activationGate outside off/warn/strict is rejected."""
+    root = _write_scan_root(tmp_path, f"yaml-badgate-{next(_UNIQUE)}", extra_manifest="\n  validation:\n    activationGate: loud\n")
+    manifest_path = root / "http-service.yaml"
+
+    with pytest.raises(HttpServiceError, match="activationGate must be one of"):
+        HttpYamlScanService._load_manifest(manifest_path)  # pylint: disable=protected-access
+
+
+def test_manifest_rejects_non_bool_allow_mutating(tmp_path):
+    """testing.allowMutatingOperations must be a boolean."""
+    root = _write_scan_root(tmp_path, f"yaml-badtesting-{next(_UNIQUE)}", extra_manifest="\n  testing:\n    allowMutatingOperations: maybe\n")
+    manifest_path = root / "http-service.yaml"
+
+    with pytest.raises(HttpServiceError, match="allowMutatingOperations must be a boolean"):
+        HttpYamlScanService._load_manifest(manifest_path)  # pylint: disable=protected-access
+
+
 # --- source resolution ---
 
 
