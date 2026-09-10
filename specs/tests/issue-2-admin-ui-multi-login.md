@@ -48,12 +48,29 @@ uv run --frozen pytest tests/unit/mcpgateway/test_admin_multi_login.py -q
 
 两个无痕窗口 / 两台设备同时用同一 admin 登录，确认：任一窗口操作不影响另一窗口；任一窗口登出，另一窗口仍在线。
 
-## 3. 门禁与命令
+## 4. 实网验证结果（2026-09-10，http://10.10.100.15:4444）
+
+以真实 admin 账号在两个独立 HTTP 会话上实跑：**AC-1 / AC-2 / AC-3 全部通过**（`2 passed`）。
+
+实跑中修正的两处测试缺陷：
+
+1. **尾斜杠**：探测路径须用 `/admin/`。Starlette 对 `/admin` 发 307 跳转到 `/admin/`，若按 `/admin` 断言 200，健康会话也会被误判为"被顶掉"。
+2. **登出后断言**：只断言"浏览器会话已登出"（cookie 被清 + 面板重定向到 `/admin/login`），不复用旧 token 立即断言服务端已拒绝。
+
+### 相邻发现（不在本需求范围，仅记录）
+
+登出会把 `jti` 写入吊销名单，但**吊销生效存在约 30s 延迟**：实网测得登出后 0/5/15s 旧 token 仍可访问 `/admin/`，约 +31s 起返回 `302 → /admin/login?error=token_revoked`。
+
+根因：`TokenBlocklistService.revoke_token`（`mcpgateway/services/token_blocklist_service.py:83`）写入 DB 与 Redis（`token:revoked:{jti}`）后，**未失效 `auth_cache` 的负向吊销缓存**（`AuthCache.set_not_revoked`，TTL = `auth_cache_revocation_ttl` 默认 30s）。`auth_cache.invalidate_revocation()` 的文档注释描述了"吊销时原子驱逐、不存在 stale False 窗口"这一预期契约，但登出路径未调用它。
+
+> 该问题与"多端登录互不顶掉"无关（AC-2 只要求"登出 A 不影响 B"，已通过），故不纳入本需求；如需修复应另立需求。
+
+## 5. 门禁与命令
 
 - 单元：`make test`（或上面的定向 pytest）。
 - live E2E：`uv run --frozen pytest tests/live_gateway/mcp/test_admin_multi_login_e2e.py -v -s`（需运行中的网关）。
 - 代码质量：`make ruff bandit interrogate pylint verify`。
 
-## 4. 退出标准
+## 6. 退出标准
 
 AC-1/AC-2/AC-3 全部有对应用例且通过；lint 干净；live E2E 在真实网关上通过（或记录豁免原因）。
