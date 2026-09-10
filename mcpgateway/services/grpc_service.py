@@ -136,6 +136,85 @@ def _serialize_item(item: Any) -> str:
     return str(item)
 
 
+# gRPC StatusCode → canonical ErrorCategory (design §55/§73).
+_GRPC_STATUS_TO_CATEGORY = {
+    "INVALID_ARGUMENT": "INVALID_ARGUMENT",
+    "FAILED_PRECONDITION": "FAILED_PRECONDITION",
+    "OUT_OF_RANGE": "INVALID_ARGUMENT",
+    "UNAUTHENTICATED": "UNAUTHENTICATED",
+    "PERMISSION_DENIED": "PERMISSION_DENIED",
+    "NOT_FOUND": "NOT_FOUND",
+    "ALREADY_EXISTS": "CONFLICT",
+    "ABORTED": "CONFLICT",
+    "RESOURCE_EXHAUSTED": "RATE_LIMITED",
+    "UNAVAILABLE": "UNAVAILABLE",
+    "DEADLINE_EXCEEDED": "UNAVAILABLE",
+    "CANCELLED": "UNAVAILABLE",
+    "UNKNOWN": "UPSTREAM_ERROR",
+    "INTERNAL": "INTERNAL",
+    "UNIMPLEMENTED": "UNSUPPORTED",
+}
+
+
+def map_grpc_status_to_category(code: Any) -> str:
+    """Map a gRPC status code to a canonical error category (design §55/§73).
+
+    Args:
+        code: A ``grpc.StatusCode`` (or its ``.name`` string).
+
+    Returns:
+        The canonical ``ErrorCategory`` value.
+    """
+    name = getattr(code, "name", str(code)) if code is not None else "UNKNOWN"
+    return _GRPC_STATUS_TO_CATEGORY.get(name, "UPSTREAM_ERROR")
+
+
+def parse_grpc_status_details(trailing_metadata: Any) -> Optional[Any]:
+    """Parse ``grpc-status-details-bin`` into a ``google.rpc.Status`` (design §55).
+
+    Args:
+        trailing_metadata: An iterable of ``(key, value)`` trailer pairs,
+            or an object with an ``items()``/iteration that yields pairs.
+
+    Returns:
+        The parsed ``google.rpc.Status``, or ``None`` when absent/unparseable.
+    """
+    try:
+        from google.rpc import status_pb2  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        return None
+
+    value = None
+    for item in trailing_metadata or ():
+        try:
+            key, val = item
+        except (TypeError, ValueError):
+            continue
+        if key and str(key).lower() == "grpc-status-details-bin":
+            value = val
+            break
+    if value is None:
+        return None
+    # Binary gRPC metadata arrives base64-encoded on the wire, but client
+    # libraries decode ``-bin`` keys before exposing trailers.  Try both.
+    candidates = [value]
+    if isinstance(value, (bytes, bytearray)) and value:
+        try:
+            import base64  # pylint: disable=import-outside-toplevel
+
+            candidates.append(base64.b64decode(value, validate=False))
+        except Exception:  # pylint: disable=broad-except
+            pass
+    for candidate in candidates:
+        try:
+            status = status_pb2.Status()
+            status.ParseFromString(candidate)
+            return status
+        except Exception:  # pylint: disable=broad-except
+            continue
+    return None
+
+
 async def _collect_bounded_stream(
     stream: Any,
     max_items: int = 100,
@@ -1483,12 +1562,19 @@ class GrpcService:
         except (GrpcServiceNotFoundError, GrpcServiceError):
             raise
         except Exception as e:
+            enriched = None
             if GRPC_AVAILABLE and isinstance(e, grpc.RpcError):
                 status = e.code()  # pylint: disable=no-member
                 if status is not None:
                     grpc_status = getattr(status, "name", str(status))
+                # design §55: enrich with google.rpc.Status from grpc-status-details-bin
+                trailing = e.trailing_metadata() if hasattr(e, "trailing_metadata") else None  # pylint: disable=no-member
+                details = parse_grpc_status_details(trailing)
+                if details is not None and details.message:
+                    enriched = details.message
             logger.error("Failed to invoke %s on %s: %s", method_name, service.name, e, exc_info=True)
-            raise GrpcServiceError(f"Method invocation failed: {e}") from e
+            suffix = f": {enriched}" if enriched else ""
+            raise GrpcServiceError(f"Method invocation failed: {e}{suffix}") from e
 
         finally:
             grpc_status_context.set(grpc_status)
