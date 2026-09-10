@@ -1216,23 +1216,6 @@ class GrpcService:
                 continue
             for method in svc_desc.get("methods", []):
                 tool_name = f"{svc_name}.{method['name']}"
-                # Client-streaming and bidi methods remain visible in the gRPC
-                # catalog but are intentionally not executable MCP tools.
-                if method.get("client_streaming"):
-                    existing_tool = existing_tools_map.get(tool_name)
-                    if existing_tool:
-                        changed = False
-                        if existing_tool.enabled or not existing_tool.deprecated:
-                            existing_tool.enabled = False
-                            existing_tool.deprecated = True
-                            changed = True
-                        if active_artifact_id is not None and existing_tool.grpc_schema_artifact_id != active_artifact_id:
-                            existing_tool.grpc_schema_artifact_id = active_artifact_id
-                            changed = True
-                        if changed:
-                            existing_tool.version = (existing_tool.version or 1) + 1
-                            changed_tools.append(existing_tool)
-                    continue
                 # Per-tool try/except: a single bad method must not poison the whole sync.
                 try:
                     _validate_reflected_tool_name(tool_name)
@@ -1529,7 +1512,39 @@ class GrpcService:
 
             method_info = next((item for item in discovered.get(service_name, {}).get("methods", []) if item.get("name") == method), None)
             if method_info and method_info.get("client_streaming"):
-                raise GrpcServiceError("Client-streaming and bidirectional gRPC methods are not supported")
+                # Client-streaming and bidi (design §48) take the MCP Stream
+                # input model ``{"items": [...]}`` (design §49/§50): the caller
+                # supplies the message list rather than a single request.
+                items = (request_data or {}).get("items") if isinstance(request_data, dict) else request_data
+                if not isinstance(items, list) or not items:
+                    raise GrpcServiceError('Client-streaming and bidirectional gRPC methods require a non-empty {"items": [...]} request')
+                streaming = (service.runtime_config or {}).get("streaming") or {}
+                max_items = int(streaming.get("maxItems", 100))
+                max_bytes = int(streaming.get("maxBytes", 0))
+
+                if method_info.get("server_streaming"):
+                    bidi_response = await asyncio.wait_for(
+                        _collect_bounded_stream(
+                            endpoint.invoke_bidi_stream(service_name, method, items, timeout=remaining_timeout()),
+                            max_items=max_items,
+                            max_bytes=max_bytes,
+                            stream_callback=stream_callback,
+                        ),
+                        timeout=remaining_timeout(),
+                    )
+                    if capture_call_metadata:
+                        bidi_response["_grpc"] = _masked_call_metadata(endpoint.get_call_metadata())
+                    grpc_status = "OK"
+                    return bidi_response
+
+                client_stream_response = await asyncio.wait_for(
+                    endpoint.invoke_client_stream(service_name, method, items, timeout=remaining_timeout()),
+                    timeout=remaining_timeout(),
+                )
+                if capture_call_metadata:
+                    client_stream_response = {**client_stream_response, "_grpc": _masked_call_metadata(endpoint.get_call_metadata())}
+                grpc_status = "OK"
+                return client_stream_response
             if method_info and method_info.get("server_streaming"):
                 # Configurable stream limits (design-document §42/§44): the
                 # old hard-coded 100-item cap is replaced by the service's

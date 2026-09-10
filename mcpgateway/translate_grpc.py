@@ -410,9 +410,17 @@ class GrpcEndpoint:
         unary = channel.unary_unary(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString)
         metadata = list(self._metadata.items())
 
+        call = None
         try:
             call = unary(request_msg, timeout=timeout, metadata=metadata) if timeout is not None else unary(request_msg, metadata=metadata)
             response_msg = await call
+        except asyncio.CancelledError:
+            # §54: the MCP caller's cancellation must reach the upstream RPC,
+            # not merely abandon the coroutine.  Cancel explicitly so the
+            # server sees the RPC cancelled and can release its resources.
+            if call is not None:
+                call.cancel()
+            raise
         except grpc.RpcError as e:
             # 失败调用同样留下可观测的 headers/trailers/status，供错误映射
             # （§55）读取；aio 的 AioRpcError 携带两者。
@@ -520,6 +528,10 @@ class GrpcEndpoint:
                 response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
                 yield response_dict
             stream_completed = True
+        except asyncio.CancelledError:
+            # §54: propagate the cancellation to the upstream stream.
+            stream_call.cancel()
+            raise
         except grpc.RpcError as e:
             logger.error(f"Streaming RPC error: {e}")
             raise
@@ -537,6 +549,186 @@ class GrpcEndpoint:
             stream_call.cancel()
 
         logger.debug(f"Streaming complete for {service}.{method}")
+
+    async def invoke_client_stream(
+        self,
+        service: str,
+        method: str,
+        request_items: Sequence[Dict[str, Any]],
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """调用一个客户端流式（client-streaming）gRPC 方法。
+
+        MCP 侧以 ``{"items": [...]}`` 表达多个请求块（设计 §49/§50）：每个元素
+        序列化为一条请求消息，发送完毕后关闭发送侧，再等待**单个**响应。
+
+        参数:
+            service: 服务名称
+            method: 方法名称
+            request_items: 请求消息 JSON 列表（至少一条）。
+            timeout: 单次 RPC 的截止时间（秒）
+
+        返回:
+            JSON 响应数据
+
+        抛出:
+            ValueError: 如果服务/方法不存在、不是客户端流式方法，或 items 为空。
+            grpc.RpcError: 如果 RPC 失败。
+        """
+        logger.debug(f"Invoking client-streaming {service}.{method}")
+
+        method_info = self._require_method(service, method)
+        if not method_info["client_streaming"]:
+            raise ValueError(f"Method {method} is not client-streaming")
+        if not request_items:
+            raise ValueError(f"Method {method} requires at least one request item")
+
+        request_class, response_class = self._resolve_message_classes(method_info)
+        channel = self._channel
+        method_path = f"/{service}/{method}"
+
+        stream_call = channel.stream_unary(method_path, request_serializer=request_class.SerializeToString, response_deserializer=response_class.FromString)(
+            timeout=timeout,
+            metadata=list(self._metadata.items()),
+        )
+        try:
+            for item in request_items:
+                await stream_call.write(json_format.ParseDict(item, request_class()))
+            await stream_call.done_writing()
+            response_msg = await stream_call
+            code = await stream_call.code()
+        except asyncio.CancelledError:
+            # §54: propagate the cancellation to the upstream RPC.
+            stream_call.cancel()
+            raise
+        except grpc.RpcError as e:
+            self._last_call_metadata = {
+                "headers": self._metadata_values(getattr(e, "initial_metadata", lambda: None)()),
+                "trailers": self._metadata_values(getattr(e, "trailing_metadata", lambda: None)()),
+                "status": e.code().name if getattr(e, "code", None) is not None and e.code() is not None else None,
+            }
+            raise
+
+        self._last_call_metadata = {
+            "headers": self._metadata_values(await stream_call.initial_metadata()),
+            "trailers": self._metadata_values(await stream_call.trailing_metadata()),
+            "status": code.name if code is not None else None,
+        }
+        # 见 invoke() 中关于 protobuf >=5.x 关键字参数改名的注释。
+        return json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+
+    async def invoke_bidi_stream(
+        self,
+        service: str,
+        method: str,
+        request_items: Sequence[Dict[str, Any]],
+        timeout: Optional[float] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """调用一个双向流式（bidirectional-streaming）gRPC 方法。
+
+        请求侧与响应侧同时开放：先把 ``request_items`` 全部写入并关闭发送侧，
+        随后逐条产出响应。调用方取消会传播到传输层（§54）。
+
+        参数:
+            service: 服务名称
+            method: 方法名称
+            request_items: 请求消息 JSON 列表。
+            timeout: 单次 RPC 的截止时间（秒）
+
+        产出:
+            JSON 响应数据块
+
+        抛出:
+            ValueError: 如果服务/方法不存在，或不是双向流式方法。
+            grpc.RpcError: 如果 RPC 失败。
+        """
+        logger.debug(f"Invoking bidi-streaming {service}.{method}")
+
+        method_info = self._require_method(service, method)
+        if not (method_info["client_streaming"] and method_info["server_streaming"]):
+            raise ValueError(f"Method {method} is not bidirectional-streaming")
+
+        request_class, response_class = self._resolve_message_classes(method_info)
+        channel = self._channel
+        method_path = f"/{service}/{method}"
+
+        stream_call = channel.stream_stream(method_path, request_serializer=request_class.SerializeToString, response_deserializer=response_class.FromString)(
+            timeout=timeout,
+            metadata=list(self._metadata.items()),
+        )
+
+        stream_completed = False
+        try:
+            self._last_call_metadata = {"headers": {}, "trailers": {}, "status": None}
+            for item in request_items:
+                await stream_call.write(json_format.ParseDict(item, request_class()))
+            await stream_call.done_writing()
+
+            self._last_call_metadata["headers"] = self._metadata_values(await stream_call.initial_metadata())
+            async for response_msg in stream_call:
+                yield json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+            stream_completed = True
+        except asyncio.CancelledError:
+            # §54: propagate the cancellation to the upstream stream.
+            stream_call.cancel()
+            raise
+        except grpc.RpcError as e:
+            logger.error(f"Bidi streaming RPC error: {e}")
+            raise
+        finally:
+            if not stream_completed:
+                stream_call.cancel()
+            try:
+                code = await stream_call.code()
+                self._last_call_metadata["trailers"] = self._metadata_values(await stream_call.trailing_metadata())
+                self._last_call_metadata["status"] = code.name if code is not None else None
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Unable to capture final gRPC streaming metadata", exc_info=True)
+            stream_call.cancel()
+
+    def _require_method(self, service: str, method: str) -> Dict[str, Any]:
+        """Return the reflected method info, or raise if it is unknown.
+
+        参数:
+            service: 服务名称
+            method: 方法名称
+
+        返回:
+            反射得到的该方法描述（含 ``input_type``/``output_type``/两个流式标志）。
+
+        抛出:
+            ValueError: 服务或方法未在反射结果中。
+        """
+        if service not in self._services:
+            raise ValueError(f"Service {service} not found")
+        for candidate in self._services[service]["methods"]:
+            if candidate["name"] == method:
+                return candidate
+        raise ValueError(f"Method {method} not found in service {service}")
+
+    def _resolve_message_classes(self, method_info: Dict[str, Any]) -> tuple[Any, Any]:
+        """Resolve the input/output MessageClass for a reflected method.
+
+        参数:
+            method_info: 反射得到的单个方法描述。
+
+        返回:
+            ``(request_class, response_class)`` 二元组。
+
+        抛出:
+            ValueError: 描述符池中缺少该消息类型。
+        """
+        input_type = method_info["input_type"].lstrip(".")
+        output_type = method_info["output_type"].lstrip(".")
+        try:
+            input_desc = self._pool.FindMessageTypeByName(input_type)
+            output_desc = self._pool.FindMessageTypeByName(output_type)
+        except KeyError as e:
+            raise ValueError(f"Message type not found in descriptor pool: {e}")
+
+        # 与 invoke() 相同，这里同样使用模块级辅助函数（protobuf>=5.x 移除了
+        # MessageFactory.GetPrototype）。
+        return self._message_class(input_type, input_desc), self._message_class(output_type, output_desc)
 
     async def close(self) -> None:
         """当该端点拥有 channel 时，关闭这个 gRPC channel。"""

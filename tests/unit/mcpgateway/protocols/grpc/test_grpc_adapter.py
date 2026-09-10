@@ -46,6 +46,8 @@ class _FakeEndpoint:
         self.stream_items = stream_items or [{"n": i} for i in range(5)]
         self.invoke_calls = []
         self.invoke_streaming_calls = []
+        self.invoke_client_stream_calls = []
+        self.invoke_bidi_stream_calls = []
 
     async def invoke(self, service, method, request, timeout=None):
         """Record and return the canned unary result."""
@@ -55,6 +57,17 @@ class _FakeEndpoint:
     async def invoke_streaming(self, service, method, request, timeout=None):
         """Record and stream the canned items."""
         self.invoke_streaming_calls.append((service, method, request, timeout))
+        for item in self.stream_items:
+            yield item
+
+    async def invoke_client_stream(self, service, method, items, timeout=None):
+        """Record the sent message list and return the canned unary result."""
+        self.invoke_client_stream_calls.append((service, method, items, timeout))
+        return self.unary_result
+
+    async def invoke_bidi_stream(self, service, method, items, timeout=None):
+        """Record the sent message list and stream the canned items."""
+        self.invoke_bidi_stream_calls.append((service, method, items, timeout))
         for item in self.stream_items:
             yield item
 
@@ -98,14 +111,57 @@ class TestGrpcProtocolAdapter:
 
         assert result.data == {"items": [{"n": 1}, {"n": 2}], "truncated": False}
 
-    async def test_client_streaming_raises_unsupported(self):
-        """Client-streaming/bidi modes raise UNSUPPORTED until grpc.aio lands."""
+    async def test_client_streaming_sends_items_and_returns_the_response(self):
+        """stream_unary sends {"items": [...]} and returns the single response."""
+        endpoint = _FakeEndpoint(unary_result={"total": 3})
+        adapter = GrpcProtocolAdapter(endpoint)
+
+        result = await adapter.invoke(_grpc_operation(client_streaming=True), {"items": [{"v": 1}, {"v": 2}]}, _context())
+
+        assert result.data == {"total": 3}
+        assert result.metadata["grpc_mode"] == "stream_unary"
+        service, method, items, _timeout = endpoint.invoke_client_stream_calls[0]
+        assert (service, method) == ("example.Catalog", "Get")
+        assert items == [{"v": 1}, {"v": 2}]
+
+    async def test_bidi_streams_items_through_the_limiter(self):
+        """stream_stream sends items and bounds the response stream."""
+        endpoint = _FakeEndpoint(stream_items=[{"n": 1}, {"n": 2}])
+        adapter = GrpcProtocolAdapter(endpoint, default_limiter=StreamLimiter(max_items=10))
+
+        result = await adapter.invoke(_grpc_operation(client_streaming=True, server_streaming=True), {"items": [{"v": 1}]}, _context())
+
+        assert result.data == {"items": [{"n": 1}, {"n": 2}], "truncated": False}
+        assert result.metadata["grpc_mode"] == "stream_stream"
+
+    async def test_bidi_truncation_is_reported(self):
+        """A bidi stream cut short by the limiter reports truncation."""
+        endpoint = _FakeEndpoint(stream_items=[{"n": i} for i in range(5)])
+        adapter = GrpcProtocolAdapter(endpoint, default_limiter=StreamLimiter(max_items=2))
+
+        result = await adapter.invoke(_grpc_operation(client_streaming=True, server_streaming=True), {"items": [{"v": 1}]}, _context())
+
+        assert result.data == {"items": [{"n": 0}, {"n": 1}], "truncated": True}
+
+    async def test_a_bare_list_is_accepted_as_items(self):
+        """A caller holding the sequence need not wrap it in {"items": ...}."""
+        endpoint = _FakeEndpoint()
+        adapter = GrpcProtocolAdapter(endpoint)
+
+        await adapter.invoke(_grpc_operation(client_streaming=True), [{"v": 1}], _context())
+
+        assert endpoint.invoke_client_stream_calls[0][2] == [{"v": 1}]
+
+    @pytest.mark.parametrize("arguments", [{}, {"items": []}, {"items": "nope"}])
+    async def test_streaming_without_items_is_rejected(self, arguments):
+        """A streaming call with no message list is an invalid argument."""
         adapter = GrpcProtocolAdapter(_FakeEndpoint())
 
         with pytest.raises(ProtocolError) as exc_info:
-            await adapter.invoke(_grpc_operation(client_streaming=True), {}, _context())
+            await adapter.invoke(_grpc_operation(client_streaming=True), arguments, _context())
 
-        assert exc_info.value.category == ErrorCategory.UNSUPPORTED
+        assert exc_info.value.category == ErrorCategory.INVALID_ARGUMENT
+        assert exc_info.value.code == "grpc-stream-items-required"
 
     async def test_missing_operation_fields_raise_invalid_argument(self):
         """An operation without service/method is rejected."""

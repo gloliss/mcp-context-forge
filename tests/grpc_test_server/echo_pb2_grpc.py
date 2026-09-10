@@ -5,7 +5,7 @@ import warnings
 
 import echo_pb2 as echo__pb2
 
-GRPC_GENERATED_VERSION = '1.81.1'
+GRPC_GENERATED_VERSION = '1.83.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -65,6 +65,21 @@ class EchoServiceStub:
                 request_serializer=echo__pb2.EchoV2Request.SerializeToString,
                 response_deserializer=echo__pb2.EchoV2Response.FromString,
                 _registered_method=True)
+        self.EchoSlowStream = channel.unary_stream(
+                '/grpc_test.EchoService/EchoSlowStream',
+                request_serializer=echo__pb2.EchoRequest.SerializeToString,
+                response_deserializer=echo__pb2.EchoResponse.FromString,
+                _registered_method=True)
+        self.EchoClientStream = channel.stream_unary(
+                '/grpc_test.EchoService/EchoClientStream',
+                request_serializer=echo__pb2.EchoRequest.SerializeToString,
+                response_deserializer=echo__pb2.EchoResponse.FromString,
+                _registered_method=True)
+        self.EchoBidiStream = channel.stream_stream(
+                '/grpc_test.EchoService/EchoBidiStream',
+                request_serializer=echo__pb2.EchoRequest.SerializeToString,
+                response_deserializer=echo__pb2.EchoResponse.FromString,
+                _registered_method=True)
         self.EchoLarge = channel.unary_unary(
                 '/grpc_test.EchoService/EchoLarge',
                 request_serializer=echo__pb2.LargePayload.SerializeToString,
@@ -118,6 +133,27 @@ class EchoServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EchoSlowStream(self, request, context):
+        """Slow server stream: 5 chunks at 1s intervals, for cancellation testing.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def EchoClientStream(self, request_iterator, context):
+        """Client-streaming echo: concatenates every request chunk into one response.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def EchoBidiStream(self, request_iterator, context):
+        """Bidirectional echo: echoes each request chunk back as it arrives.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def EchoLarge(self, request, context):
         """Large payload echo for big message testing.
         """
@@ -157,6 +193,21 @@ def add_EchoServiceServicer_to_server(servicer, server):
                     servicer.EchoV2,
                     request_deserializer=echo__pb2.EchoV2Request.FromString,
                     response_serializer=echo__pb2.EchoV2Response.SerializeToString,
+            ),
+            'EchoSlowStream': grpc.unary_stream_rpc_method_handler(
+                    servicer.EchoSlowStream,
+                    request_deserializer=echo__pb2.EchoRequest.FromString,
+                    response_serializer=echo__pb2.EchoResponse.SerializeToString,
+            ),
+            'EchoClientStream': grpc.stream_unary_rpc_method_handler(
+                    servicer.EchoClientStream,
+                    request_deserializer=echo__pb2.EchoRequest.FromString,
+                    response_serializer=echo__pb2.EchoResponse.SerializeToString,
+            ),
+            'EchoBidiStream': grpc.stream_stream_rpc_method_handler(
+                    servicer.EchoBidiStream,
+                    request_deserializer=echo__pb2.EchoRequest.FromString,
+                    response_serializer=echo__pb2.EchoResponse.SerializeToString,
             ),
             'EchoLarge': grpc.unary_unary_rpc_method_handler(
                     servicer.EchoLarge,
@@ -327,6 +378,87 @@ class EchoService:
             '/grpc_test.EchoService/EchoV2',
             echo__pb2.EchoV2Request.SerializeToString,
             echo__pb2.EchoV2Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EchoSlowStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/grpc_test.EchoService/EchoSlowStream',
+            echo__pb2.EchoRequest.SerializeToString,
+            echo__pb2.EchoResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EchoClientStream(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/grpc_test.EchoService/EchoClientStream',
+            echo__pb2.EchoRequest.SerializeToString,
+            echo__pb2.EchoResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EchoBidiStream(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_stream(
+            request_iterator,
+            target,
+            '/grpc_test.EchoService/EchoBidiStream',
+            echo__pb2.EchoRequest.SerializeToString,
+            echo__pb2.EchoResponse.FromString,
             options,
             channel_credentials,
             insecure,

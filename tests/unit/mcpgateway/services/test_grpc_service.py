@@ -775,8 +775,8 @@ class TestGrpcService:
         assert stale_tool.reachable is False
         assert stale_tool.grpc_schema_artifact_id == "artifact-previous"
 
-    def test_sync_tools_client_streaming_change_binds_active_artifact(self, service, mock_db, sample_db_service):
-        """A method that becomes client-streaming records the artifact that changed it."""
+    def test_sync_tools_publishes_client_streaming_methods(self, service, mock_db, sample_db_service):
+        """Client-streaming methods are published as executable tools (design §48)."""
         sample_db_service.active_artifact_id = "artifact-current"
         sample_db_service.discovered_services = {
             "test.TestService": {
@@ -803,8 +803,8 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        assert existing_tool.enabled is False
-        assert existing_tool.deprecated is True
+        assert existing_tool.enabled is True
+        assert existing_tool.deprecated is False
         assert existing_tool.grpc_schema_artifact_id == "artifact-current"
         assert existing_tool.version == 2
 
@@ -982,10 +982,10 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        # Client-streaming methods remain catalog-only and are not executable MCP tools.
-        assert mock_db.add.call_count == 2
+        # Client-streaming methods are published like any other mode (design §48).
+        assert mock_db.add.call_count == 3
         tool_names = {call[0][0].original_name for call in mock_db.add.call_args_list}
-        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1"}
+        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1", "pkg.ServiceB.MethodB2"}
 
     def test_sync_tools_skips_underscore_keys(self, service, mock_db, sample_db_service):
         """Test that _sync_tools_from_reflection skips _-prefixed keys like _file_descriptors."""

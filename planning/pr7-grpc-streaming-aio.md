@@ -25,11 +25,11 @@
 | T7.2 | unary_unary / unary_stream 适配（§48 前两类） | T7.1 | ✅ `5ab7bec` |
 | T7.3 | StreamLimiter（§52） | — | ✅ `5ab7bec` |
 | T7.4 | grpc.aio.Channel 迁移（§53，保留 RuntimeCache） | — | ✅ 见下「T7.4 细化」 |
-| T7.5 | client-stream / bidi 两类 RPC（§48 后两类） | T7.4 | ⏳ 随 T7.4 专项 |
-| T7.6 | Cancellation 传播（§54） | T7.4 | ⏳ 随 T7.4 专项 |
+| T7.5 | client-stream / bidi 两类 RPC（§48 后两类） | T7.4 | ✅ 见下「T7.5/T7.6/T7.9 实施结果」 |
+| T7.6 | Cancellation 传播（§54） | T7.4 | ✅ 见下「T7.5/T7.6/T7.9 实施结果」 |
 | T7.7 | gRPC Status Detail → Error Model（§55） | — | ✅ `a1ecf97` |
-| T7.8 | ToolService gRPC branch 迁入 ProtocolAdapterRegistry（§47） | T7.1/T7.5 | ⏳ |
-| T7.9 | full chain 四类 RPC 测试（§64：扩展 grpc_test_server 加 ClientStream/BidiStream） | T7.5 + E2E 环境 | ⏳ |
+| T7.8 | ToolService gRPC branch 迁入 ProtocolAdapterRegistry（§47） | T7.1/T7.5 | ⏳ 部分（invoke_method 已支持四类；完整迁入 Registry 待办） |
+| T7.9 | full chain 四类 RPC 测试（§64：扩展 grpc_test_server 加 ClientStream/BidiStream） | T7.5 + E2E 环境 | ✅ 见下 |
 
 ## 验收标准（§64/§82 DoD）
 
@@ -122,3 +122,21 @@
 - **集成（真实 gRPC server）**：`tests/integration/test_grpc_full_chain.py --with-integration` **35 passed** —— 覆盖反射全链、一元/服务端流、deadline、metadata 鉴权、无反射 proto 导入、schema v1→v2、并发（同方法/跨方法/跨服务/流式混合/channel 池压力）、大消息（1MB/4MB/批量/并发）。
 - **集成测试捕获到 2 个 mock 无法发现的真实缺陷**：① `unary.code()` 误用在可调用体而非 call 对象上；② grpc.aio 的 `Call.code()` 是**协程**（与同步 API 不同）。均已修复。
 
+
+## T7.5/T7.6/T7.9 实施结果
+
+**T7.5 四类 RPC（§48–§50）**
+- `GrpcEndpoint` 新增 `invoke_client_stream(service, method, items, timeout)`（stream→unary：写完全部消息→`done_writing()`→等单个响应）与 `invoke_bidi_stream(service, method, items, timeout)`（stream→stream）。
+- 抽出 `_require_method()` / `_resolve_message_classes()` 复用反射校验与消息类解析。
+- 适配器：新增 `_request_items()` 实现 **MCP Stream 输入模型**（§49/§50）——`{"items": [...]}`（裸 list 亦接受），空/缺失报 `grpc-stream-items-required`（INVALID_ARGUMENT）；`stream_unary` 返回单个响应，`stream_stream` 用同一 `StreamLimiter` 收敛为 `{"items":…, "truncated":…}`（§52）。
+- `grpc_service.invoke_method`：client-streaming / bidi 不再直接拒绝，改走上述两条路径（§50：普通 tools/call 仍是 bounded request → bounded result）。
+- `_sync_tools_from_reflection`：移除「client-streaming 方法强制禁用/废弃」的特例——能力已具备，这些方法现在与其它模式一样发布为可用工具。
+
+**T7.6 Cancellation（§54）**
+- 一元、服务端流、客户端流、bidi 四条路径均显式捕获 `asyncio.CancelledError` → `call.cancel()` → 重新抛出，确保取消真正抵达上游 RPC 而非仅仅放弃协程。
+
+**T7.9 集成测试（§64）**
+- `tests/grpc_test_server` 扩展：`echo.proto` 新增 `EchoClientStream` / `EchoBidiStream` / `EchoSlowStream`（每秒一块，供取消测试），重新生成 stub（protobuf 7.35.1，与 `pyproject.toml` 声明一致），并在 `server.py` 实现（含 `context.is_active()` 短路）。
+- `tests/integration/test_grpc_full_chain.py` 新增：`TestFourRpcModes`（四类各一例 + 缺 items 拒绝 + 流式方法已发布为可用工具）、`TestCancellationPropagation`（一元与流式各一例，断言取消后**远早于**上游 3s/5s 延迟返回）。
+
+**验证**：单元 300+ passed；集成 `--with-integration` **43 passed**（真实 gRPC server）。

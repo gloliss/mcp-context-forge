@@ -13,11 +13,17 @@ invoked by the protocol registry and owns the bounded-stream behaviour:
 * **unary → unary** delegates to ``endpoint.invoke``;
 * **unary → server stream** iterates ``endpoint.invoke_streaming`` through
   a :class:`StreamLimiter` (design §52), returning ``{"items": ...,
-  "truncated": bool}``.
+  "truncated": bool}``;
+* **client stream → unary** sends ``{"items": [...]}`` through
+  ``endpoint.invoke_client_stream`` and returns the single response;
+* **bidi** sends the same items through ``endpoint.invoke_bidi_stream``
+  and bounds the response with the same limiter.
 
-Client-streaming and bidirectional calls (design §48) require gRPC-aio
-channel support in the endpoint layer, which lands with the grpc.aio
-migration (design §53) — until then those modes raise ``UNSUPPORTED``.
+Client-streaming and bidirectional calls (design §48) run on the aio channel
+that landed with the grpc.aio migration (design §53).  Their request side
+uses the MCP Stream input model ``{"items": [...]}`` (design §49/§50); the
+bidi response side is bounded by the same :class:`StreamLimiter` as the
+server-streaming path (design §52).
 """
 
 # Standard
@@ -86,13 +92,63 @@ class GrpcProtocolAdapter:
         if server_streaming and not client_streaming:
             return await self._invoke_server_stream(service_name, method, arguments, timeout, operation)
 
-        raise ProtocolError(
-            category=ErrorCategory.UNSUPPORTED,
-            code="grpc-streaming-unsupported",
-            message="Client-streaming and bidirectional gRPC require grpc.aio channel support (PR7 §53)",
-            origin="grpc",
-            retryable=False,
-        )
+        items = self._request_items(arguments)
+        if client_streaming and not server_streaming:
+            response = await self._endpoint.invoke_client_stream(service_name, method, items, timeout=timeout)
+            return ProtocolResult(data=response, metadata={"grpc_mode": "stream_unary"})
+
+        return await self._invoke_bidi_stream(service_name, method, items, timeout, operation)
+
+    @staticmethod
+    def _request_items(arguments: dict[str, Any]) -> list[Any]:
+        """Extract the client-side message list from MCP arguments (§49/§50).
+
+        The MCP Stream input model is ``{"items": [...]}``: a tool call that
+        feeds a client-streaming or bidi RPC supplies the message list under
+        ``items``.  A bare list is accepted too, so a caller that already has
+        the sequence does not have to wrap it.
+
+        Args:
+            arguments: The MCP tool arguments.
+
+        Returns:
+            The list of request messages to send upstream.
+
+        Raises:
+            ProtocolError: When the arguments carry no message list.
+        """
+        items = arguments.get("items") if isinstance(arguments, dict) else None
+        if items is None and isinstance(arguments, list):
+            items = arguments
+        if not isinstance(items, list) or not items:
+            raise ProtocolError(
+                category=ErrorCategory.INVALID_ARGUMENT,
+                code="grpc-stream-items-required",
+                message='Client-streaming and bidirectional calls require a non-empty {"items": [...]} argument',
+                origin="grpc",
+                retryable=False,
+            )
+        return list(items)
+
+    async def _invoke_bidi_stream(
+        self,
+        service_name: str,
+        method: str,
+        items: list[Any],
+        timeout: Optional[float],
+        operation: OperationDefinition,
+    ) -> ProtocolResult:
+        """Invoke a bidirectional operation with bounded collection (§48/§52)."""
+        stream = self._endpoint.invoke_bidi_stream(service_name, method, items, timeout=timeout)
+        limiter = self._limiter_for(operation)
+        collected: list[Any] = []
+        truncated = False
+        try:
+            async for item in limiter.bounded(stream):
+                collected.append(item)
+        except StreamLimitError:
+            truncated = True
+        return ProtocolResult(data={"items": collected, "truncated": truncated}, metadata={"grpc_mode": "stream_stream"})
 
     async def _invoke_server_stream(
         self,

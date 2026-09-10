@@ -21,6 +21,15 @@ service EchoService {
   // Schema v2: adds priority field for schema change diff testing.
   rpc EchoV2(EchoV2Request) returns (EchoV2Response);
 
+  // Slow server stream: 5 chunks at 1s intervals, for cancellation testing.
+  rpc EchoSlowStream(EchoRequest) returns (stream EchoResponse);
+
+  // Client-streaming echo: concatenates every request chunk into one response.
+  rpc EchoClientStream(stream EchoRequest) returns (EchoResponse);
+
+  // Bidirectional echo: echoes each request chunk back as it arrives.
+  rpc EchoBidiStream(stream EchoRequest) returns (stream EchoResponse);
+
   // Large payload echo for big message testing.
   rpc EchoLarge(LargePayload) returns (LargePayload);
 }

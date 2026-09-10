@@ -174,7 +174,7 @@ class TestPlaintextReflectionFullChain:
         host, port = grpc_server
         registered = _register(test_db, host, port)
         assert registered.name is not None
-        assert registered.method_count == 7  # Echo, EchoStream, EchoWithMetadata, EchoSlow, EchoV1, EchoV2
+        assert registered.method_count == 10  # unary, server-stream, slow, slow-stream, auth, v1, v2, client-stream, bidi, large
 
         tools = _tools_for(test_db, registered.id)
         names = {t.original_name for t in tools}
@@ -199,6 +199,85 @@ class TestPlaintextReflectionFullChain:
         assert len(items) == 5
         assert items[0]["message"] == "chunk 1: stream"
         assert items[-1]["message"] == "chunk 5: stream"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: the four RPC classes (design §48/§64)
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestFourRpcModes:
+    """All four RPC classes run against a real server (design §48)."""
+
+    def test_unary_unary(self, test_db, grpc_server):
+        """unary → unary returns the single response."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+
+        result = _invoke(test_db, registered.id, "grpc_test.EchoService.Echo", {"message": "u", "value": 1})
+
+        assert result["message"] == "echo: u"
+
+    def test_unary_stream(self, test_db, grpc_server):
+        """unary → server stream collects the item list."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+
+        result = _invoke(test_db, registered.id, "grpc_test.EchoService.EchoStream", {"message": "s", "value": 1})
+
+        assert len(result["items"]) == 5
+        assert result["truncated"] is False
+
+    def test_stream_unary(self, test_db, grpc_server):
+        """client stream → unary sends {"items": [...]} and returns one response."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+
+        result = _invoke(
+            test_db,
+            registered.id,
+            "grpc_test.EchoService.EchoClientStream",
+            {"items": [{"message": "a", "value": 1}, {"message": "b", "value": 2}]},
+        )
+
+        assert result["message"] == "a+b"
+        assert result["value"] == 3
+
+    def test_stream_stream(self, test_db, grpc_server):
+        """bidi echoes every chunk back and reports no truncation."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+
+        result = _invoke(
+            test_db,
+            registered.id,
+            "grpc_test.EchoService.EchoBidiStream",
+            {"items": [{"message": "x", "value": 1}, {"message": "y", "value": 2}]},
+        )
+
+        assert [item["message"] for item in result["items"]] == ["x", "y"]
+        assert result["truncated"] is False
+
+    def test_stream_unary_rejects_missing_items(self, test_db, grpc_server):
+        """A streaming call without a message list is an error, not a silent no-op."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+
+        with pytest.raises(Exception) as exc_info:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.EchoClientStream", {"message": "no items"})
+
+        assert "items" in str(exc_info.value)
+
+    def test_streaming_methods_are_published_as_tools(self, test_db, grpc_server):
+        """Client-streaming and bidi methods appear as enabled MCP tools."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+
+        tools = {tool.original_name: tool for tool in _tools_for(test_db, registered.id)}
+
+        for name in ("grpc_test.EchoService.EchoClientStream", "grpc_test.EchoService.EchoBidiStream"):
+            assert name in tools
+            assert tools[name].enabled is True
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -404,7 +483,7 @@ class TestTls:
         tools = _tools_for(test_db, registered.id)
         names = {t.original_name for t in tools}
         assert "grpc_test.EchoService.Echo" in names, f"Got tools: {names}"
-        assert len(names) == 7  # all RPCs incl EchoLarge
+        assert len(names) == 10  # all RPCs incl the streaming ones
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -876,3 +955,60 @@ class TestLargeMessages:
         assert len(results) == 3
         for r in results:
             assert r["size"] > 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Cancellation propagation (design §54)
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCancellationPropagation:
+    """A caller's cancellation reaches the upstream RPC (§54).
+
+    With the grpc.aio channel the RPC is native: cancelling the awaiting task
+    cancels the upstream call instead of leaving a worker thread running to
+    completion. The behavioural proof is that an in-flight call against the
+    server's 3-second ``EchoSlow`` returns far sooner than the delay it was
+    told to wait out.
+    """
+
+    def test_cancelled_call_returns_immediately(self, test_db, grpc_server):
+        """Cancelling an in-flight unary call does not wait out the upstream delay."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+
+        async def _cancel_mid_flight():
+            """Start a slow call, cancel it, and report how long that took."""
+            svc = GrpcService()
+            started = time.monotonic()
+            task = asyncio.ensure_future(svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.EchoSlow", {"message": "slow", "value": 1}, timeout=30))
+            await asyncio.sleep(0.5)  # let the RPC reach the server
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            return time.monotonic() - started
+
+        elapsed = _run(_cancel_mid_flight())
+
+        # EchoSlow sleeps 3s; a cancelled call must return well before that.
+        assert elapsed < 2.5, f"cancellation took {elapsed:.2f}s, so it did not reach the RPC"
+
+    def test_cancelled_stream_returns_immediately(self, test_db, grpc_server):
+        """Cancelling an in-flight server-stream call returns promptly."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+
+        async def _cancel_stream():
+            """Start a streamed call, cancel it, and report how long that took."""
+            svc = GrpcService()
+            started = time.monotonic()
+            task = asyncio.ensure_future(svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.EchoSlowStream", {"message": "s", "value": 1}, timeout=30))
+            await asyncio.sleep(0.2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            return time.monotonic() - started
+
+        elapsed = _run(_cancel_stream())
+
+        assert elapsed < 2.5, f"cancellation took {elapsed:.2f}s"
