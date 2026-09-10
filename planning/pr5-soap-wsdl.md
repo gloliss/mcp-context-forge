@@ -21,7 +21,7 @@
 |---|---|---|---|
 | T5.1 | WsdlContractProvider（§31） | — | ✅ `da5883f` |
 | T5.2 | SoapCodec（§33） | T4.x | ✅ `da5883f` |
-| T5.3 | SOAP runtime 完整接线：HttpAdapter 集成 SoapCodec + soap headers + Fault 映射 | T5.2 | ⏳（映射已完，adapter 接线待） |
+| T5.3 | SOAP runtime 完整接线：HttpAdapter 集成 SoapCodec + soap headers + Fault 映射 | T5.2 | ⏳ 见下「T5.3 细化」 |
 | T5.4 | SOAP Fault → Error Model（§34） | T5.2 | ✅ `da5883f` |
 | T5.5 | 依赖 `zeep` → soap extra（§35） | — | ✅ `da5883f` |
 | T5.6 | SOAP full chain 测试（§63：本地 WSDL server → 生成工具 → SOAP 调用） | T5.1–5.5 + E2E 环境 | ⏳ |
@@ -51,3 +51,45 @@
 8. Tests executed：protocols 套件
 9. Known limitations：HttpAdapter 完整接线（T5.3）与 SOAP full-chain（T5.6）待续
 10. Next PR dependency：PR8
+
+## T5.3 细化（§32–§34 SOAP runtime 接线）
+
+**目标**：让 `Tool → HttpProtocolAdapter → SoapCodec → HTTPX` 这条链真正跑通（§32：zeep 只解析 WSDL，不参与调用）。
+
+**现状调研（2026-09-10）**——WSDL provider 已产出正确的 `protocol_config`，但运行时 4 处断链：
+
+| # | 断链 | 后果 |
+|---|---|---|
+| G1 | `RequestBuilder._encode_body` 只按 `mediaType` 解析 codec，忽略 `body.codec` | SOAP 1.1 的 `mediaType=text/xml` 被 XmlCodec 编码 → **没有 Envelope** |
+| G2 | `_encode_body` 用裸 `CodecContext(preferred_content_type=…)`，丢掉 `protocol_config` | `SoapCodec.encode` 看不到 `request.soap` → 无 operation/namespace、version 恒为 1.1 |
+| G3 | `EncodedBody.content_type` 未被 `_body_kwargs` 使用 | 请求缺 `Content-Type`（§33 要求 1.1 `text/xml` / 1.2 `application/soap+xml`） |
+| G4 | `soap_request_headers` / `map_soap_fault` 已实现但无调用点 | 无 `SOAPAction`；Fault 被当成功数据返回（protocol_config 路径对非 2xx 不报错） |
+
+**实施项**
+
+1. `protocols/codecs/registry.py`：新增 `resolve_name(name) -> Optional[MessageCodec]`，把 `response_decoder._CODEC_NAME_MEDIA_TYPES` 提升为注册表的**单一策略点**（`name → canonical media type`），`response_decoder` 改为委托（行为不变）。
+2. `protocols/http/request_builder.py`：`build(arguments, request_config, protocol_config=None)`（**可选第三参，向后兼容**）；
+   - `_encode_body` 先按 `body.codec` 名解析（`resolve_name`），未命中再按 `mediaType`；
+   - `CodecContext` 带上 `protocol_config`，使 SOAP 绑定生效。
+3. `protocols/http/soap.py`：新增
+   - `is_soap_config(protocol_config) -> bool`（`request.body.codec` 或 `response.codec` == `soap`）；
+   - `soap_content_type(protocol_config, codec_content_type=None) -> Optional[str]`：1.2 追加 `; charset=utf-8; action="…"` 参数。
+   - `soap_request_headers` 契约不变（1.2 仍返回 `{}`，action 走 Content-Type）。
+4. `protocols/http/adapter.py`（`_invoke_protocol_config`）：
+   - 构造 `RequestBuilder(...).build(arguments, request_config, config)`；
+   - 请求头合并 `soap_request_headers(config)`，并用 `soap_content_type(...)` 覆盖 `Content-Type`（在调用方 headers 之后、`built.headers` 之前，冲突时以 SOAP 绑定为准）；
+   - 响应解码包 `try/except SoapFaultError` → `map_soap_fault`（§34）；
+   - SOAP 配置下非 2xx 且无 Fault → `ProtocolError(REST_HTTP_STATUS_ERROR, protocol_status=…)`，交由 ToolService 渲染为 is_error 结果（与 legacy 路径一致）。
+
+**范围边界**：本任务只做 runtime 接线；WSDL operation → `OperationToolCompiler`（当前 compiler 要求 `HttpRequestContract`，WSDL 的 request 是 dict）与 `test_soap_full_chain`（§63）仍待 **T5.6**。
+
+**验收**
+- SOAP 1.1 请求体是带 `soap:Envelope` 的 XML，头含 `SOAPAction`、`Content-Type: text/xml`
+- SOAP 1.2 请求头无 `SOAPAction`，`Content-Type: application/soap+xml; charset=utf-8; action="…"`
+- `soap:Client` Fault → `INVALID_ARGUMENT`；`soap:Server` Fault → `UPSTREAM_ERROR`；均保留 code/string/detail
+- 非 SOAP 请求回归不变（既有 `test_request_builder.py` / `test_response_decoder.py` 全绿）
+
+**测试文件**
+- `tests/unit/mcpgateway/protocols/http/test_soap_runtime.py`（扩展：envelope 编码、headers、content-type、fault 端到端映射）
+- `tests/unit/mcpgateway/protocols/http/test_request_builder.py`（新增 `body.codec` 名解析 / SOAP 上下文用例）
+
