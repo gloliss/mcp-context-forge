@@ -22,13 +22,13 @@ Phase 4  Production    [PR8 Production Hardening]
 
 ## PR 规划文档索引
 
-| PR | 规划文档 | 状态 |
-|---|---|---|
-| PR4 | [pr4-xml-xsd.md](pr4-xml-xsd.md) | 主体完成，T4.4 待办 |
-| PR5 | [pr5-soap-wsdl.md](pr5-soap-wsdl.md) | 主体完成，T5.3/T5.6 待办 |
-| PR6 | [pr6-grpc-correctness.md](pr6-grpc-correctness.md) | 主体完成，T6.5 已完，全量完成 |
-| PR7 | [pr7-grpc-streaming-aio.md](pr7-grpc-streaming-aio.md) | 部分完成（T7.1/7.2/7.3/7.7） |
-| PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | 部分完成（T8.1/8.5a/8.6/8.7） |
+| PR | 规划文档 | 测试规划 | 状态 |
+|---|---|---|---|
+| PR4 | [pr4-xml-xsd.md](pr4-xml-xsd.md) | [pr4-xml-xsd-test.md](pr4-xml-xsd-test.md) | 主体完成，T4.4 待办 |
+| PR5 | [pr5-soap-wsdl.md](pr5-soap-wsdl.md) | [pr5-soap-wsdl-test.md](pr5-soap-wsdl-test.md) | 主体完成，T5.3/T5.6 待办 |
+| PR6 | [pr6-grpc-correctness.md](pr6-grpc-correctness.md) | [pr6-grpc-correctness-test.md](pr6-grpc-correctness-test.md) | 全量完成 |
+| PR7 | [pr7-grpc-streaming-aio.md](pr7-grpc-streaming-aio.md) | [pr7-grpc-streaming-aio-test.md](pr7-grpc-streaming-aio-test.md) | 部分完成（T7.1/7.2/7.3/7.7） |
+| PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | [pr8-production-hardening-test.md](pr8-production-hardening-test.md) | 部分完成（T8.1/8.5a/8.6/8.7） |
 
 ## 总任务状态（截至 2026-09-10）
 
