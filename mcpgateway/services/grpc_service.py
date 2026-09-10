@@ -98,6 +98,28 @@ def _decrypt_metadata(metadata: Dict[str, str]) -> Dict[str, str]:
     return decrypted
 
 
+def _resolve_grpc_metadata(service: Any, metadata_override: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Resolve the unified outbound gRPC metadata (design §41).
+
+    Reflection requests, health checks, and business RPCs all use the same
+    per-service metadata source (the encrypted ``grpc_metadata`` column,
+    fed from ``metadata_env`` in YAML manifests), plus an optional
+    invocation-time override.  There is deliberately no separate
+    ``reflection_metadata`` field (§41).
+
+    Args:
+        service: The ``DbGrpcService`` (or duck-typed snapshot).
+        metadata_override: Optional per-invocation metadata to merge on top.
+
+    Returns:
+        The decrypted, merged metadata mapping.
+    """
+    metadata = _decrypt_metadata(getattr(service, "grpc_metadata", None) or {})
+    if metadata_override:
+        metadata = {**metadata, **metadata_override}
+    return metadata
+
+
 def _masked_call_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     """Mask sensitive response metadata before returning debugger diagnostics."""
     result: Dict[str, Any] = {"status": metadata.get("status")}
@@ -171,7 +193,7 @@ def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
         raise GrpcServiceError(f"Reflected descriptor total size {total} bytes exceeds aggregate limit {_GRPC_MAX_TOTAL_DESCRIPTOR_BYTES}")
 
 
-def _collect_reflection_descriptors(channel: Any, timeout_seconds: float) -> set[bytes]:
+def _collect_reflection_descriptors(channel: Any, timeout_seconds: float, metadata: Optional[Dict[str, str]] = None) -> set[bytes]:
     """Collect reflection descriptors on a worker thread under one deadline."""
     deadline = time.monotonic() + timeout_seconds
 
@@ -181,9 +203,13 @@ def _collect_reflection_descriptors(channel: Any, timeout_seconds: float) -> set
             raise TimeoutError("gRPC reflection deadline exceeded")
         return value
 
+    # Unified metadata (design §41): reflection requests carry the same
+    # per-service metadata as business RPCs.
+    metadata_tuple = tuple((str(k), str(v)) for k, v in (metadata or {}).items()) or None
+
     stub = reflection_pb2_grpc.ServerReflectionStub(channel)
     request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
-    response = stub.ServerReflectionInfo(iter([request]), timeout=remaining())
+    response = stub.ServerReflectionInfo(iter([request]), timeout=remaining(), metadata=metadata_tuple)
 
     service_names: List[str] = []
     for item in response:
@@ -197,7 +223,7 @@ def _collect_reflection_descriptors(channel: Any, timeout_seconds: float) -> set
     for service_name in service_names:
         file_request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
         try:
-            file_response = stub.ServerReflectionInfo(iter([file_request]), timeout=remaining())
+            file_response = stub.ServerReflectionInfo(iter([file_request]), timeout=remaining(), metadata=metadata_tuple)
             for item in file_response:
                 remaining()
                 if item.HasField("file_descriptor_response"):
@@ -212,10 +238,10 @@ def _collect_reflection_descriptors(channel: Any, timeout_seconds: float) -> set
     return descriptor_bytes
 
 
-async def _collect_reflection_descriptors_async(channel: Any, timeout_seconds: float) -> set[bytes]:
+async def _collect_reflection_descriptors_async(channel: Any, timeout_seconds: float, metadata: Optional[Dict[str, str]] = None) -> set[bytes]:
     """Run blocking reflection without occupying the application event loop."""
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="grpc-reflection")
-    future = executor.submit(_collect_reflection_descriptors, channel, timeout_seconds)
+    future = executor.submit(_collect_reflection_descriptors, channel, timeout_seconds, metadata)
     deadline = time.monotonic() + timeout_seconds
     try:
         # Poll the concurrent future instead of relying on a loop cross-thread
@@ -968,7 +994,10 @@ class GrpcService:
             # loop, with one absolute budget shared by listing and every detail
             # request so N services cannot multiply the configured timeout.
             reflection_timeout = float(settings.mcpgateway_grpc_timeout)
-            file_descriptor_bytes_set = await _collect_reflection_descriptors_async(channel, reflection_timeout)
+            # Unified metadata (§41): reflection requests carry the same
+            # per-service metadata as business RPCs (from grpc_metadata /
+            # metadata_env), so auth-gated reflection works out of the box.
+            file_descriptor_bytes_set = await _collect_reflection_descriptors_async(channel, reflection_timeout, metadata=_resolve_grpc_metadata(service))
 
             _enforce_descriptor_limits(file_descriptor_bytes_set)
 
@@ -1363,7 +1392,7 @@ class GrpcService:
                 # classes. Reflection-only services deliberately keep a fresh pool
                 # per call so a live schema change cannot collide with descriptors
                 # already loaded by a prior invocation on the same channel.
-                metadata_decrypted = _decrypt_metadata(service.grpc_metadata or {})
+                metadata_decrypted = _resolve_grpc_metadata(service)
                 cache_key = runtime_cache.key_for(
                     service.id,
                     getattr(service, "active_schema_hash", None) or getattr(service, "reflected_schema_hash", None),
@@ -1399,7 +1428,7 @@ class GrpcService:
                     tls_enabled=service.tls_enabled,
                     tls_cert_path=service.tls_cert_path,
                     tls_key_path=service.tls_key_path,
-                    metadata={**_decrypt_metadata(service.grpc_metadata or {}), **(metadata_override or {})},
+                    metadata=_resolve_grpc_metadata(service, metadata_override),
                 )
 
             # Both the asyncio wrapper AND the underlying gRPC call get the deadline so a slow
