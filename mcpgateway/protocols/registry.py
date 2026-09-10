@@ -5,7 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 Protocol adapter registry (PR1).
 
-PR1 registers the single HTTP adapter; gRPC joins in PR6/PR7.
+PR1 registers the HTTP adapter.  PR7 adds gRPC: a gRPC adapter is
+constructed per invocation (it needs a live endpoint, whose lifecycle
+``GrpcService`` owns), so the registry maps ``"grpc"`` to a *factory* rather
+than a shared instance — see :meth:`ProtocolRegistry.register_factory`.
 """
 
 # Standard
@@ -13,6 +16,7 @@ from typing import Any
 
 # First-Party
 from mcpgateway.protocols.base import ProtocolAdapter
+from mcpgateway.protocols.grpc.adapter import GrpcProtocolAdapter
 from mcpgateway.protocols.http.adapter import HttpProtocolAdapter
 from mcpgateway.protocols.models import ErrorCategory, InvocationContext, ProtocolError, ProtocolResult
 
@@ -23,6 +27,7 @@ class ProtocolRegistry:
     def __init__(self) -> None:
         """Initialise an empty adapter registry."""
         self._adapters: dict[str, ProtocolAdapter] = {}
+        self._factories: dict[str, Any] = {}
 
     def register(self, protocol: str, adapter: ProtocolAdapter) -> None:
         """Register (or replace) the adapter for a protocol.
@@ -32,6 +37,47 @@ class ProtocolRegistry:
             adapter: The adapter instance handling that protocol.
         """
         self._adapters[protocol] = adapter
+
+    def register_factory(self, protocol: str, factory: Any) -> None:
+        """Register an adapter factory for a protocol needing per-call state.
+
+        Most adapters are stateless and shareable, but a gRPC adapter wraps one
+        live endpoint, and endpoints are built, cached and closed by
+        ``GrpcService`` (design §47).  Such a protocol registers a factory and
+        is resolved with :meth:`get_factory` instead of :meth:`get`.
+
+        Args:
+            protocol: Protocol name (e.g. ``"grpc"``).
+            factory: A callable returning a ``ProtocolAdapter``.
+        """
+        self._factories[protocol] = factory
+
+    def get_factory(self, protocol: str) -> Any:
+        """Return the adapter factory registered for a protocol.
+
+        Args:
+            protocol: Protocol name.
+
+        Returns:
+            The registered factory.
+
+        Raises:
+            ProtocolError: UNSUPPORTED when no factory is registered.
+        """
+        try:
+            return self._factories[protocol]
+        except KeyError:
+            raise ProtocolError(
+                category=ErrorCategory.UNSUPPORTED,
+                code="UNSUPPORTED_PROTOCOL",
+                message=f"Protocol '{protocol}' has no adapter factory registered",
+                origin="registry",
+                retryable=False,
+            ) from None
+
+    def protocols(self) -> tuple[str, ...]:
+        """Return the registered protocol names, adapters and factories alike."""
+        return tuple(sorted({*self._adapters, *self._factories}))
 
     def get(self, protocol: str) -> ProtocolAdapter:
         """Return the adapter registered for a protocol.
@@ -83,13 +129,15 @@ class ProtocolRegistry:
 
 
 def build_default_protocol_registry() -> ProtocolRegistry:
-    """Build the default registry with the PR1 adapters registered.
+    """Build the default registry with the HTTP and gRPC adapters registered.
 
     Returns:
-        A new registry with ``"http"`` bound to ``HttpProtocolAdapter``.
+        A new registry with ``"http"`` bound to ``HttpProtocolAdapter`` and
+        ``"grpc"`` bound to a ``GrpcProtocolAdapter`` factory.
     """
     registry = ProtocolRegistry()
     registry.register("http", HttpProtocolAdapter())
+    registry.register_factory("grpc", GrpcProtocolAdapter)
     return registry
 
 

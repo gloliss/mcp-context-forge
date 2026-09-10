@@ -14,7 +14,40 @@ that stops once any limit is reached, flagging truncation.
 # Standard
 import asyncio
 from dataclasses import dataclass
+import json
 from typing import Any, AsyncIterator, Callable, Optional
+
+
+def serialize_item(item: Any) -> str:
+    """Serialise one stream item for byte accounting (design §44).
+
+    Structures serialise as JSON rather than via ``str()`` so the accounting
+    matches the JSON payload shape the gateway emits.
+
+    Args:
+        item: One stream item.
+
+    Returns:
+        The serialised form of the item.
+    """
+    if isinstance(item, (dict, list)):
+        return json.dumps(item, ensure_ascii=False, default=str)
+    return str(item)
+
+
+def item_size(item: Any) -> int:
+    """Return the accounting size of one stream item (design §44).
+
+    This is the ``StreamLimiter.serialize`` callable: the limiter accumulates
+    these to enforce ``max_bytes``.
+
+    Args:
+        item: One stream item.
+
+    Returns:
+        The number of characters in the item's serialised form.
+    """
+    return len(serialize_item(item))
 
 
 @dataclass(frozen=True)

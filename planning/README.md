@@ -27,14 +27,13 @@ Phase 4  Production    [PR8 Production Hardening]
 | PR4 | [pr4-xml-xsd.md](pr4-xml-xsd.md) | [pr4-xml-xsd-test.md](pr4-xml-xsd-test.md) | 全量完成 |
 | PR5 | [pr5-soap-wsdl.md](pr5-soap-wsdl.md) | [pr5-soap-wsdl-test.md](pr5-soap-wsdl-test.md) | 全量完成 |
 | PR6 | [pr6-grpc-correctness.md](pr6-grpc-correctness.md) | [pr6-grpc-correctness-test.md](pr6-grpc-correctness-test.md) | 全量完成 |
-| PR7 | [pr7-grpc-streaming-aio.md](pr7-grpc-streaming-aio.md) | [pr7-grpc-streaming-aio-test.md](pr7-grpc-streaming-aio-test.md) | T7.1–7.7/7.9 完成；T7.8 部分（invoke_method 已支持四类 RPC） |
+| PR7 | [pr7-grpc-streaming-aio.md](pr7-grpc-streaming-aio.md) | [pr7-grpc-streaming-aio-test.md](pr7-grpc-streaming-aio-test.md) | 全量完成 |
 | PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | [pr8-production-hardening-test.md](pr8-production-hardening-test.md) | T8.1–8.4/8.6/8.7 完成；T8.5a/b 已由 PR3 覆盖 |
 
 ## 总任务状态（截至 2026-09-10）
 
-- **已完成**：T4.1–4.7、T5.1–5.6、T6.1–6.9、T7.1–7.7/7.9、T8.1–8.4/8.6/8.7
+- **已完成**：T4.1–4.7、T5.1–5.6、T6.1–6.9、T7.1–7.9、T8.1–8.4/8.6/8.7
 - **PR3 已实现（不重复做）**：T8.5a/T8.5b（§66 SafeReferenceFetcher/ContractArtifactResolver 在 `services/safe_reference_fetcher.py`）
-- **待办**：T7.8（ToolService gRPC branch 完整迁入 ProtocolAdapterRegistry；当前 `invoke_method` 已支持四类 RPC 但分支仍内联）
 - **明确未做**：YAML manifest 显式声明 manual XML 操作（T4.4 只交付了「XSD 绑定 → 运行时生效」这一段，见 pr4 文档范围边界）
 
 ## 本地验证基线（2026-09-10）

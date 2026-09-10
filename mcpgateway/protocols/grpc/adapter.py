@@ -27,11 +27,11 @@ server-streaming path (design §52).
 """
 
 # Standard
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 # First-Party
 from mcpgateway.protocols.contracts.models import OperationDefinition
-from mcpgateway.protocols.grpc.stream import StreamLimitError, StreamLimiter
+from mcpgateway.protocols.grpc.stream import StreamLimitError, StreamLimiter, item_size
 from mcpgateway.protocols.models import ErrorCategory, InvocationContext, ProtocolError, ProtocolResult
 
 
@@ -49,7 +49,7 @@ class GrpcProtocolAdapter:
                 not configure one.
         """
         self._endpoint = endpoint
-        self._default_limiter = default_limiter or StreamLimiter(max_items=100)
+        self._default_limiter = default_limiter or StreamLimiter(max_items=100, serialize=item_size)
 
     async def invoke(self, operation: OperationDefinition, arguments: dict[str, Any], context: InvocationContext) -> ProtocolResult:
         """Invoke a gRPC operation.
@@ -69,6 +69,44 @@ class GrpcProtocolAdapter:
             ProtocolError: For unsupported streaming modes or endpoint
                 failures.
         """
+        timeout = context.remaining_timeout() if callable(getattr(context, "remaining_timeout", None)) else None
+        return await self.invoke_via_endpoint(operation, arguments, timeout=timeout)
+
+    async def invoke_via_endpoint(
+        self,
+        operation: OperationDefinition,
+        arguments: dict[str, Any],
+        *,
+        timeout: Optional[float] = None,
+        stream_callback: Optional[Callable[[Any], Awaitable[None]]] = None,
+    ) -> ProtocolResult:
+        """Invoke an operation against this adapter's endpoint (design §47).
+
+        This is the entry point for callers that already own the endpoint
+        lifecycle (``GrpcService.invoke_method`` builds, caches and closes
+        endpoints) and only need the *call shape* chosen correctly.  Keeping
+        the four-mode dispatch here means there is exactly one implementation
+        of "which of the four RPC classes is this", regardless of whether the
+        call arrives through the protocol registry or through the gRPC
+        service.
+
+        Args:
+            operation: The compiled gRPC operation.  ``operation.request``
+                carries ``service_name``, ``method``, ``client_streaming``
+                and ``server_streaming``.
+            arguments: The MCP tool arguments (the request payload).
+            timeout: The deadline in seconds, or ``None`` for no deadline.
+            stream_callback: Optional async per-item callback, awaited as
+                each streamed item is collected.  ToolService uses it to
+                forward items to SSE consumers.
+
+        Returns:
+            A ``ProtocolResult``.
+
+        Raises:
+            ProtocolError: For incomplete operations, a missing message list,
+                or endpoint failures.
+        """
         request = operation.request or {}
         service_name = request.get("service_name")
         method = request.get("method")
@@ -83,21 +121,20 @@ class GrpcProtocolAdapter:
 
         client_streaming = bool(request.get("client_streaming"))
         server_streaming = bool(request.get("server_streaming"))
-        timeout = context.remaining_timeout() if callable(getattr(context, "remaining_timeout", None)) else None
 
         if not client_streaming and not server_streaming:
             response = await self._endpoint.invoke(service_name, method, arguments, timeout=timeout)
             return ProtocolResult(data=response, metadata={"grpc_mode": "unary_unary"})
 
         if server_streaming and not client_streaming:
-            return await self._invoke_server_stream(service_name, method, arguments, timeout, operation)
+            return await self._invoke_server_stream(service_name, method, arguments, timeout, operation, stream_callback)
 
         items = self._request_items(arguments)
         if client_streaming and not server_streaming:
             response = await self._endpoint.invoke_client_stream(service_name, method, items, timeout=timeout)
             return ProtocolResult(data=response, metadata={"grpc_mode": "stream_unary"})
 
-        return await self._invoke_bidi_stream(service_name, method, items, timeout, operation)
+        return await self._invoke_bidi_stream(service_name, method, items, timeout, operation, stream_callback)
 
     @staticmethod
     def _request_items(arguments: dict[str, Any]) -> list[Any]:
@@ -137,17 +174,11 @@ class GrpcProtocolAdapter:
         items: list[Any],
         timeout: Optional[float],
         operation: OperationDefinition,
+        stream_callback: Optional[Callable[[Any], Awaitable[None]]] = None,
     ) -> ProtocolResult:
         """Invoke a bidirectional operation with bounded collection (§48/§52)."""
         stream = self._endpoint.invoke_bidi_stream(service_name, method, items, timeout=timeout)
-        limiter = self._limiter_for(operation)
-        collected: list[Any] = []
-        truncated = False
-        try:
-            async for item in limiter.bounded(stream):
-                collected.append(item)
-        except StreamLimitError:
-            truncated = True
+        collected, truncated = await self._collect(operation, stream, stream_callback)
         return ProtocolResult(data={"items": collected, "truncated": truncated}, metadata={"grpc_mode": "stream_stream"})
 
     async def _invoke_server_stream(
@@ -157,18 +188,43 @@ class GrpcProtocolAdapter:
         arguments: dict[str, Any],
         timeout: Optional[float],
         operation: OperationDefinition,
+        stream_callback: Optional[Callable[[Any], Awaitable[None]]] = None,
     ) -> ProtocolResult:
         """Invoke a unary→server-stream operation with bounded collection."""
         stream = self._endpoint.invoke_streaming(service_name, method, arguments, timeout=timeout)
+        items, truncated = await self._collect(operation, stream, stream_callback)
+        return ProtocolResult(data={"items": items, "truncated": truncated}, metadata={"grpc_mode": "unary_stream"})
+
+    async def _collect(
+        self,
+        operation: OperationDefinition,
+        stream: Any,
+        stream_callback: Optional[Callable[[Any], Awaitable[None]]] = None,
+    ) -> tuple[list[Any], bool]:
+        """Collect a bounded stream, notifying the callback per item.
+
+        Args:
+            operation: The operation (supplies the stream limits, §52).
+            stream: The async iterator to consume.
+            stream_callback: Optional async per-item callback, awaited as each
+                item is accepted.  It is deliberately *not* called for an item
+                the limiter rejects, so a consumer never sees an item the
+                result does not contain.
+
+        Returns:
+            A ``(items, truncated)`` pair.
+        """
         limiter = self._limiter_for(operation)
         items: list[Any] = []
         truncated = False
         try:
             async for item in limiter.bounded(stream):
                 items.append(item)
+                if stream_callback is not None:
+                    await stream_callback(item)
         except StreamLimitError:
             truncated = True
-        return ProtocolResult(data={"items": items, "truncated": truncated}, metadata={"grpc_mode": "unary_stream"})
+        return items, truncated
 
     def _limiter_for(self, operation: OperationDefinition) -> StreamLimiter:
         """Resolve the stream limiter from operation extensions, if any."""
@@ -179,6 +235,7 @@ class GrpcProtocolAdapter:
             max_items=int(streaming.get("maxItems") or 0),
             max_bytes=int(streaming.get("maxBytes") or 0),
             idle_timeout=float(streaming.get("idleTimeoutMs") or 0) / 1000.0,
+            serialize=item_size,
         )
 
 

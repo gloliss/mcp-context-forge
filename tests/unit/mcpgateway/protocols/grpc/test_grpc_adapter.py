@@ -179,3 +179,72 @@ class TestGrpcProtocolAdapter:
             await adapter.invoke(operation, {}, _context())
 
         assert exc_info.value.category == ErrorCategory.INVALID_ARGUMENT
+
+
+class TestInvokeViaEndpoint:
+    """The endpoint-based entry point used by GrpcService (design §47)."""
+
+    async def test_unary_runs_without_a_context(self):
+        """A caller owning the endpoint passes a timeout, not a context."""
+        endpoint = _FakeEndpoint(unary_result={"ok": True})
+        adapter = GrpcProtocolAdapter(endpoint)
+
+        result = await adapter.invoke_via_endpoint(_grpc_operation(), {"a": 1}, timeout=5.0)
+
+        assert result.data == {"ok": True}
+        assert endpoint.invoke_calls[0][3] == 5.0
+
+    async def test_stream_callback_receives_each_accepted_item(self):
+        """Every collected item is handed to the callback in order."""
+        endpoint = _FakeEndpoint(stream_items=[{"n": 1}, {"n": 2}])
+        adapter = GrpcProtocolAdapter(endpoint, default_limiter=StreamLimiter(max_items=10))
+        seen = []
+
+        async def _callback(item):
+            seen.append(item)
+
+        result = await adapter.invoke_via_endpoint(_grpc_operation(server_streaming=True), {}, stream_callback=_callback)
+
+        assert result.data["items"] == [{"n": 1}, {"n": 2}]
+        assert seen == [{"n": 1}, {"n": 2}]
+
+    async def test_stream_callback_never_sees_a_rejected_item(self):
+        """An item rejected by the limiter is not forwarded to the consumer.
+
+        Otherwise an SSE client would receive an item the tool result does
+        not contain.
+        """
+        endpoint = _FakeEndpoint(stream_items=[{"n": i} for i in range(5)])
+        adapter = GrpcProtocolAdapter(endpoint, default_limiter=StreamLimiter(max_items=2))
+        seen = []
+
+        async def _callback(item):
+            seen.append(item)
+
+        result = await adapter.invoke_via_endpoint(_grpc_operation(server_streaming=True), {}, stream_callback=_callback)
+
+        assert result.data == {"items": [{"n": 0}, {"n": 1}], "truncated": True}
+        assert seen == [{"n": 0}, {"n": 1}]
+
+    async def test_bidi_stream_callback_is_supported(self):
+        """The bidi path forwards items to the callback too."""
+        endpoint = _FakeEndpoint(stream_items=[{"n": 1}])
+        adapter = GrpcProtocolAdapter(endpoint, default_limiter=StreamLimiter(max_items=10))
+        seen = []
+
+        async def _callback(item):
+            seen.append(item)
+
+        await adapter.invoke_via_endpoint(_grpc_operation(client_streaming=True, server_streaming=True), {"items": [{"v": 1}]}, stream_callback=_callback)
+
+        assert seen == [{"n": 1}]
+
+    async def test_incomplete_operation_is_rejected(self):
+        """An operation without service/method is an invalid argument."""
+        adapter = GrpcProtocolAdapter(_FakeEndpoint())
+        operation = OperationDefinition(key="k", protocol="grpc", request={"service_name": None, "method": None})
+
+        with pytest.raises(ProtocolError) as exc_info:
+            await adapter.invoke_via_endpoint(operation, {})
+
+        assert exc_info.value.code == "grpc-operation-incomplete"

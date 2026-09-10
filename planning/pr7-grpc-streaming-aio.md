@@ -28,7 +28,7 @@
 | T7.5 | client-stream / bidi 两类 RPC（§48 后两类） | T7.4 | ✅ 见下「T7.5/T7.6/T7.9 实施结果」 |
 | T7.6 | Cancellation 传播（§54） | T7.4 | ✅ 见下「T7.5/T7.6/T7.9 实施结果」 |
 | T7.7 | gRPC Status Detail → Error Model（§55） | — | ✅ `a1ecf97` |
-| T7.8 | ToolService gRPC branch 迁入 ProtocolAdapterRegistry（§47） | T7.1/T7.5 | ⏳ 部分（invoke_method 已支持四类；完整迁入 Registry 待办） |
+| T7.8 | ToolService gRPC branch 迁入 ProtocolAdapterRegistry（§47） | T7.1/T7.5 | ✅ 见下「T7.8 实施结果」 |
 | T7.9 | full chain 四类 RPC 测试（§64：扩展 grpc_test_server 加 ClientStream/BidiStream） | T7.5 + E2E 环境 | ✅ 见下 |
 
 ## 验收标准（§64/§82 DoD）
@@ -140,3 +140,17 @@
 - `tests/integration/test_grpc_full_chain.py` 新增：`TestFourRpcModes`（四类各一例 + 缺 items 拒绝 + 流式方法已发布为可用工具）、`TestCancellationPropagation`（一元与流式各一例，断言取消后**远早于**上游 3s/5s 延迟返回）。
 
 **验证**：单元 300+ passed；集成 `--with-integration` **43 passed**（真实 gRPC server）。
+
+## T7.8 实施结果（§47 Skill gRPC 分支迁入 ProtocolAdapterRegistry）
+
+**四类 RPC 分派收敛到一处**：`GrpcService.invoke_method` 不再自己实现模式分派，改为构造 `OperationDefinition` 并调用新增的 `GrpcProtocolAdapter.invoke_via_endpoint(operation, arguments, timeout=, stream_callback=)`。该入口专为「调用方已持有 endpoint 生命周期」的场景设计（endpoint 的构建/缓存/关闭仍归 `GrpcService`），避免为了复用适配器而伪造一个 `InvocationContext`。
+
+由此消除了 T7.5 引入的重复：两处各自实现的「四类 RPC 怎么走 + 流怎么限」合并为一处。
+
+**流式字节统计统一**：`_collect_bounded_stream` 与 `StreamLimiter` 是同一语义的两份实现，且存在一个边界差异（首个超限项的取舍）。统一时**完整保留了原有统计语义**——`serialize_item` 返回序列化字符串、`item_size` 返回其长度（即原 `len(_serialize_item(item))`），`max_bytes` 的行为逐字不变；`test_grpc_stream_limits.py` 的 7 个用例（含字节上限、零上限、逐项回调）全部改为针对统一实现并保持通过。
+
+**Registry 注册**：`ProtocolRegistry` 新增 `register_factory` / `get_factory` / `protocols`，`build_default_protocol_registry()` 现注册 `"http"`（共享实例）与 `"grpc"`（工厂——适配器绑定单个存活 endpoint，必须按调用构造）。
+
+**删除的重复代码**：`grpc_service._collect_bounded_stream`、`grpc_service._serialize_item`。
+
+**验证**：单元（protocols + translate_grpc + services/test_grpc_* + tool_service + contracts）全绿；集成 `--with-integration` **68 passed**（HTTP 17 + XML 5 + SOAP 3 + gRPC 43），其中 gRPC 43 例覆盖四类 RPC、取消、并发、大消息、schema 迁移——本次重构是在该真实 server 套件守护下完成的。

@@ -15,7 +15,6 @@ import asyncio
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import inspect
-import json
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
@@ -49,6 +48,9 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_child_span
+from mcpgateway.protocols.contracts.models import OperationDefinition
+from mcpgateway.protocols.grpc.adapter import GrpcProtocolAdapter
+from mcpgateway.protocols.grpc.stream import StreamLimiter, item_size
 from mcpgateway.schemas import GrpcSchemaDiff, GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -127,13 +129,6 @@ def _masked_call_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
         values = metadata.get(section) or {}
         result[section] = {key: ["********"] if any(fragment in key.lower() for fragment in _SENSITIVE_METADATA_FRAGMENTS) else value for key, value in values.items()}
     return result
-
-
-def _serialize_item(item: Any) -> str:
-    """Serialise one stream item for byte-accounting (design §44)."""
-    if isinstance(item, (dict, list)):
-        return json.dumps(item, ensure_ascii=False, default=str)
-    return str(item)
 
 
 # gRPC StatusCode → canonical ErrorCategory (design §55/§73).
@@ -215,41 +210,26 @@ def parse_grpc_status_details(trailing_metadata: Any) -> Optional[Any]:
     return None
 
 
-async def _collect_bounded_stream(
-    stream: Any,
-    max_items: int = 100,
-    max_bytes: int = 0,
-    stream_callback: Optional[Callable[[Any], Awaitable[None]]] = None,
-) -> Dict[str, Any]:
-    """Collect items from an async stream until an item/byte limit is hit (§44).
+def _stream_policy(service: Any) -> Dict[str, Any]:
+    """Return the stream policy in the shape ``StreamLimiter`` expects (§44).
+
+    The service's ``runtime_config.streaming`` uses camelCase keys and
+    milliseconds; the limiter takes snake_case and seconds.  Projecting here
+    keeps one translation point instead of threading the raw policy into the
+    adapter.
 
     Args:
-        stream: An async iterator of stream items.
-        max_items: Maximum item count (0 disables the item cap).
-        max_bytes: Maximum accumulated serialised bytes (0 disables).
-        stream_callback: Optional async per-item callback.
+        service: The registered gRPC service row.
 
     Returns:
-        ``{"items": [...], "truncated": True}`` when a limit was reached,
-        otherwise ``{"items": [...], "truncated": False}``.
+        A ``StreamLimiter`` keyword mapping.
     """
-    items: List[Dict[str, Any]] = []
-    total_bytes = 0
-    truncated = False
-    async for item in stream:
-        if max_items and len(items) >= max_items:
-            truncated = True
-            break
-        if max_bytes:
-            item_bytes = len(_serialize_item(item))
-            if item_bytes and total_bytes + item_bytes > max_bytes:
-                truncated = True
-                break
-            total_bytes += item_bytes
-        items.append(item)
-        if stream_callback is not None:
-            await stream_callback(item)
-    return {"items": items, "truncated": truncated}
+    streaming = (service.runtime_config or {}).get("streaming") or {}
+    return {
+        "max_items": int(streaming.get("maxItems", 100)),
+        "max_bytes": int(streaming.get("maxBytes", 0)),
+        "idle_timeout": float(streaming.get("idleTimeoutMs", 0)) / 1000.0,
+    }
 
 
 def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
@@ -1511,67 +1491,40 @@ class GrpcService:
                 endpoint._services = {k: v for k, v in discovered.items() if not k.startswith("_")}  # pylint: disable=protected-access
 
             method_info = next((item for item in discovered.get(service_name, {}).get("methods", []) if item.get("name") == method), None)
-            if method_info and method_info.get("client_streaming"):
-                # Client-streaming and bidi (design §48) take the MCP Stream
-                # input model ``{"items": [...]}`` (design §49/§50): the caller
-                # supplies the message list rather than a single request.
-                items = (request_data or {}).get("items") if isinstance(request_data, dict) else request_data
-                if not isinstance(items, list) or not items:
-                    raise GrpcServiceError('Client-streaming and bidirectional gRPC methods require a non-empty {"items": [...]} request')
-                streaming = (service.runtime_config or {}).get("streaming") or {}
-                max_items = int(streaming.get("maxItems", 100))
-                max_bytes = int(streaming.get("maxBytes", 0))
+            # The choice of RPC class lives in GrpcProtocolAdapter (design §47):
+            # whichever entry point a call arrives through, there is exactly one
+            # implementation of "which of the four modes is this" and of the
+            # bounded-stream policy (§52).  This method keeps what the adapter
+            # must not own — endpoint lifecycle, the runtime cache, and the
+            # service-level metrics.
+            adapter = GrpcProtocolAdapter(endpoint, default_limiter=StreamLimiter(**_stream_policy(service), serialize=item_size))
+            operation = OperationDefinition(
+                key=f"{service_name}.{method}",
+                protocol="grpc",
+                source_operation_id=method,
+                request={
+                    "service_name": service_name,
+                    "method": method,
+                    "client_streaming": bool(method_info.get("client_streaming")) if method_info else False,
+                    "server_streaming": bool(method_info.get("server_streaming")) if method_info else False,
+                },
+                extensions={"streaming": _stream_policy(service)},
+            )
 
-                if method_info.get("server_streaming"):
-                    bidi_response = await asyncio.wait_for(
-                        _collect_bounded_stream(
-                            endpoint.invoke_bidi_stream(service_name, method, items, timeout=remaining_timeout()),
-                            max_items=max_items,
-                            max_bytes=max_bytes,
-                            stream_callback=stream_callback,
-                        ),
-                        timeout=remaining_timeout(),
-                    )
-                    if capture_call_metadata:
-                        bidi_response["_grpc"] = _masked_call_metadata(endpoint.get_call_metadata())
-                    grpc_status = "OK"
-                    return bidi_response
-
-                client_stream_response = await asyncio.wait_for(
-                    endpoint.invoke_client_stream(service_name, method, items, timeout=remaining_timeout()),
+            async def dispatch() -> Dict[str, Any]:
+                """Run the call through the adapter under the shared deadline."""
+                result = await adapter.invoke_via_endpoint(
+                    operation,
+                    request_data,
                     timeout=remaining_timeout(),
+                    stream_callback=stream_callback,
                 )
-                if capture_call_metadata:
-                    client_stream_response = {**client_stream_response, "_grpc": _masked_call_metadata(endpoint.get_call_metadata())}
-                grpc_status = "OK"
-                return client_stream_response
-            if method_info and method_info.get("server_streaming"):
-                # Configurable stream limits (design-document §42/§44): the
-                # old hard-coded 100-item cap is replaced by the service's
-                # runtime_config.streaming policy.
-                streaming = (service.runtime_config or {}).get("streaming") or {}
-                max_items = int(streaming.get("maxItems", 100))
-                max_bytes = int(streaming.get("maxBytes", 0))
+                dispatched = result.data
+                if capture_call_metadata and isinstance(dispatched, dict):
+                    dispatched = {**dispatched, "_grpc": _masked_call_metadata(endpoint.get_call_metadata())}
+                return dispatched
 
-                async def collect_stream() -> Dict[str, Any]:
-                    """Collect server-stream items until a limit is reached (§44)."""
-                    return await _collect_bounded_stream(
-                        endpoint.invoke_streaming(service_name, method, request_data, timeout=remaining_timeout()),
-                        max_items=max_items,
-                        max_bytes=max_bytes,
-                        stream_callback=stream_callback,
-                    )
-
-                response = await asyncio.wait_for(collect_stream(), timeout=remaining_timeout())
-                if capture_call_metadata:
-                    response["_grpc"] = _masked_call_metadata(endpoint.get_call_metadata())
-                grpc_status = "OK"
-                return response
-
-            invoke_timeout = remaining_timeout()
-            response = await asyncio.wait_for(endpoint.invoke(service_name, method, request_data, timeout=invoke_timeout), timeout=invoke_timeout)
-            if capture_call_metadata:
-                response = {**response, "_grpc": _masked_call_metadata(endpoint.get_call_metadata())}
+            response = await asyncio.wait_for(dispatch(), timeout=remaining_timeout())
             grpc_status = "OK"
             return response
 
