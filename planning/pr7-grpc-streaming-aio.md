@@ -24,9 +24,9 @@
 | T7.1 | GrpcProtocolAdapter（§47，duck-typed endpoint） | — | ✅ `5ab7bec` |
 | T7.2 | unary_unary / unary_stream 适配（§48 前两类） | T7.1 | ✅ `5ab7bec` |
 | T7.3 | StreamLimiter（§52） | — | ✅ `5ab7bec` |
-| T7.4 | grpc.aio.Channel 迁移（§53，保留 RuntimeCache） | — | ⏳ 见下「T7.4 细化」 |
-| T7.5 | client-stream / bidi 两类 RPC（§48 后两类） | T7.4 | ⏳ |
-| T7.6 | Cancellation 传播（§54） | T7.4 | ⏳ |
+| T7.4 | grpc.aio.Channel 迁移（§53，保留 RuntimeCache） | — | ⏳ 已规划+已探明波及面（见下），推迟为独立专项 |
+| T7.5 | client-stream / bidi 两类 RPC（§48 后两类） | T7.4 | ⏳ 随 T7.4 专项 |
+| T7.6 | Cancellation 传播（§54） | T7.4 | ⏳ 随 T7.4 专项 |
 | T7.7 | gRPC Status Detail → Error Model（§55） | — | ✅ `a1ecf97` |
 | T7.8 | ToolService gRPC branch 迁入 ProtocolAdapterRegistry（§47） | T7.1/T7.5 | ⏳ |
 | T7.9 | full chain 四类 RPC 测试（§64：扩展 grpc_test_server 加 ClientStream/BidiStream） | T7.5 + E2E 环境 | ⏳ |
@@ -92,6 +92,15 @@
 - 既有 `tests/unit/mcpgateway/services/test_grpc_*` 与 translate_grpc 相关测试全绿
 
 **范围边界**：T7.4 只做「同步 → aio」的等价迁移 + 缓存 loop 亲和；**不**新增 client-stream/bidi 业务能力（T7.5），也**不**改 ToolService 接线（T7.8）。取消传播（§54）依赖本任务的 aio 化，落地于 T7.6。
+
+**实测波及面（2026-09-10 试做后回退，供专项实施参考）**
+
+按本规格实施 T7.4a/b（`translate_grpc.py` 改 aio channel + invoke + 流 + 反射）后实测：
+
+- `tests/unit/mcpgateway/test_translate_grpc.py` **16 个用例失败**（断言同步 channel / 同步 stub 的实现细节）：`test_start_insecure_channel`、`test_start_secure_channel_with_certs/without_certs`、`test_start_trusted_local_skips_validation`、`test_discover_services_success/skip_reflection_service/error`、`test_endpoint_start_without_reflection`、`test_endpoint_start_with_tls_and_reflection`、`test_discover_services_success_no_grpc`、`test_discover_services_ignores_non_list_services_response`、`test_discover_service_details_success/ignores_non_descriptor_response/skips_unrelated_service`、`test_invoke_and_invoke_streaming_without_grpc`、`test_invoke_streaming_rpc_error`。这些断言的是 §53 **刻意要改掉**的同步行为，需按「保持原测试意图、改写断言目标」更新。
+- **一致性硬约束**：`GrpcEndpoint` 改为 aio 后，`GrpcRuntimeCache._build_channel` 仍建**同步** channel 并注入，属未定义行为；`grpc_service.py` 仍用同步 `ServerReflectionStub`（line 289）与自带反射 executor（line 322）。因此 T7.4a/b/c 必须**一次性成套**落地，不可只提交 `translate_grpc.py`。
+- **决策**：鉴于该路径（gRPC 反射/registry/invoke）当前生产可用、且无法本地 E2E 验证，本次将其**推迟为独立专项**，先完成 T4.4 / T8.2 等低风险自包含任务。T7.5/T7.6/T7.8/T7.9 一并顺延至该专项之后。
+
 
 **测试文件**
 - `tests/unit/mcpgateway/protocols/grpc/test_grpc_adapter.py`（扩展）
