@@ -33,7 +33,7 @@
 | 类别 | 内容 | 状态 |
 |------|------|------|
 | 回归测试（单元/路由级） | `tests/unit/mcpgateway/test_admin_multi_login.py`：登录路径不吊销、两次登录 `jti` 互异、登出仅吊销当前 `jti` | 已实现 |
-| 黑盒 E2E（live gateway） | `tests/live_gateway/` 下新增：登录 A → 登录 B → A 仍有效；A 登出 → B 仍有效 | 待实施 |
+| 黑盒 E2E（live gateway） | `tests/live_gateway/mcp/test_admin_multi_login_e2e.py`：登录 A → 登录 B → A 仍有效；A 登出 → B 仍有效 | 已实现 |
 | 文档 | 本设计文档 + 测试计划；认证契约说明 | 本文档 |
 | 源码 | 无（刻意不改） | — |
 

@@ -27,11 +27,16 @@
 uv run --frozen pytest tests/unit/mcpgateway/test_admin_multi_login.py -q
 ```
 
-### 2.2 live-gateway 黑盒 E2E（待实施）
+### 2.2 live-gateway 黑盒 E2E（已实现）
 
-文件：`tests/live_gateway/mcp/test_admin_multi_login_e2e.py`（拟）
+文件：`tests/live_gateway/mcp/test_admin_multi_login_e2e.py`
 
-前置：ContextForge 已运行（`BASE_URL`，默认 `http://127.0.0.1:8080`），使用 `skip_no_gateway` 在无网关时跳过。
+前置：ContextForge 已运行（`BASE_URL`，默认 `http://127.0.0.1:8080`），使用 `skip_no_gateway` 在无网关时跳过；无可用 admin 口令或账号仍处于强制改密流程时同样跳过（不会轮换共享 admin 口令）。
+
+| 用例 | 覆盖 |
+|------|------|
+| `TestAdminMultiLoginE2E::test_second_login_does_not_kick_out_first` | AC-1 |
+| `TestAdminMultiLoginE2E::test_logout_is_isolated_to_the_calling_session` | AC-2 |
 
 步骤（两个相互独立的 HTTP 会话）：
 1. 会话 A、B 分别 `GET /admin/login` 取 CSRF，再 `POST /admin/login` 用同一 admin 账号登录，各持一份 `jwt_token` cookie。
