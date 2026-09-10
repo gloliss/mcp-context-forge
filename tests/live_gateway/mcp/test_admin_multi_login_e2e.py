@@ -65,6 +65,10 @@ _ADMIN_PASSWORD_CANDIDATES = [
 ]
 
 _LOGIN_PATH = "/admin/login"
+# The authenticated dashboard. The trailing slash matters: Starlette issue a 307
+# slash-redirect for ``/admin`` → ``/admin/``, so probing ``/admin`` would report
+# 307 even for a healthy session.
+_ADMIN_PATH = "/admin/"
 _ADMIN_COOKIE = "jwt_token"
 _CSRF_COOKIE = "mcpgateway_csrf_token"
 _CSRF_FIELD = "csrf_token"
@@ -108,14 +112,15 @@ def _login(client: httpx.Client, username: str, password: str) -> str:
         return "change_password_required"
     if "error=" in location:
         return "error"
-    if client.cookies.get(_ADMIN_COOKIE):
+    # Success redirects to the dashboard and sets the session cookie.
+    if location.rstrip("/").endswith("/admin") and client.cookies.get(_ADMIN_COOKIE):
         return "ok"
     return "error"
 
 
-def _admin_status(client: httpx.Client) -> int:
-    """Return the HTTP status of an authenticated ``GET /admin``."""
-    return client.get(f"{BASE_URL}/admin", headers={"Accept": "text/html"}, follow_redirects=False).status_code
+def _admin_response(client: httpx.Client) -> httpx.Response:
+    """Return the (non-redirected) response for the authenticated dashboard."""
+    return client.get(f"{BASE_URL}{_ADMIN_PATH}", headers={"Accept": "text/html"}, follow_redirects=False)
 
 
 def _logout(client: httpx.Client) -> None:
@@ -154,6 +159,7 @@ class TestAdminMultiLoginE2E:
             status_a = _establish_admin_session(session_a)
             if status_a != "ok":
                 pytest.skip(f"admin login unavailable for the multi-login E2E ({status_a})")
+            assert _admin_response(session_a).status_code == 200
 
             status_b = _establish_admin_session(session_b)
             assert status_b == "ok", "second admin login failed in the same gateway"
@@ -164,7 +170,7 @@ class TestAdminMultiLoginE2E:
             assert token_a and token_b and token_a != token_b
 
             # AC-1: the second login did NOT kick out the first session.
-            assert _admin_status(session_a) == 200, "a second login invalidated the first admin session"
+            assert _admin_response(session_a).status_code == 200, "a second login invalidated the first admin session"
 
     def test_logout_is_isolated_to_the_calling_session(self) -> None:
         """AC-2: logging out location A leaves location B's session valid."""
@@ -174,13 +180,23 @@ class TestAdminMultiLoginE2E:
             if status_a != "ok":
                 pytest.skip(f"admin login unavailable for the multi-login E2E ({status_a})")
             assert _establish_admin_session(session_b) == "ok"
-            assert _admin_status(session_b) == 200
+            assert _admin_response(session_b).status_code == 200
 
             _logout(session_a)
 
-            # A is logged out: the cookie is cleared and /admin no longer serves.
+            # A is logged out: the session cookie is cleared and the dashboard no
+            # longer serves that browser session.
+            #
+            # NOTE: this asserts browser-session logout, not the server-side
+            # blocklist timing. The revoked ``jti`` is written to the blocklist on
+            # logout, but a previously cached negative revocation entry keeps the
+            # old token usable for up to ``auth_cache_revocation_ttl`` (~30s);
+            # asserting immediate server-side rejection here would be flaky and
+            # is out of this requirement's scope ("一处登录不顶掉另一处").
             assert session_a.cookies.get(_ADMIN_COOKIE) is None
-            assert _admin_status(session_a) in (302, 303, 307, 401, 403), "logged-out session should not reach /admin"
+            logged_out = _admin_response(session_a)
+            assert logged_out.status_code != 200, "logged-out session should not reach the dashboard"
+            assert "/admin/login" in (logged_out.headers.get("location") or "")
 
             # AC-2: B's session survived A's logout.
-            assert _admin_status(session_b) == 200, "logging out one session revoked another admin session"
+            assert _admin_response(session_b).status_code == 200, "logging out one session revoked another admin session"
