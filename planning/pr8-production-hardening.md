@@ -25,7 +25,7 @@
 | T8.1 | HttpMonitoringService + `http_health_samples` 表 + 迁移 `6d7e8f9a0b1c`（§57） | — | ✅ `208d896` |
 | T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ✅ `c88d33a`（见下「T8.2 细化」） |
 | T8.3 | Activation Gate off/warn/strict（§59） | T8.2 | ✅ `e3508e2`（Gate 配置+决策；已被 T8.2 契约套件消费） |
-| T8.4a | `test_http_full_chain` 最小集扩展（§61） | — | ⏳（依赖 E2E 环境） |
+| T8.4a | `test_http_full_chain` 最小集扩展（§61） | — | ✅ 既有 `tests/integration/test_http_full_chain.py`（真实本地 upstream，17 例；`--with-integration` 本地通过） |
 | T8.4b | `test_xml_http_full_chain`（§62） | T4.x | ✅ `tests/integration/test_xml_http_full_chain.py`（5 例） |
 | T8.4c | `test_soap_full_chain`（§63） | T5.x | ✅ `tests/integration/test_soap_full_chain.py`（3 例） |
 | T8.4d | `test_grpc_streaming_full_chain`（§64） | T7.5 | ✅ 四类 RPC + 取消：`tests/integration/test_grpc_full_chain.py`（43 例） |
@@ -39,7 +39,7 @@
 - Health 样本落库、Metrics 复用 ToolMetric
 - Contract test 检测 5xx / schema mismatch / invalid input / response contract mismatch
 - Activation Gate 默认不 fuzz mutating operations
-- 四个 full-chain 集成测试用真实 upstream 通过
+- 四个 full-chain 集成测试用真实 upstream 通过（本地 `--with-integration`：HTTP 17 + XML 5 + SOAP 3 + gRPC 43 = 68 passed）
 - 外部引用获取受 SSRF 策略约束、大小受限
 - 明文 secret 被 schema/API 拒绝
 - Retry 仅对安全方法生效；HTTP/gRPC/SOAP/XML 错误映射到 canonical categories

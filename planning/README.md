@@ -24,17 +24,25 @@ Phase 4  Production    [PR8 Production Hardening]
 
 | PR | 规划文档 | 测试规划 | 状态 |
 |---|---|---|---|
-| PR4 | [pr4-xml-xsd.md](pr4-xml-xsd.md) | [pr4-xml-xsd-test.md](pr4-xml-xsd-test.md) | 主体完成，T4.4 待办 |
-| PR5 | [pr5-soap-wsdl.md](pr5-soap-wsdl.md) | [pr5-soap-wsdl-test.md](pr5-soap-wsdl-test.md) | T5.1–5.5 完成；T5.6 待办（含已识别 3 项缺口） |
+| PR4 | [pr4-xml-xsd.md](pr4-xml-xsd.md) | [pr4-xml-xsd-test.md](pr4-xml-xsd-test.md) | 全量完成 |
+| PR5 | [pr5-soap-wsdl.md](pr5-soap-wsdl.md) | [pr5-soap-wsdl-test.md](pr5-soap-wsdl-test.md) | 全量完成 |
 | PR6 | [pr6-grpc-correctness.md](pr6-grpc-correctness.md) | [pr6-grpc-correctness-test.md](pr6-grpc-correctness-test.md) | 全量完成 |
-| PR7 | [pr7-grpc-streaming-aio.md](pr7-grpc-streaming-aio.md) | [pr7-grpc-streaming-aio-test.md](pr7-grpc-streaming-aio-test.md) | 部分完成（T7.1/7.2/7.3/7.7） |
-| PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | [pr8-production-hardening-test.md](pr8-production-hardening-test.md) | 部分完成（T8.1/8.2/8.3/8.6/8.7；T8.5a/b 已由 PR3 覆盖） |
+| PR7 | [pr7-grpc-streaming-aio.md](pr7-grpc-streaming-aio.md) | [pr7-grpc-streaming-aio-test.md](pr7-grpc-streaming-aio-test.md) | T7.1–7.7/7.9 完成；T7.8 部分（invoke_method 已支持四类 RPC） |
+| PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | [pr8-production-hardening-test.md](pr8-production-hardening-test.md) | T8.1–8.4/8.6/8.7 完成；T8.5a/b 已由 PR3 覆盖 |
 
 ## 总任务状态（截至 2026-09-10）
 
-- **已完成**：T4.1–4.3/4.5–4.7、T5.1–5.5、T6.1–6.9、T7.1–7.3/7.7、T8.1/8.2/8.3/8.6/8.7
+- **已完成**：T4.1–4.7、T5.1–5.6、T6.1–6.9、T7.1–7.7/7.9、T8.1–8.4/8.6/8.7
 - **PR3 已实现（不重复做）**：T8.5a/T8.5b（§66 SafeReferenceFetcher/ContractArtifactResolver 在 `services/safe_reference_fetcher.py`）
-- **待办**：T4.4、T5.6、T8.4；**T7.4–7.6/7.8/7.9 推迟为 grpc.aio 独立专项**（见 pr7 文档「T7.4 细化」）
+- **待办**：T7.8（ToolService gRPC branch 完整迁入 ProtocolAdapterRegistry；当前 `invoke_method` 已支持四类 RPC 但分支仍内联）
+- **明确未做**：YAML manifest 显式声明 manual XML 操作（T4.4 只交付了「XSD 绑定 → 运行时生效」这一段，见 pr4 文档范围边界）
+
+## 本地验证基线（2026-09-10）
+
+- **单元**：protocols（codecs/contracts/http/grpc）、services（grpc_*、http_*、operation_tool_compiler、tool_service）全绿
+- **集成**（`--with-integration`，真实本地 upstream，非 mock）：HTTP 17 + XML 5 + SOAP 3 + gRPC 43 = **68 passed**
+- **gRPC 集成**覆盖：反射全链、四类 RPC、取消传播、deadline、metadata 鉴权、无反射 proto 导入、schema 迁移、并发、大消息
+- 未走全量 `make test`（遵循「不要全量 pytest」约定）；E2E（双远端 → 镜像 → 容器 → 真实网关）由用户执行
 
 ## 横切约束（所有 PR 必须遵守）
 
