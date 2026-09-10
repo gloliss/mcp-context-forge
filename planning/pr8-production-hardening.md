@@ -69,3 +69,27 @@
 ## 更正记录（2026-09-10）
 
 - §66（SafeReferenceFetcher / ContractArtifactResolver / 外部 `$ref` 物化）**在 PR3 已完整实现**于 `mcpgateway/services/safe_reference_fetcher.py`，并由 `contract_artifact_service.prepare_artifact` 调用 `resolve_and_bundle`。补建 `utils/safe_reference_fetcher.py` 属重复实现，已删除（连同其测试）。T8.5a/T8.5b 标记为「PR3 已实现」，不重复做。
+
+## T8.3 Activation Gate 细化（§59）
+
+**目标**：第一版 Activation Gate 支持 `off / warn / strict`；默认只对安全方法自动跑契约测试，mutating 需显式开启。
+
+**接口/配置**
+- `http-service.yaml`：
+  - `spec.validation.activationGate: off | warn | strict`（默认 `warn`）
+  - `spec.testing.allowMutatingOperations: bool`（默认 `false`）
+- 新增 `mcpgateway/protocols/http/activation_gate.py`：
+  - `ACTIVATION_GATES = ("off", "warn", "strict")`
+  - `SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}`
+  - `evaluate_activation_gate(gate, method, allow_mutating) -> str`：返回 `"off" | "skip" | "run" | "warn"`（`strict` 下 mutating 被禁则 `skip`；`warn` 下标注告警；`off` 直接 `off`）
+
+**范围边界**：本任务只做「Gate 配置解析 + 决策函数」；schemathesis 实际执行（T8.2）与其 full-chain（T8.4）待 E2E 环境。
+
+**验收**
+- YAML 中 `activationGate` 非 `off/warn/strict` 报 `HttpServiceError`
+- `allowMutatingOperations` 非 bool 报错
+- 决策：safe 方法在 `warn/strict` 下 `run`；mutating 在无 `allowMutatingOperations` 时 `skip`，在 `off` 时 `off`
+
+**测试文件**
+- `tests/unit/mcpgateway/protocols/http/test_activation_gate.py`
+- `tests/unit/mcpgateway/services/test_http_yaml_service.py`（新增 activationGate/testing 解析用例）
