@@ -30,6 +30,7 @@ from __future__ import annotations
 
 # Standard
 import os
+import socket
 
 # Third-Party
 import httpx
@@ -39,6 +40,21 @@ import pytest
 from ..helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
+
+# The session-wide autouse ``_deterministic_dns`` fixture in tests/conftest.py
+# replaces ``socket.getaddrinfo`` with a stub that maps every non-loopback host
+# to a fixed public IP (so SSRF validators run without real DNS). That breaks
+# live-gateway tests targeting a LAN address like 10.10.100.15. Capture the real
+# resolver at import time — collection imports this module before any autouse
+# fixture runs — and restore it for the duration of each test below.
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+@pytest.fixture(autouse=True)
+def _real_dns_for_live_gateway() -> None:
+    """Undo the session-wide DNS stub so the configured gateway host resolves."""
+    socket.getaddrinfo = _REAL_GETADDRINFO
+
 
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 # Mirrors tests/playwright/conftest.py candidate ordering; the post-rotation
