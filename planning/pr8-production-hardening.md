@@ -23,7 +23,7 @@
 | 任务 | 内容 | 依赖 | 状态 |
 |---|---|---|---|
 | T8.1 | HttpMonitoringService + `http_health_samples` 表 + 迁移 `6d7e8f9a0b1c`（§57） | — | ✅ `208d896` |
-| T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ⏳（依赖 E2E 环境验证） |
+| T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ⏳ 见下「T8.2 细化」（本地单测可跑，live 套件待 E2E） |
 | T8.3 | Activation Gate off/warn/strict（§59） | T8.2 | ✅ `e3508e2`（Gate 配置+决策；schemathesis 执行待 T8.2） |
 | T8.4a | `test_http_full_chain` 最小集扩展（§61） | — | ⏳（依赖 E2E 环境） |
 | T8.4b | `test_xml_http_full_chain`（§62） | T4.x | ⏳ |
@@ -93,3 +93,34 @@
 **测试文件**
 - `tests/unit/mcpgateway/protocols/http/test_activation_gate.py`
 - `tests/unit/mcpgateway/services/test_http_yaml_service.py`（新增 activationGate/testing 解析用例）
+
+## T8.2 细化（§58 HTTP Contract Testing 基建）
+
+**目标**：建立 `tests/contracts/http/` 契约测试基建：从 OpenAPI 文档派生操作用例，按 Activation Gate（T8.3）挑选可跑操作，并对响应做契约判定（5xx / 未声明状态码 / 响应 schema 不匹配 / 非法输入未被拒）。**本地可单测的部分不依赖 live gateway**；真正对网关跑 schemathesis 的用例在无 `CONTRACT_BASE_URL` 时跳过（标 待 E2E）。
+
+**实施项**
+
+1. `tests/contracts/__init__.py`、`tests/contracts/http/__init__.py`
+2. `tests/contracts/http/contract_checks.py`（纯逻辑，无 gateway 依赖）：
+   - `OperationCase`（method / path / operation_id / 声明的 responses / parameters）
+   - `collect_operations(spec) -> list[OperationCase]`：遍历 `paths`，跳过非 HTTP 方法与无 `responses` 的条目
+   - `select_operations(cases, *, gate, allow_mutating) -> (selected, skipped)`：委托生产代码 `protocols.http.activation_gate.evaluate_activation_gate`，`skip`/`off` 的操作不跑（§59：默认只跑 GET/HEAD/OPTIONS）
+   - `ContractViolation` + `classify_response(case, status_code, body, content_type) -> list[ContractViolation]`：
+     - `server_error`：5xx
+     - `undeclared_status`：状态码不在 `responses` 声明中（`default` 视为声明）
+     - `response_schema_mismatch`：声明的 JSON Schema 与响应体不符（jsonschema 校验）
+     - `invalid_input_not_rejected`：由 `check_invalid_input_rejected(status_code)` 单独判定（非法输入应 4xx）
+3. `tests/contracts/http/test_contract_checks.py`：上述纯逻辑单测（本地全跑）
+4. `tests/contracts/http/test_gateway_contract.py`：schemathesis 驱动的 live 套件；`CONTRACT_BASE_URL` 未设置则 `pytest.skip`（待 E2E）
+
+**范围边界**：本任务只建基建与判定逻辑；**不**新增生产代码（Gate 逻辑已在 T8.3）。真实网关上的 schemathesis 执行与 `tests/contracts/http/` 全量通过依赖 E2E 环境。
+
+**验收**
+- `collect_operations` 正确枚举 OpenAPI paths（含 `default` 响应）
+- 默认 gate 下 mutating 操作被排除；`allowMutatingOperations: true` 时纳入
+- `classify_response` 对 5xx / 未声明状态码 / schema 不匹配分别产出对应 violation；`default` 声明不误报
+- 无 `CONTRACT_BASE_URL` 时 live 套件整体 skip，不报错
+
+**测试文件**
+- `tests/contracts/http/test_contract_checks.py`（本地）
+- `tests/contracts/http/test_gateway_contract.py`（待 E2E）
