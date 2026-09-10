@@ -61,6 +61,7 @@ from mcpgateway.protocols.http.redirect import REST_TOO_MANY_REDIRECTS, Redirect
 from mcpgateway.protocols.http.request_builder import RequestBuilder
 from mcpgateway.protocols.http.response_decoder import ResponseDecoder
 from mcpgateway.protocols.http.soap import is_soap_config, map_soap_fault, soap_content_type, soap_request_headers
+from mcpgateway.protocols.http.xsd_binding import build_xsd_type_system
 from mcpgateway.protocols.models import ErrorCategory, InvocationContext, ProtocolError, ProtocolResult
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
@@ -261,6 +262,12 @@ class HttpProtocolAdapter(ProtocolAdapter):
             hop_headers = {hk: hv for hk, hv in context.headers.items() if hk.lower() != "host"}
             hop_headers.update(target.headers)
             hop_headers.update(built.headers)
+            # The body codec is the authority on the media type it produced:
+            # sending an XML (or form/multipart) body without its declared
+            # Content-Type makes the upstream guess.  Caller headers win, so
+            # an explicitly configured type is never overwritten.
+            if built.body is not None and built.body.content_type:
+                hop_headers.setdefault("Content-Type", built.body.content_type)
             hop_headers.update(soap_headers)
             if soap_content_type_header:
                 hop_headers["Content-Type"] = soap_content_type_header
@@ -321,6 +328,9 @@ class HttpProtocolAdapter(ProtocolAdapter):
             protocol_config=config,
             preferred_media_types=tuple((config.get("response") or {}).get("preferredMediaTypes") or ()),
             max_response_bytes=settings.rest_response_text_max_length,
+            # A manually declared XML tool is validated against its XSD (§27);
+            # tools without a binding keep the schema-less path.
+            xsd_type_system=build_xsd_type_system(config, side="response"),
         )
         is_soap = is_soap_config(config)
         try:

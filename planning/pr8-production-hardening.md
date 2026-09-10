@@ -26,9 +26,9 @@
 | T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ✅ `c88d33a`（见下「T8.2 细化」） |
 | T8.3 | Activation Gate off/warn/strict（§59） | T8.2 | ✅ `e3508e2`（Gate 配置+决策；已被 T8.2 契约套件消费） |
 | T8.4a | `test_http_full_chain` 最小集扩展（§61） | — | ⏳（依赖 E2E 环境） |
-| T8.4b | `test_xml_http_full_chain`（§62） | T4.x | ⏳ |
-| T8.4c | `test_soap_full_chain`（§63） | T5.x | ⏳ |
-| T8.4d | `test_grpc_streaming_full_chain`（§64） | T7.5 | ⏳ |
+| T8.4b | `test_xml_http_full_chain`（§62） | T4.x | ✅ `tests/integration/test_xml_http_full_chain.py`（5 例） |
+| T8.4c | `test_soap_full_chain`（§63） | T5.x | ✅ `tests/integration/test_soap_full_chain.py`（3 例） |
+| T8.4d | `test_grpc_streaming_full_chain`（§64） | T7.5 | ✅ 四类 RPC + 取消：`tests/integration/test_grpc_full_chain.py`（43 例） |
 | T8.5a | SafeReferenceFetcher（§66） | — | ✅ 已在 **PR3** 实现：`services/safe_reference_fetcher.py`（含 `SafeReferenceFetcher` + `ContractArtifactResolver`） |
 | T8.5b | ContractArtifactResolver 完整接线（外部引用物化） | T8.5a | ✅ 已在 **PR3** 接线：`contract_artifact_service.prepare_artifact` → `resolve_and_bundle` |
 | T8.6 | Auth/Secret 审计：拒绝明文 secret（§67） | — | ✅ `(secret_policy)` |
