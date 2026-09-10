@@ -8,6 +8,8 @@ and its integration into GrpcService.invoke_method.
 """
 
 # Standard
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 # Third-Party
@@ -16,7 +18,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import GrpcService as DbGrpcService
-from mcpgateway.services.grpc_runtime_cache import _build_channel, GrpcRuntimeCache
+from mcpgateway.services.grpc_runtime_cache import _build_channel, _CacheEntry, GrpcRuntimeCache
 from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError
 
 
@@ -76,6 +78,7 @@ class TestGrpcRuntimeCacheKey:
         assert "api-secret" not in key
         assert "private.internal" not in key
         assert "/secrets/" not in key
+
     def test_none_schema_hash_is_distinct_identity(self):
         cache = GrpcRuntimeCache(max_entries=8)
         key1 = cache.key_for("svc-1", None, "10.0.0.1:50051", False, None, None, {})
@@ -118,6 +121,7 @@ class TestGrpcRuntimeTlsChannel:
         key_path.write_bytes(b"private-key")
         with pytest.raises(ValueError, match="requires a TLS certificate"):
             _build_channel("host:443", True, None, str(key_path))
+
 
 class TestGrpcRuntimeCacheAcquireRelease:
     """Refcounted lifecycle: channels close only once idle and evicted."""
@@ -200,6 +204,7 @@ class TestGrpcRuntimeCacheAcquireRelease:
         channels[0].close.assert_called_once()
         channels[1].close.assert_called_once()
         channels[2].close.assert_not_called()
+
 
 class TestInvokeMethodRuntimeCache:
     """invoke_method uses the runtime cache for store-descriptor services."""
@@ -466,3 +471,119 @@ class TestInvokeMethodRuntimeCache:
         assert len(close_calls) == 1
         # Per-call endpoint owns its channel.
         assert created[0].get("owns_channel") is not False
+
+
+class TestChannelEventLoopAffinity:
+    """A cached channel is a grpc.aio channel and is bound to its loop (§53)."""
+
+    def test_key_folds_in_the_event_loop(self):
+        """Two loops get distinct identities and therefore distinct channels."""
+        cache = GrpcRuntimeCache(max_entries=8)
+        key_a = cache.key_for("svc-1", "hash-a", "10.0.0.1:50051", False, None, None, {}, 1)
+        key_b = cache.key_for("svc-1", "hash-a", "10.0.0.1:50051", False, None, None, {}, 2)
+
+        assert key_a != key_b
+
+    def test_key_is_stable_within_one_loop(self):
+        """The same loop keeps hitting the same entry."""
+        cache = GrpcRuntimeCache(max_entries=8)
+        key_a = cache.key_for("svc-1", "hash-a", "10.0.0.1:50051", False, None, None, {}, 7)
+        key_b = cache.key_for("svc-1", "hash-a", "10.0.0.1:50051", False, None, None, {}, 7)
+
+        assert key_a == key_b
+
+    def test_invalidate_service_still_matches_loop_scoped_keys(self):
+        """The service prefix is unaffected by folding the loop into the hash."""
+        cache = GrpcRuntimeCache(max_entries=8)
+        key = cache.key_for("svc-1", "hash-a", "10.0.0.1:50051", False, None, None, {}, 42)
+        # Building a real aio channel needs a running loop, which this sync
+        # test does not have; the cache identity is what is under test here.
+        with patch("mcpgateway.services.grpc_runtime_cache._build_channel", return_value=MagicMock()):
+            cache.acquire(key, "10.0.0.1:50051", False, None, None)
+
+        assert cache.invalidate_service("svc-1") == 1
+
+    @pytest.mark.asyncio
+    async def test_acquire_records_the_owning_loop(self):
+        """An entry built inside a loop remembers which loop owns its channel."""
+        # Standard
+        import asyncio
+
+        cache = GrpcRuntimeCache(max_entries=8)
+        with patch("mcpgateway.services.grpc_runtime_cache._build_channel", return_value=MagicMock()):
+            entry = cache.acquire("k", "10.0.0.1:50051", False, None, None)
+
+        assert entry.loop is asyncio.get_running_loop()
+
+    def test_close_schedules_an_aio_channel_close(self):
+        """Closing an aio channel schedules the coroutine instead of dropping it."""
+        # Standard
+        import asyncio
+
+        closed = []
+
+        async def _close():
+            closed.append(True)
+
+        channel = MagicMock()
+        channel.close.return_value = _close()
+
+        # The close is only scheduled when the owning loop is actually
+        # running, which is the production case (we are inside a request).
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            entry = _CacheEntry(channel, MagicMock(), {}, 0, loop)
+            entry.close()
+            deadline = time.monotonic() + 5
+            while not closed and time.monotonic() < deadline:
+                time.sleep(0.01)
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=5)
+            loop.close()
+
+        assert closed == [True]
+        assert entry.channel is None
+
+    def test_close_discards_the_coroutine_without_a_live_loop(self):
+        """With no running loop the close coroutine is discarded, not leaked."""
+        # Standard
+        import warnings
+
+        async def _close():  # pragma: no cover - never awaited by design
+            return None
+
+        channel = MagicMock()
+        channel.close.return_value = _close()
+
+        entry = _CacheEntry(channel, MagicMock(), {}, 0, None)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            entry.close()
+
+        assert not [item for item in caught if "never awaited" in str(item.message)]
+        assert entry.channel is None
+
+    def test_build_channel_uses_the_aio_transport(self):
+        """Channels are built through grpc.aio (design §53)."""
+        with patch("mcpgateway.services.grpc_runtime_cache.grpc") as mock_grpc:
+            mock_grpc.aio.insecure_channel.return_value = "aio-channel"
+
+            assert _build_channel("10.0.0.1:50051", False, None, None) == "aio-channel"
+
+        mock_grpc.aio.insecure_channel.assert_called_once()
+        mock_grpc.insecure_channel.assert_not_called()
+
+    def test_build_channel_uses_the_aio_secure_transport(self):
+        """TLS channels are built through grpc.aio too (design §53)."""
+        with patch("mcpgateway.services.grpc_runtime_cache.grpc") as mock_grpc:
+            mock_grpc.ssl_channel_credentials.return_value = "creds"
+            mock_grpc.aio.secure_channel.return_value = "aio-secure"
+
+            assert _build_channel("10.0.0.1:443", True, None, None) == "aio-secure"
+
+        mock_grpc.aio.secure_channel.assert_called_once()
+        mock_grpc.secure_channel.assert_not_called()

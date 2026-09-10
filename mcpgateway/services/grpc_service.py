@@ -12,9 +12,9 @@ retrieval, updates, activation toggling, and deletion.
 
 # Standard
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone
+import inspect
 import json
 import sys
 import time
@@ -272,8 +272,26 @@ def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
         raise GrpcServiceError(f"Reflected descriptor total size {total} bytes exceeds aggregate limit {_GRPC_MAX_TOTAL_DESCRIPTOR_BYTES}")
 
 
-def _collect_reflection_descriptors(channel: Any, timeout_seconds: float, metadata: Optional[Dict[str, str]] = None) -> set[bytes]:
-    """Collect reflection descriptors on a worker thread under one deadline."""
+async def _collect_reflection_descriptors_async(channel: Any, timeout_seconds: float, metadata: Optional[Dict[str, str]] = None) -> set[bytes]:
+    """Collect reflection descriptors over an aio channel under one deadline.
+
+    A single absolute budget is shared by the service listing and every detail
+    request, so N advertised services cannot multiply the configured timeout.
+    Reflection runs on the transport itself (design §53) rather than on a
+    worker thread, which also lets a caller's cancellation reach the RPC.
+
+    Args:
+        channel: An established ``grpc.aio`` channel.
+        timeout_seconds: The shared reflection budget in seconds.
+        metadata: Unified metadata (design §41): reflection requests carry the
+            same per-service metadata as business RPCs.
+
+    Returns:
+        The set of reflected ``FileDescriptorProto`` serialisations.
+
+    Raises:
+        TimeoutError: When the shared budget is exhausted.
+    """
     deadline = time.monotonic() + timeout_seconds
 
     def remaining() -> float:
@@ -286,12 +304,11 @@ def _collect_reflection_descriptors(channel: Any, timeout_seconds: float, metada
     # per-service metadata as business RPCs.
     metadata_tuple = tuple((str(k), str(v)) for k, v in (metadata or {}).items()) or None
 
-    stub = reflection_pb2_grpc.ServerReflectionStub(channel)
     request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
-    response = stub.ServerReflectionInfo(iter([request]), timeout=remaining(), metadata=metadata_tuple)
+    responses = await translate_grpc._collect_reflection_responses(channel, [request], timeout=remaining(), metadata=metadata_tuple)  # pylint: disable=protected-access
 
     service_names: List[str] = []
-    for item in response:
+    for item in responses:
         remaining()
         if item.HasField("list_services_response"):
             for reflected_service in item.list_services_response.service:
@@ -302,8 +319,8 @@ def _collect_reflection_descriptors(channel: Any, timeout_seconds: float, metada
     for service_name in service_names:
         file_request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
         try:
-            file_response = stub.ServerReflectionInfo(iter([file_request]), timeout=remaining(), metadata=metadata_tuple)
-            for item in file_response:
+            file_responses = await translate_grpc._collect_reflection_responses(channel, [file_request], timeout=remaining(), metadata=metadata_tuple)  # pylint: disable=protected-access
+            for item in file_responses:
                 remaining()
                 if item.HasField("file_descriptor_response"):
                     descriptor_bytes.update(item.file_descriptor_response.file_descriptor_proto)
@@ -315,26 +332,6 @@ def _collect_reflection_descriptors(channel: Any, timeout_seconds: float, metada
             logger.warning("Failed to get reflection details for %s: %s", service_name, exc)
 
     return descriptor_bytes
-
-
-async def _collect_reflection_descriptors_async(channel: Any, timeout_seconds: float, metadata: Optional[Dict[str, str]] = None) -> set[bytes]:
-    """Run blocking reflection without occupying the application event loop."""
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="grpc-reflection")
-    future = executor.submit(_collect_reflection_descriptors, channel, timeout_seconds, metadata)
-    deadline = time.monotonic() + timeout_seconds
-    try:
-        # Poll the concurrent future instead of relying on a loop cross-thread
-        # callback. This also remains deterministic in restricted runtimes where
-        # the loop's self-pipe notification is unavailable.
-        while not future.done():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                future.cancel()
-                raise TimeoutError("gRPC reflection deadline exceeded")
-            await asyncio.sleep(min(0.01, remaining))
-        return future.result()
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _validate_reflected_tool_name(tool_name: str) -> None:
@@ -1058,9 +1055,9 @@ class GrpcService:
                 # Use default system certificates
                 credentials = grpc.ssl_channel_credentials()
 
-            channel = grpc.secure_channel(service.target, credentials)
+            channel = grpc.aio.secure_channel(service.target, credentials)
         else:
-            channel = grpc.insecure_channel(service.target)
+            channel = grpc.aio.insecure_channel(service.target)
 
         reflection_outcome = "error"
         span_context = create_child_span(
@@ -1148,7 +1145,9 @@ class GrpcService:
             raise
 
         finally:
-            channel.close()
+            closed = channel.close()
+            if inspect.isawaitable(closed):
+                await closed
             grpc_reflection_counter.labels(service=service.slug, outcome=reflection_outcome).inc()
             span_context.__exit__(*sys.exc_info())
 
@@ -1472,6 +1471,13 @@ class GrpcService:
                 # per call so a live schema change cannot collide with descriptors
                 # already loaded by a prior invocation on the same channel.
                 metadata_decrypted = _resolve_grpc_metadata(service)
+                # The cached channel is a grpc.aio channel and therefore bound
+                # to this event loop, so the loop is part of the cache identity
+                # (design §53).
+                try:
+                    loop_id: Optional[int] = id(asyncio.get_running_loop())
+                except RuntimeError:
+                    loop_id = None
                 cache_key = runtime_cache.key_for(
                     service.id,
                     getattr(service, "active_schema_hash", None) or getattr(service, "reflected_schema_hash", None),
@@ -1480,6 +1486,7 @@ class GrpcService:
                     service.tls_cert_path,
                     service.tls_key_path,
                     metadata_decrypted,
+                    loop_id,
                 )
                 cache_entry = runtime_cache.acquire(
                     cache_key,

@@ -24,7 +24,7 @@
 | T7.1 | GrpcProtocolAdapter（§47，duck-typed endpoint） | — | ✅ `5ab7bec` |
 | T7.2 | unary_unary / unary_stream 适配（§48 前两类） | T7.1 | ✅ `5ab7bec` |
 | T7.3 | StreamLimiter（§52） | — | ✅ `5ab7bec` |
-| T7.4 | grpc.aio.Channel 迁移（§53，保留 RuntimeCache） | — | ⏳ 已规划+已探明波及面（见下），推迟为独立专项 |
+| T7.4 | grpc.aio.Channel 迁移（§53，保留 RuntimeCache） | — | ✅ 见下「T7.4 细化」 |
 | T7.5 | client-stream / bidi 两类 RPC（§48 后两类） | T7.4 | ⏳ 随 T7.4 专项 |
 | T7.6 | Cancellation 传播（§54） | T7.4 | ⏳ 随 T7.4 专项 |
 | T7.7 | gRPC Status Detail → Error Model（§55） | — | ✅ `a1ecf97` |
@@ -99,10 +99,26 @@
 
 - `tests/unit/mcpgateway/test_translate_grpc.py` **16 个用例失败**（断言同步 channel / 同步 stub 的实现细节）：`test_start_insecure_channel`、`test_start_secure_channel_with_certs/without_certs`、`test_start_trusted_local_skips_validation`、`test_discover_services_success/skip_reflection_service/error`、`test_endpoint_start_without_reflection`、`test_endpoint_start_with_tls_and_reflection`、`test_discover_services_success_no_grpc`、`test_discover_services_ignores_non_list_services_response`、`test_discover_service_details_success/ignores_non_descriptor_response/skips_unrelated_service`、`test_invoke_and_invoke_streaming_without_grpc`、`test_invoke_streaming_rpc_error`。这些断言的是 §53 **刻意要改掉**的同步行为，需按「保持原测试意图、改写断言目标」更新。
 - **一致性硬约束**：`GrpcEndpoint` 改为 aio 后，`GrpcRuntimeCache._build_channel` 仍建**同步** channel 并注入，属未定义行为；`grpc_service.py` 仍用同步 `ServerReflectionStub`（line 289）与自带反射 executor（line 322）。因此 T7.4a/b/c 必须**一次性成套**落地，不可只提交 `translate_grpc.py`。
-- **决策**：鉴于该路径（gRPC 反射/registry/invoke）当前生产可用、且无法本地 E2E 验证，本次将其**推迟为独立专项**，先完成 T4.4 / T8.2 等低风险自包含任务。T7.5/T7.6/T7.8/T7.9 一并顺延至该专项之后。
+- **决策（已修订）**：该专项已一次性完成（见下「T7.4 实施结果」）。
 
 
 **测试文件**
 - `tests/unit/mcpgateway/protocols/grpc/test_grpc_adapter.py`（扩展）
 - `tests/unit/mcpgateway/services/test_grpc_runtime_cache.py`（loop 亲和新增用例）
+
+## T7.4 实施结果
+
+**成套落地**（a+b+c 一次提交，避免「aio endpoint + sync channel」的不一致中间态）：
+
+- `translate_grpc.GrpcEndpoint`：`grpc.aio.secure_channel` / `insecure_channel`；一元调用改为 `call = unary(...)` → `await call`（元数据/状态码挂在 **call 对象**上，不在可调用体上）；`invoke_streaming` 改原生 `async for`；`close()` 兼容协程。
+- 反射发现：新增 `_collect_reflection_responses(channel, requests, timeout, metadata)` —— 反射 `ServerReflectionInfo` 是 **bidi**，用泛型 `stream_stream` 完成 write→done_writing→drain；`_discover_services` / `_discover_service_details` 改用它，移除 executor 卸载（`_run_bounded_blocking_call` 删除）。
+- `grpc_service`：反射改用 aio channel 与上述收集器；`key_for` 追加 `loop_id`（channel 绑定创建时的 event loop）。
+- `grpc_runtime_cache`：`_build_channel` 建 aio channel；`_CacheEntry` 记录 `loop`；`close()` 把协程 `run_coroutine_threadsafe` 回宿主 loop（无活动 loop 时丢弃协程，不泄漏、不阻塞缓存锁）；缓存键折入 loop 身份。
+
+**测试更新**：`test_translate_grpc.py`（16 例）、`test_grpc_service.py`、`test_grpc_service_no_grpc.py` 改为断言 aio 形状（aio channel 构造、`_collect_reflection_responses` 替身、awaitable call 对象、`await code()`）；`test_grpc_runtime_cache.py` 新增 loop 亲和 9 例。全部**保留原测试意图**，只改断言目标。
+
+**验证**
+- 单元：286 passed（translate_grpc + services/test_grpc_* + protocols/grpc）
+- **集成（真实 gRPC server）**：`tests/integration/test_grpc_full_chain.py --with-integration` **35 passed** —— 覆盖反射全链、一元/服务端流、deadline、metadata 鉴权、无反射 proto 导入、schema v1→v2、并发（同方法/跨方法/跨服务/流式混合/channel 池压力）、大消息（1MB/4MB/批量/并发）。
+- **集成测试捕获到 2 个 mock 无法发现的真实缺陷**：① `unary.code()` 误用在可调用体而非 call 对象上；② grpc.aio 的 `Call.code()` 是**协程**（与同步 API 不同）。均已修复。
 

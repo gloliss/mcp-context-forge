@@ -28,13 +28,18 @@ Design constraints:
 * Refcount-safety. ``acquire``/``release`` pairs the caller (``invoke_method``)
   must balance, even on exception, so ``close`` of an evicted channel never
   races an active call.
-* Non-serialized. ``invoke`` itself still performs its sync RPC on the asyncio
-  executor; this cache only removes the per-call construction overhead.
+* Event-loop affine.  The cached channel is a ``grpc.aio.Channel`` (design
+  §53), which binds to the event loop it was created on.  The loop identity is
+  folded into the cache key, so two loops in one process never share a channel;
+  each gets its own entry.  Closing an aio channel is a coroutine, so eviction
+  schedules the close on the owning loop instead of blocking the cache lock.
 """
 
 # Standard
+import asyncio
 from collections import OrderedDict
 import hashlib
+import inspect
 from pathlib import Path
 import threading
 from typing import Any, Optional
@@ -82,6 +87,8 @@ def _tls_material_digest(path: Optional[str]) -> Optional[str]:
         # Channel construction reports the actionable file error. Preserve a
         # deterministic identity here so key derivation itself stays side-effect free.
         return "unreadable"
+
+
 class GrpcRuntimeCache:
     """Process-local LRU cache of reusable gRPC runtime resources.
 
@@ -118,6 +125,7 @@ class GrpcRuntimeCache:
         tls_cert_path: Optional[str],
         tls_key_path: Optional[str],
         metadata: dict[str, str],
+        loop_id: Optional[int] = None,
     ) -> str:
         """Derive the cache identity for a registered service configuration.
 
@@ -125,6 +133,11 @@ class GrpcRuntimeCache:
         id is not part of the identity because the same hash can be reached via
         several artifact versions). All connection-affecting fields are folded
         in so a config edit invalidates the entry.
+
+        ``loop_id`` is folded in because an aio channel is bound to the event
+        loop that created it (design §53).  Two loops in one process must never
+        share a channel, so they get distinct keys — and therefore distinct
+        entries — without invalidating each other's cached schema work.
 
         Args:
             service_id: Registered gRPC service ID.
@@ -136,6 +149,8 @@ class GrpcRuntimeCache:
             tls_cert_path: Optional client certificate path.
             tls_key_path: Optional client private key path.
             metadata: Decrypted per-service gRPC metadata headers.
+            loop_id: ``id()`` of the event loop the channel will serve, or
+                ``None`` when the caller is not loop-bound.
 
         Returns:
             Deterministic cache key string.
@@ -153,6 +168,7 @@ class GrpcRuntimeCache:
             "tls_cert_digest": _tls_material_digest(tls_cert_path) if tls_enabled else None,
             "tls_key_digest": _tls_material_digest(tls_key_path) if tls_enabled else None,
             "metadata": {str(key): str(value) for key, value in metadata.items()},
+            "loop_id": loop_id,
         }
         fingerprint = hashlib.sha256(orjson.dumps(fingerprint_material, option=orjson.OPT_SORT_KEYS)).hexdigest()
         return f"v1:{service_id!s}:{fingerprint}"
@@ -181,6 +197,14 @@ class GrpcRuntimeCache:
         Returns:
             A live ``_CacheEntry`` with ``refcount`` already incremented.
         """
+        # The aio channel binds to the loop that creates it, so the entry
+        # records its owner and closing an evicted entry is scheduled back onto
+        # that loop (design §53).
+        try:
+            owning_loop: Optional[Any] = asyncio.get_running_loop()
+        except RuntimeError:
+            owning_loop = None
+
         with self._lock:
             entry = self._entries.get(key)
             if entry is not None:
@@ -193,6 +217,7 @@ class GrpcRuntimeCache:
                 pool=descriptor_pool.DescriptorPool() if GRPC_AVAILABLE else None,
                 method_classes={},
                 refcount=1,
+                loop=owning_loop,
             )
             self._entries[key] = entry
             self._entries.move_to_end(key)
@@ -244,6 +269,7 @@ class GrpcRuntimeCache:
             if matches:
                 logger.info("Invalidated %d gRPC runtime entr%s for service %s", len(matches), "y" if len(matches) == 1 else "ies", service_id)
             return len(matches)
+
     def clear(self) -> None:
         """Drop every entry, closing those with no active caller.
 
@@ -282,9 +308,9 @@ class GrpcRuntimeCache:
 class _CacheEntry:
     """One cached gRPC runtime bundle (channel + descriptor pool + message classes)."""
 
-    __slots__ = ("channel", "pool", "method_classes", "refcount")
+    __slots__ = ("channel", "pool", "method_classes", "refcount", "loop")
 
-    def __init__(self, channel: Any, pool: Any, method_classes: dict[str, Any], refcount: int) -> None:
+    def __init__(self, channel: Any, pool: Any, method_classes: dict[str, Any], refcount: int, loop: Optional[Any] = None) -> None:
         """Initialize a cache entry.
 
         Args:
@@ -292,22 +318,56 @@ class _CacheEntry:
             pool: Private descriptor pool populated with the service schema.
             method_classes: Cache of full message type name to ``MessageClass``.
             refcount: Number of live holders of this entry.
+            loop: The event loop the channel was created on, or ``None`` when
+                the entry was built outside a running loop.  Required to close
+                an aio channel safely from the synchronous cache-eviction path.
         """
         self.channel = channel
         self.pool = pool
         self.method_classes = method_classes
         self.refcount = refcount
+        self.loop = loop
 
     def close(self) -> None:
-        """Close the underlying channel and drop the descriptor pool."""
+        """Close the underlying channel and drop the descriptor pool.
+
+        Called from synchronous cache paths (release, invalidate, eviction)
+        while the cache lock is held.  A ``grpc.aio`` channel closes with a
+        coroutine, so the close is *scheduled* on the owning loop rather than
+        awaited here — blocking the lock on a loop would deadlock the very
+        requests the cache exists to serve.
+        """
         if self.channel is not None:
             try:
-                self.channel.close()
+                result = self.channel.close()
+                if inspect.isawaitable(result):
+                    _schedule_close(result, self.loop)
             except Exception as exc:  # pylint: disable=broad-except
                 logger.warning("Failed to close cached gRPC channel: %s", exc)
             self.channel = None
         self.pool = None
         self.method_classes = {}
+        self.loop = None
+
+
+def _schedule_close(coro: Any, loop: Optional[Any]) -> None:
+    """Schedule an aio channel close on its owning loop, or discard it.
+
+    Args:
+        coro: The close coroutine returned by ``grpc.aio``.
+        loop: The loop the channel belongs to, or ``None`` if unknown.
+    """
+    if loop is not None and not loop.is_closed() and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(coro, loop)
+            return
+        except RuntimeError as exc:  # pragma: no cover - loop raced shutdown
+            logger.debug("Unable to schedule gRPC channel close: %s", exc)
+    # No live loop to run on: close the coroutine object so it is not reported
+    # as "never awaited".  The transport is torn down with the process anyway.
+    close = getattr(coro, "close", None)
+    if callable(close):
+        close()
 
 
 def _build_channel(
@@ -316,7 +376,7 @@ def _build_channel(
     tls_cert_path: Optional[str],
     tls_key_path: Optional[str],
 ) -> Optional[Any]:
-    """Create a grpc channel with keepalive enabled.
+    """Create a grpc.aio channel with keepalive enabled.
 
     Args:
         target: Upstream ``host:port``.
@@ -325,7 +385,8 @@ def _build_channel(
         tls_key_path: Client key path for mTLS, or None.
 
     Returns:
-        A configured gRPC channel, or None when the gRPC runtime is unavailable.
+        A configured ``grpc.aio`` channel, or None when the gRPC runtime is
+        unavailable.
     """
     if not GRPC_AVAILABLE:
         return None
@@ -352,8 +413,8 @@ def _build_channel(
                 raise ValueError(f"Unable to read TLS certificate or key file: {exc}") from exc
         else:
             credentials = grpc.ssl_channel_credentials()
-        return grpc.secure_channel(target, credentials, options=options)
-    return grpc.insecure_channel(target, options=options)
+        return grpc.aio.secure_channel(target, credentials, options=options)
+    return grpc.aio.insecure_channel(target, options=options)
 
 
 # Module-level singleton. ``invoke_method`` acquires/releases on this instance;
