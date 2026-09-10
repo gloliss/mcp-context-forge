@@ -83,13 +83,17 @@ class TestWsdlContractProvider:
         assert operation.key == "ReportService:ReportPort:{urn:report}ReportBinding:QueryReport"
         assert operation.protocol == "http"
         assert operation.source_operation_id == "QueryReport"
-        assert operation.request["base_url"] == "http://report.internal/soap"
-        assert operation.request["method"] == "POST"
-        assert operation.request["path_template"] == "/soap"
-        assert operation.request["body"]["codec"] == "soap"
-        assert operation.response["codec"] == "soap"
-        assert operation.extensions["soap"]["version"] == "1.1"
-        assert operation.extensions["soap"]["soapAction"] == "urn:report#QueryReport"
+        # A SOAP operation now compiles to the same typed HTTP contracts an
+        # OpenAPI one does (design §31), with the SOAP specifics in typed
+        # fields rather than in UI-only extensions.
+        assert operation.request.method == "POST"
+        assert operation.request.path_template == "/soap"
+        assert operation.request.bodies[0].codec == "soap"
+        assert operation.request.bodies[0].media_type == "text/xml"
+        assert operation.response.codec == "soap"
+        assert operation.soap_binding["version"] == "1.1"
+        assert operation.soap_binding["soapAction"] == "urn:report#QueryReport"
+        assert operation.extensions["service"] == "ReportService"
 
     async def test_source_hash_is_content_hash(self):
         """The catalog source hash is the artifact payload SHA-256."""

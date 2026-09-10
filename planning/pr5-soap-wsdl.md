@@ -24,7 +24,7 @@
 | T5.3 | SOAP runtime 完整接线：HttpAdapter 集成 SoapCodec + soap headers + Fault 映射 | T5.2 | ✅ `1487619`（见下「T5.3 细化」） |
 | T5.4 | SOAP Fault → Error Model（§34） | T5.2 | ✅ `da5883f` |
 | T5.5 | 依赖 `zeep` → soap extra（§35） | — | ✅ `da5883f` |
-| T5.6 | SOAP full chain 测试（§63：本地 WSDL server → 生成工具 → SOAP 调用） | T5.1–5.5 + E2E 环境 | ⏳ 含「T5.6 已识别缺口」3 项 |
+| T5.6 | SOAP full chain 测试（§63：本地 WSDL server → 生成工具 → SOAP 调用） | T5.1–5.5 | ✅ `tests/integration/test_soap_full_chain.py`（见下「T5.6 实施结果」） |
 
 ## 验收标准（§63/§82 DoD）
 
@@ -101,3 +101,19 @@ T5.3 只打通了「已有 protocol_config 的 SOAP 工具 → 运行时」；**
 2. **字段命名不一致**：WSDL provider 用 snake（`path_template`、`base_url`、`response.preferred_media_types`），而运行时/decoder 读 camel（`pathTemplate`、`response.preferredMediaTypes`）。T5.3 已让 SOAP 绑定块（`request.soap` / `extensions.soap`）双读兼容，但 path/响应媒体类型两处尚未统一。
 3. **`test_soap_full_chain`（§60/§63）**：本地 WSDL server → 注册 → 生成工具 → SOAP 调用，依赖 E2E 环境。
 
+
+## T5.6 实施结果
+
+三项已识别缺口全部关闭：
+
+1. **WSDL operation 进入 `OperationToolCompiler`**：`WsdlContractProvider` 不再产出普通 dict，改为产出**类型化 HTTP 契约**（`HttpRequestContract` / `HttpResponseContract` / `HttpBodyVariant` / `HttpResponseVariant`），因此 SOAP operation 与 OpenAPI operation 走**同一个** `OperationToolCompiler`（§31），无需新增编译分支。
+2. **命名与载体统一**：字段命名不一致随类型化契约消失；SOAP 绑定的载体按 `OperationDefinition` 自身规则（「runtime-required 信息必须放类型化字段，不得放 extensions」）新增类型化字段 **`soap_binding`**，由编译器写入 `protocol_config.request.soap`，运行时 `resolve_soap_config` 直接命中。
+3. **响应 codec 可声明**：`HttpResponseContract` 新增 `codec`，编译器在声明时用它替代 `"auto"`。这一点是 SOAP 1.1 的**必需项**——1.1 响应是 `text/xml`，若不钉住 `soap`，响应会被 XmlCodec 解码、Fault 被当作成功数据返回。
+
+**新增 full-chain 集成测试**：`tests/integration/test_soap_full_chain.py` —— 真实本地 HTTP SOAP 端点（非 mock），覆盖 WSDL → provider → compiler → `LegacyRestContractBuilder`（复刻 ToolService 的真实交接）→ adapter → SoapCodec → 真实 HTTP：
+- 成功调用：上游实际收到 `SOAPAction` 头、`text/xml` Content-Type、含 `soap:Envelope`/`QueryRequest`/参数的请求体；响应解码为 `{"QueryResponse": {"status": "OK"}}`
+- Fault：`soap:Client` → `INVALID_ARGUMENT`，保留 code/faultstring/safe detail，不透传 stack
+
+**验证**：单元 protocols 套件 + 编译器 + http registry/schema/yaml 全绿；集成 `--with-integration` 20 passed（SOAP 3 + HTTP full chain 17）。
+
+**T5.6 测试过程中发现的真实问题**：初版测试直接用类型化契约构造运行时 operation，暴露出运行时实际经 `LegacyRestContractBuilder` 重建 **dict 形状**的 operation（类型化契约只是编译器的输入）。已按真实交接路径重写测试，避免了一个「测的不是生产路径」的假验证。

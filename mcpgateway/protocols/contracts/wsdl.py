@@ -30,6 +30,12 @@ from zeep import Client, Transport
 from zeep.exceptions import Error as ZeepError
 
 # First-Party
+from mcpgateway.protocols.http.models import (
+    HttpBodyVariant,
+    HttpRequestContract,
+    HttpResponseContract,
+    HttpResponseVariant,
+)
 from mcpgateway.protocols.contracts.models import (
     ContractArtifact,
     ContractDiagnostic,
@@ -62,6 +68,41 @@ class _LocalOnlyTransport(Transport):
             return Path(urlparse(url).path).read_bytes()
         # Bare paths are treated as local files.
         return Path(url).read_bytes()
+
+
+def _input_schema(input_type: Any, operation: Any) -> Optional[dict[str, Any]]:
+    """Derive the request JSON Schema from a zeep input type.
+
+    Args:
+        input_type: The zeep input body type.
+        operation: The zeep operation (used only for the fallback name).
+
+    Returns:
+        A JSON Schema fragment, or ``None`` when no signature is available.
+        The derived schema is intentionally shallow — its job is to describe
+        the request body for a tool listing, not to re-implement XSD.
+    """
+    signature = getattr(operation.input, "signature", None)
+    if callable(signature):
+        try:
+            return {"type": "object", "description": str(signature())}
+        except Exception:  # pylint: disable=broad-except
+            return None
+    name = getattr(input_type, "name", None)
+    return {"type": "object"} if name else None
+
+
+def _output_schema(output_type: Any) -> Optional[dict[str, Any]]:
+    """Derive the response JSON Schema from a zeep output type.
+
+    Args:
+        output_type: The zeep output body type.
+
+    Returns:
+        A JSON Schema fragment describing the response envelope body.
+    """
+    name = getattr(output_type, "name", None)
+    return {"type": "object"} if name else None
 
 
 class WsdlContractProvider:
@@ -176,18 +217,37 @@ class WsdlContractProvider:
             "soapAction": getattr(operation, "soapaction", None),
         }
 
-        request = {
-            "base_url": address or "",
-            "method": "POST",
-            "path_template": path,
-            "content_type": content_type,
-            "body": {"codec": "soap", "mediaType": content_type},
-        }
-        response = {
-            "codec": "soap",
-            "preferred_media_types": ("application/soap+xml", "text/xml"),
-            "output_signature": operation.output.signature() if output_type is not None else None,
-        }
+        # Typed HTTP contracts, so a SOAP operation is compiled by the same
+        # OperationToolCompiler as an OpenAPI one (design §31).  The SOAP
+        # specifics travel in typed fields: the body codec, the response
+        # codec (SOAP 1.1 replies arrive as text/xml) and ``soap_binding``.
+        input_schema = _input_schema(input_type, operation)
+        request = HttpRequestContract(
+            method="POST",
+            path_template=path,
+            parameters=(),
+            bodies=(
+                HttpBodyVariant(
+                    media_type=content_type,
+                    codec="soap",
+                    schema=input_schema,
+                    required=True,
+                ),
+            ),
+        )
+        response = HttpResponseContract(
+            variants=(
+                HttpResponseVariant(
+                    status_code="200",
+                    media_type=content_type,
+                    schema=_output_schema(output_type),
+                    description="SOAP response envelope",
+                ),
+            )
+            if output_type is not None
+            else (),
+            codec="soap",
+        )
 
         return OperationDefinition(
             key=f"{service_name}:{port_name}:{binding_name}:{operation_name}",
@@ -197,8 +257,8 @@ class WsdlContractProvider:
             description=None,
             request=request,
             response=response,
+            soap_binding=soap,
             extensions={
-                "soap": soap,
                 "service": service_name,
                 "port": port_name,
                 "binding": binding_name,

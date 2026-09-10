@@ -107,6 +107,12 @@ class HttpResponseContract:
     Attributes:
         variants: All response variants across status codes, in contract
             order (2xx first for determinism, then others).
+        codec: The codec the contract requires for decoding the response,
+            or ``None`` to let the runtime resolve one from the response
+            ``Content-Type`` (design §70).  A SOAP operation pins ``"soap"``
+            here: SOAP 1.1 responses arrive as ``text/xml``, which would
+            otherwise decode as plain XML and hide a Fault.
     """
 
     variants: tuple[HttpResponseVariant, ...] = ()
+    codec: str | None = None

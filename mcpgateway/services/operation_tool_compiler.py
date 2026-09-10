@@ -203,12 +203,17 @@ class OperationToolCompiler:
     @staticmethod
     def _compile_protocol_config(operation, method: str, path_template: str, body_variant, picked_response) -> dict[str, Any]:
         """Build the strict §18 protocol_config payload (no JSON Schema inside)."""
+        # A contract may pin the response codec (a SOAP operation does: SOAP
+        # 1.1 replies arrive as text/xml and would otherwise decode as plain
+        # XML, hiding a Fault).  Nothing pinned means the runtime resolves one
+        # from the response Content-Type (design §70).
+        declared_response_codec = getattr(operation.response, "codec", None)
         protocol_config: dict[str, Any] = {
             "version": 1,
             "operationRef": operation.key,
             "request": {"method": method, "pathTemplate": path_template},
             "response": {
-                "codec": "auto",
+                "codec": declared_response_codec or "auto",
                 "preferredMediaTypes": [picked_response.media_type] if picked_response is not None else [],
             },
             "streaming": {"mode": "none"},
@@ -216,6 +221,12 @@ class OperationToolCompiler:
         if body_variant is not None:
             protocol_config["request"]["preferredContentType"] = body_variant.media_type
             protocol_config["request"]["body"] = {"codec": body_variant.codec, "mediaType": body_variant.media_type}
+        # The SOAP binding is runtime-required (envelope + transport headers),
+        # so it is carried in protocol_config rather than left behind with the
+        # UI-only operation extensions (design §18/§32).
+        soap_binding = getattr(operation, "soap_binding", None)
+        if soap_binding:
+            protocol_config["request"]["soap"] = dict(soap_binding)
         return protocol_config
 
     @staticmethod
