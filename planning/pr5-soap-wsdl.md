@@ -21,7 +21,7 @@
 |---|---|---|---|
 | T5.1 | WsdlContractProvider（§31） | — | ✅ `da5883f` |
 | T5.2 | SoapCodec（§33） | T4.x | ✅ `da5883f` |
-| T5.3 | SOAP runtime 完整接线：HttpAdapter 集成 SoapCodec + soap headers + Fault 映射 | T5.2 | ✅ `2042e8c`（见下「T5.3 细化」） |
+| T5.3 | SOAP runtime 完整接线：HttpAdapter 集成 SoapCodec + soap headers + Fault 映射 | T5.2 | ✅ `1487619`（见下「T5.3 细化」） |
 | T5.4 | SOAP Fault → Error Model（§34） | T5.2 | ✅ `da5883f` |
 | T5.5 | 依赖 `zeep` → soap extra（§35） | — | ✅ `da5883f` |
 | T5.6 | SOAP full chain 测试（§63：本地 WSDL server → 生成工具 → SOAP 调用） | T5.1–5.5 + E2E 环境 | ⏳ 含「T5.6 已识别缺口」3 项 |
