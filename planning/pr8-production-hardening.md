@@ -1,0 +1,67 @@
+# PR8 — Production Hardening（§56–§64）
+
+**目标**：不增加新的协议类型，只做生产化：监控、契约测试、Activation Gate、full-chain 集成、外部引用安全、Auth/Secret 审计、Retry/Limits。
+**依赖**：PR4–PR7 全部
+**后继**：DoD（§82）收尾
+
+## 范围（来自设计文档）
+
+| 设计节 | 内容 |
+|---|---|
+| §57 | HttpMonitoringService + `http_health_samples` 表 + 迁移；不建 http_metrics_hourly，复用 ToolMetric |
+| §58 | HTTP Contract Testing：schemathesis，`tests/contracts/http/` |
+| §59 | Activation Gate：off/warn/strict；默认只测 GET/HEAD/OPTIONS，mutating 需显式 allow |
+| §60–§64 | 4 个 full-chain 集成测试（http/xml/soap/grpc_streaming），真实本地 upstream |
+| §66 | SafeReferenceFetcher + ContractArtifactResolver：外部 $ref/WSDL import/XSD include 走 SSRF 策略 |
+| §67 | Auth/Secret：protocol_config/runtime_config/YAML 拒绝明文 secret |
+| §68 | HTTP Retry：GET/HEAD/OPTIONS 默认自动；PUT/DELETE 结合幂等；POST/PATCH 不盲试 |
+| §69 | HTTP Limits：connect/read/write timeout、max request/response bytes、max redirect hops |
+| §73 | Error Mapping 表（HTTP/XML/SOAP/gRPC → canonical categories） |
+
+## 任务清单
+
+| 任务 | 内容 | 依赖 | 状态 |
+|---|---|---|---|
+| T8.1 | HttpMonitoringService + `http_health_samples` 表 + 迁移 `6d7e8f9a0b1c`（§57） | — | ✅ `208d896` |
+| T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ⏳（依赖 E2E 环境验证） |
+| T8.3 | Activation Gate off/warn/strict（§59） | T8.2 | ⏳ |
+| T8.4a | `test_http_full_chain` 最小集扩展（§61） | — | ⏳（依赖 E2E 环境） |
+| T8.4b | `test_xml_http_full_chain`（§62） | T4.x | ⏳ |
+| T8.4c | `test_soap_full_chain`（§63） | T5.x | ⏳ |
+| T8.4d | `test_grpc_streaming_full_chain`（§64） | T7.5 | ⏳ |
+| T8.5a | SafeReferenceFetcher（§66） | — | ✅ `208d896` |
+| T8.5b | ContractArtifactResolver 完整接线（外部引用物化） | T8.5a | ⏳ |
+| T8.6 | Auth/Secret 审计：拒绝明文 secret（§67） | — | ✅ `(secret_policy)` |
+| T8.7 | HTTP Retry / Limits / Error Mapping（§68/§69/§73） | — | ✅ `a399092` |
+
+## 验收标准（§82 DoD）
+
+- Health 样本落库、Metrics 复用 ToolMetric
+- Contract test 检测 5xx / schema mismatch / invalid input / response contract mismatch
+- Activation Gate 默认不 fuzz mutating operations
+- 四个 full-chain 集成测试用真实 upstream 通过
+- 外部引用获取受 SSRF 策略约束、大小受限
+- 明文 secret 被 schema/API 拒绝
+- Retry 仅对安全方法生效；HTTP/gRPC/SOAP/XML 错误映射到 canonical categories
+
+## 测试要求
+
+- `tests/unit/mcpgateway/db/test_http_health_samples_migration.py`
+- `tests/unit/mcpgateway/utils/test_safe_reference_fetcher.py`
+- `tests/unit/mcpgateway/utils/test_secret_policy.py`
+- `tests/unit/mcpgateway/schemas/test_runtime_config_secret_policy.py`
+- `tests/unit/mcpgateway/protocols/http/test_error_mapping.py`
+- `tests/contracts/http/` + `tests/integration/test_*_full_chain.py`（待 E2E 环境）
+
+## 交付信息（§80）
+
+1. Changed files：`services/http_monitoring_service.py`、`schemas.py`、`services/proto_scan_service.py`、`protocols/http/adapter.py`
+2. New files：`utils/safe_reference_fetcher.py`、`utils/secret_policy.py`
+3. DB migration：`6d7e8f9a0b1c_add_http_health_samples`
+4. Behavior change：400→INVALID_ARGUMENT（§73）；runtime_config 拒绝明文 secret；健康样本落库
+5. Backward compat：旧工具 runtime_config 为 NULL 走默认
+6. Security：SSRF 策略 + 明文拒绝
+7. Tests added：若干
+8. Tests executed：utils/schemas/protocols/db migration
+9. Known limitations：T8.2–8.4（schemathesis/full-chain）依赖 E2E 环境；T8.3/8.5b 待续
+10. Next PR dependency：无（收尾 DoD §82）
