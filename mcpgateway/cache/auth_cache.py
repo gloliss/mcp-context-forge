@@ -519,6 +519,32 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_user failed: {e}")
 
+    def evict_revocation_local(self, jti: str) -> None:
+        """Synchronously evict this worker's (L1) state for a revoked token.
+
+        Split out of :meth:`invalidate_revocation` so synchronous callers — most
+        importantly ``TokenBlocklistService.revoke_token``, which is called from
+        both async request handlers and worker threads — can guarantee that the
+        local process stops honouring a revoked token immediately, without
+        needing a running event loop.
+
+        Without this eviction a context entry cached as ``is_token_revoked=False``
+        by a prior authenticated request keeps the revoked token usable until its
+        TTL expires (``auth_cache_revocation_ttl``, 30s by default).
+
+        Args:
+            jti: JWT ID of the revoked token.
+        """
+        with self._lock:
+            # Add to local revoked set for fast lookup
+            self._revoked_jtis.add(jti)
+            self._revocation_cache.pop(jti, None)
+
+            # Clear any context cache entries with this JTI
+            keys_to_remove = [k for k in self._context_cache if k.endswith(f":{jti}")]
+            for key in keys_to_remove:
+                self._context_cache.pop(key, None)
+
     async def invalidate_revocation(self, jti: str) -> None:
         """Invalidate cache for a revoked token.
 
@@ -534,15 +560,9 @@ class AuthCache:
         """
         logger.debug(f"AuthCache: Invalidating revocation cache for jti={jti[:8]}...")
 
-        # Add to local revoked set for fast lookup
-        with self._lock:
-            self._revoked_jtis.add(jti)
-            self._revocation_cache.pop(jti, None)
-
-            # Clear any context cache entries with this JTI
-            keys_to_remove = [k for k in self._context_cache if k.endswith(f":{jti}")]
-            for key in keys_to_remove:
-                self._context_cache.pop(key, None)
+        # Evict local (L1) state first so this worker stops honouring the token
+        # even if the Redis update below is unavailable.
+        self.evict_revocation_local(jti)
 
         # Update Redis
         redis = await self._get_redis_client()

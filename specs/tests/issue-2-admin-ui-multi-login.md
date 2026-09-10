@@ -57,13 +57,16 @@ uv run --frozen pytest tests/unit/mcpgateway/test_admin_multi_login.py -q
 1. **尾斜杠**：探测路径须用 `/admin/`。Starlette 对 `/admin` 发 307 跳转到 `/admin/`，若按 `/admin` 断言 200，健康会话也会被误判为"被顶掉"。
 2. **登出后断言**：只断言"浏览器会话已登出"（cookie 被清 + 面板重定向到 `/admin/login`），不复用旧 token 立即断言服务端已拒绝。
 
-### 相邻发现（不在本需求范围，仅记录）
+### 相邻发现（不在本需求范围，已修复）
 
-登出会把 `jti` 写入吊销名单，但**吊销生效存在约 30s 延迟**：实网测得登出后 0/5/15s 旧 token 仍可访问 `/admin/`，约 +31s 起返回 `302 → /admin/login?error=token_revoked`。
+登出会把 `jti` 写入吊销名单，但**吊销生效曾存在约 30s 延迟**：实网测得登出后 0/5/15s 旧 token 仍可访问 `/admin/`，约 +31s 起才返回 `302 → /admin/login?error=token_revoked`。
 
-根因：`TokenBlocklistService.revoke_token`（`mcpgateway/services/token_blocklist_service.py:83`）写入 DB 与 Redis（`token:revoked:{jti}`）后，**未失效 `auth_cache` 的负向吊销缓存**（`AuthCache.set_not_revoked`，TTL = `auth_cache_revocation_ttl` 默认 30s）。`auth_cache.invalidate_revocation()` 的文档注释描述了"吊销时原子驱逐、不存在 stale False 窗口"这一预期契约，但登出路径未调用它。
+根因：`TokenBlocklistService.revoke_token`（`mcpgateway/services/token_blocklist_service.py`）写入 DB 与 Redis（`token:revoked:{jti}`）后，**未失效 `auth_cache` 的负向吊销缓存**（`AuthCache.set_not_revoked`，TTL = `auth_cache_revocation_ttl` 默认 30s）。`auth_cache.invalidate_revocation()` 的文档注释描述了"吊销时原子驱逐、不存在 stale False 窗口"这一预期契约，但登出路径未调用它。（`TokenCatalogService` 吊销 API token 时本就调用了该失效，只有会话 token 这条路径漏了。）
 
-> 该问题与"多端登录互不顶掉"无关（AC-2 只要求"登出 A 不影响 B"，已通过），故不纳入本需求；如需修复应另立需求。
+修复：`revoke_token` 现在调用新增的 `TokenBlocklistService._invalidate_auth_cache`——先同步执行 `AuthCache.evict_revocation_local`（无需事件循环，覆盖 `asyncio.to_thread` 等 worker 线程调用），再在有运行中事件循环时 fire-and-forget `auth_cache.invalidate_revocation` 以发布跨 worker 的 Redis 标记。回归用例见 `tests/unit/mcpgateway/test_token_blocklist_service.py::TestRevocationInvalidatesAuthCache`（已验证：去掉修复后两个用例失败）。
+
+> 该问题与"多端登录互不顶掉"无关（AC-2 只要求"登出 A 不影响 B"，本就通过），故未纳入本需求的验收范围，仅在此记录。
+> 注意：本次修复仅在本地单测/代码层面验证；10.10.100.15:4444 运行的是旧镜像，需重新构建并部署后才能实网复验。
 
 ## 5. 门禁与命令
 

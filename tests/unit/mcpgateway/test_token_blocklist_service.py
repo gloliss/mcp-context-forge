@@ -18,6 +18,7 @@ Tests cover:
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import sys
+import time
 from unittest.mock import MagicMock, patch
 import uuid
 
@@ -709,3 +710,75 @@ class TestIsTokenRevokedFreshSession:
             result = service.is_token_revoked(str(uuid.uuid4()))
 
         assert result is True
+
+
+class TestRevocationInvalidatesAuthCache:
+    """A revoked token must stop being accepted immediately.
+
+    Regression for the ~30s window in which ``AuthCache`` kept serving a
+    ``is_token_revoked=False`` entry cached by a prior authenticated request, so
+    a logged-out session token still authorised the Admin UI until the cache TTL
+    (``auth_cache_revocation_ttl``, 30s) expired.
+
+    The service is invoked from a synchronous test (no running event loop),
+    which also covers the worker-thread call path: the local eviction must not
+    depend on a loop being available.
+    """
+
+    @staticmethod
+    def _prime_cache(cache, email: str, jti: str):
+        """Simulate a prior successful request caching 'this token is fine'."""
+        # First-Party
+        from mcpgateway.cache.auth_cache import CachedAuthContext, CacheEntry
+
+        cache._context_cache[f"{email}:{jti}"] = CacheEntry(value=CachedAuthContext(user={"email": email}, is_token_revoked=False), expiry=time.time() + 30)
+        cache._revocation_cache[jti] = CacheEntry(value=False, expiry=time.time() + 30)
+
+    def test_revoke_token_evicts_cached_not_revoked_context(self, blocklist_service):
+        """The cached negative entry and context must be gone after revoke."""
+        # First-Party
+        from mcpgateway.cache.auth_cache import AuthCache
+
+        cache = AuthCache(enabled=True)
+        jti, email = str(uuid.uuid4()), "test@example.com"
+        self._prime_cache(cache, email, jti)
+
+        with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=cache):
+            assert blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout") is True
+
+        assert jti in cache._revoked_jtis
+        assert f"{email}:{jti}" not in cache._context_cache
+        assert jti not in cache._revocation_cache
+
+    def test_get_auth_context_flips_to_revoked_immediately(self, blocklist_service):
+        """Deny-path: the stale 'valid' context must flip to revoked right away."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.cache.auth_cache import AuthCache
+
+        cache = AuthCache(enabled=True)
+        jti, email = str(uuid.uuid4()), "test@example.com"
+        self._prime_cache(cache, email, jti)
+
+        # Before revocation the cached negative entry is served (the bug's origin).
+        before = asyncio.run(cache.get_auth_context(email, jti))
+        assert before is not None
+        assert before.is_token_revoked is False
+
+        with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=cache):
+            blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout")
+
+        # After revocation the very next lookup must report the token as revoked,
+        # without waiting for the ~30s TTL.
+        after = asyncio.run(cache.get_auth_context(email, jti))
+        assert after is not None
+        assert after.is_token_revoked is True
+
+    def test_invalidate_failure_does_not_break_revocation(self, blocklist_service):
+        """Cache invalidation is best-effort; revocation itself must still succeed."""
+        jti = str(uuid.uuid4())
+
+        with patch("mcpgateway.cache.auth_cache.get_auth_cache", side_effect=RuntimeError("cache unavailable")):
+            assert blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout") is True

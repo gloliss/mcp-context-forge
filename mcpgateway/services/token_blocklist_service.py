@@ -147,6 +147,13 @@ class TokenBlocklistService:
                 except Exception as e:
                     logger.warning("Failed to cache revocation in Redis: %s", e)
 
+            # Invalidate the auth cache so a "not revoked" entry cached by a prior
+            # authenticated request cannot outlive the revocation. AuthCache
+            # consults its revoked-jti sets and the Redis revocation marker before
+            # the context cache, so evicting here closes the window in which a
+            # freshly revoked session token is still accepted (~30s otherwise).
+            self._invalidate_auth_cache(jti)
+
             logger.info(
                 "Token revoked: jti=%s, reason=%s, revoked_by=%s",
                 jti,
@@ -160,6 +167,42 @@ class TokenBlocklistService:
         except Exception as e:
             logger.error("Failed to revoke token %s: %s", jti, e)
             return False
+
+    def _invalidate_auth_cache(self, jti: str) -> None:
+        """Drop any cached auth context that would keep a revoked token usable.
+
+        ``AuthCache`` caches a successful authentication (including
+        ``is_token_revoked=False``) for ``auth_cache_revocation_ttl`` seconds, so
+        without this a revoked token keeps working until that entry expires.
+
+        The local (L1) eviction is done synchronously so it applies even when
+        there is no running event loop — ``revoke_token`` is also called from
+        worker threads (e.g. the session-rotation path runs inside
+        ``asyncio.to_thread``). The cross-worker Redis revocation marker is
+        published on a best-effort basis when a loop is available.
+
+        Args:
+            jti: JWT ID that was just revoked.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+
+            auth_cache = get_auth_cache()
+            auth_cache.evict_revocation_local(jti)
+
+            # Standard
+            import asyncio  # pylint: disable=import-outside-toplevel
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop (worker thread / sync caller): the synchronous
+                # L1 eviction above already covers this worker.
+                return
+            loop.create_task(auth_cache.invalidate_revocation(jti))
+        except Exception as e:  # noqa: BLE001 - cache invalidation is best-effort
+            logger.warning("Failed to invalidate auth cache for revoked token %s: %s", jti, e)
 
     def is_token_revoked(self, jti: str) -> bool:
         """Check if a token is revoked.
