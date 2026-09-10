@@ -29,8 +29,8 @@
 | T8.4b | `test_xml_http_full_chain`（§62） | T4.x | ⏳ |
 | T8.4c | `test_soap_full_chain`（§63） | T5.x | ⏳ |
 | T8.4d | `test_grpc_streaming_full_chain`（§64） | T7.5 | ⏳ |
-| T8.5a | SafeReferenceFetcher（§66） | — | ✅ `208d896` |
-| T8.5b | ContractArtifactResolver 完整接线（外部引用物化） | T8.5a | ⏳ |
+| T8.5a | SafeReferenceFetcher（§66） | — | ✅ 已在 **PR3** 实现：`services/safe_reference_fetcher.py`（含 `SafeReferenceFetcher` + `ContractArtifactResolver`） |
+| T8.5b | ContractArtifactResolver 完整接线（外部引用物化） | T8.5a | ✅ 已在 **PR3** 接线：`contract_artifact_service.prepare_artifact` → `resolve_and_bundle` |
 | T8.6 | Auth/Secret 审计：拒绝明文 secret（§67） | — | ✅ `(secret_policy)` |
 | T8.7 | HTTP Retry / Limits / Error Mapping（§68/§69/§73） | — | ✅ `a399092` |
 
@@ -56,12 +56,16 @@
 ## 交付信息（§80）
 
 1. Changed files：`services/http_monitoring_service.py`、`schemas.py`、`services/proto_scan_service.py`、`protocols/http/adapter.py`
-2. New files：`utils/safe_reference_fetcher.py`、`utils/secret_policy.py`
+2. New files：`utils/secret_policy.py`
 3. DB migration：`6d7e8f9a0b1c_add_http_health_samples`
 4. Behavior change：400→INVALID_ARGUMENT（§73）；runtime_config 拒绝明文 secret；健康样本落库
 5. Backward compat：旧工具 runtime_config 为 NULL 走默认
 6. Security：SSRF 策略 + 明文拒绝
 7. Tests added：若干
 8. Tests executed：utils/schemas/protocols/db migration
-9. Known limitations：T8.2–8.4（schemathesis/full-chain）依赖 E2E 环境；T8.3/8.5b 待续
+9. Known limitations：T8.2–8.4（schemathesis/full-chain）依赖 E2E 环境；T8.3 待续
 10. Next PR dependency：无（收尾 DoD §82）
+
+## 更正记录（2026-09-10）
+
+- §66（SafeReferenceFetcher / ContractArtifactResolver / 外部 `$ref` 物化）**在 PR3 已完整实现**于 `mcpgateway/services/safe_reference_fetcher.py`，并由 `contract_artifact_service.prepare_artifact` 调用 `resolve_and_bundle`。补建 `utils/safe_reference_fetcher.py` 属重复实现，已删除（连同其测试）。T8.5a/T8.5b 标记为「PR3 已实现」，不重复做。

@@ -8,7 +8,7 @@
 | 面 | 覆盖点 |
 |---|---|
 | 健康样本（§57） | `http_health_samples` 表迁移幂等；HttpMonitoringService 每次检查写样本 |
-| 外部引用（§66） | SafeReferenceFetcher：allowRemote=false、非法 scheme、SSRF 拒绝、传输失败、size 上限 |
+| 外部引用（§66） | 已有测试覆盖：`services/safe_reference_fetcher.py`（PR3 实现）+ `tests/unit/mcpgateway/services/` 下相关用例 |
 | Auth/Secret（§67） | `secret_policy` 检测明文；Http/Grpc Create/Update runtime_config 拒绝明文；encrypted(v2:) 放行 |
 | Error Mapping/Retry（§68/§73） | map_http_status_to_category 全表；is_retryable_http_method 矩阵 |
 | Contract Test（§58/§59，待实施） | schemathesis 对真实 upstream 跑 OpenAPI；Activation Gate off/warn/strict |
@@ -16,10 +16,10 @@
 ## 测试文件
 
 - `tests/unit/mcpgateway/db/test_http_health_samples_migration.py`
-- `tests/unit/mcpgateway/utils/test_safe_reference_fetcher.py`
 - `tests/unit/mcpgateway/utils/test_secret_policy.py`
 - `tests/unit/mcpgateway/schemas/test_runtime_config_secret_policy.py`
 - `tests/unit/mcpgateway/protocols/http/test_error_mapping.py`
+- §66 外部引用：由 PR3 的 `services/safe_reference_fetcher.py` 覆盖（测试随 PR3）
 
 ## 用例清单
 
