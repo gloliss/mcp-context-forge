@@ -33,6 +33,29 @@ SOAP12_ENVELOPE_NS = "http://www.w3.org/2003/05/soap-envelope"
 _ENVELOPE_PREFIX = "soap"
 
 
+def resolve_soap_config(protocol_config: Optional[dict]) -> dict:
+    """Return the SOAP binding block carried by a ``protocol_config``.
+
+    The binding travels on two different keys depending on how the tool was
+    produced: ``WsdlContractProvider`` attaches it to the operation's
+    ``extensions.soap``, while a registry-compiled tool carries it inline at
+    ``request.soap``.  Both are accepted here so the codec and the HTTP glue
+    (``protocols.http.soap``) always read the same block.
+
+    Args:
+        protocol_config: The tool's ``protocol_config`` (may be ``None``).
+
+    Returns:
+        The SOAP binding mapping, or an empty dict when absent.
+    """
+    if not protocol_config:
+        return {}
+    inline = (protocol_config.get("request") or {}).get("soap")
+    if inline:
+        return dict(inline)
+    return dict(protocol_config.get("extensions", {}).get("soap") or {})
+
+
 class SoapFaultError(ValueError):
     """A SOAP Fault was returned by the upstream (design §34).
 
@@ -79,7 +102,7 @@ class SoapCodec(MessageCodec):
             correct SOAP ``Content-Type``.
         """
         config = (context.protocol_config or {}).get("request") or {}
-        soap = config.get("soap") or {}
+        soap = config.get("soap") or resolve_soap_config(context.protocol_config)
         version = str(soap.get("version") or "1.1")
         operation = soap.get("operation")
         namespace = soap.get("namespace")
@@ -212,4 +235,4 @@ class SoapCodec(MessageCodec):
         return value
 
 
-__all__ = ["SOAP11_ENVELOPE_NS", "SOAP12_ENVELOPE_NS", "SoapCodec", "SoapFaultError"]
+__all__ = ["SOAP11_ENVELOPE_NS", "SOAP12_ENVELOPE_NS", "SoapCodec", "SoapFaultError", "resolve_soap_config"]

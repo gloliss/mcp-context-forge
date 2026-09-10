@@ -21,10 +21,10 @@
 |---|---|---|---|
 | T5.1 | WsdlContractProvider（§31） | — | ✅ `da5883f` |
 | T5.2 | SoapCodec（§33） | T4.x | ✅ `da5883f` |
-| T5.3 | SOAP runtime 完整接线：HttpAdapter 集成 SoapCodec + soap headers + Fault 映射 | T5.2 | ⏳ 见下「T5.3 细化」 |
+| T5.3 | SOAP runtime 完整接线：HttpAdapter 集成 SoapCodec + soap headers + Fault 映射 | T5.2 | ✅ `2042e8c`（见下「T5.3 细化」） |
 | T5.4 | SOAP Fault → Error Model（§34） | T5.2 | ✅ `da5883f` |
 | T5.5 | 依赖 `zeep` → soap extra（§35） | — | ✅ `da5883f` |
-| T5.6 | SOAP full chain 测试（§63：本地 WSDL server → 生成工具 → SOAP 调用） | T5.1–5.5 + E2E 环境 | ⏳ |
+| T5.6 | SOAP full chain 测试（§63：本地 WSDL server → 生成工具 → SOAP 调用） | T5.1–5.5 + E2E 环境 | ⏳ 含「T5.6 已识别缺口」3 项 |
 
 ## 验收标准（§63/§82 DoD）
 
@@ -41,15 +41,15 @@
 
 ## 交付信息（§80）
 
-1. Changed files：`codecs/__init__.py`、`http/response_decoder.py`
+1. Changed files：`codecs/__init__.py`、`http/response_decoder.py`、`http/adapter.py`、`http/request_builder.py`、`codecs/registry.py`
 2. New files：`protocols/codecs/soap.py`、`protocols/contracts/wsdl.py`、`protocols/http/soap.py`
 3. DB migration：无
-4. Behavior change：`application/soap+xml` 解析为 SoapCodec；response.codec=soap 支持
-5. Backward compat：text/xml 仍归 XmlCodec；SOAP 仅显式 codec/soap+xml 命中
+4. Behavior change：`application/soap+xml` 解析为 SoapCodec；response.codec=soap 支持；SOAP 请求体按 `body.codec` 名解析并带 Envelope；SOAP Fault → ProtocolError
+5. Backward compat：text/xml 仍归 XmlCodec（非 soap 配置时）；SOAP 仅显式 codec/soap+xml 命中；`RequestBuilder.build` 第三参为可选新增
 6. Security：复用 XML 安全底线；Fault 不透传内部 stack
 7. Tests added：若干单测
-8. Tests executed：protocols 套件
-9. Known limitations：HttpAdapter 完整接线（T5.3）与 SOAP full-chain（T5.6）待续
+8. Tests executed：protocols 套件、operation_tool_compiler、http registry/schema/yaml、proto_scan
+9. Known limitations：T5.6（WSDL operation → tool 编译、SOAP full-chain）待续 —— 详见下「T5.6 已识别缺口」
 10. Next PR dependency：PR8
 
 ## T5.3 细化（§32–§34 SOAP runtime 接线）
@@ -77,7 +77,7 @@
    - `soap_request_headers` 契约不变（1.2 仍返回 `{}`，action 走 Content-Type）。
 4. `protocols/http/adapter.py`（`_invoke_protocol_config`）：
    - 构造 `RequestBuilder(...).build(arguments, request_config, config)`；
-   - 请求头合并 `soap_request_headers(config)`，并用 `soap_content_type(...)` 覆盖 `Content-Type`（在调用方 headers 之后、`built.headers` 之前，冲突时以 SOAP 绑定为准）；
+   - 请求头在 `built.headers` 之后合并 `soap_request_headers(config)`，并用 `soap_content_type(...)` 覆盖 `Content-Type`（SOAP 绑定优先于通用头）；
    - 响应解码包 `try/except SoapFaultError` → `map_soap_fault`（§34）；
    - SOAP 配置下非 2xx 且无 Fault → `ProtocolError(REST_HTTP_STATUS_ERROR, protocol_status=…)`，交由 ToolService 渲染为 is_error 结果（与 legacy 路径一致）。
 
@@ -92,4 +92,12 @@
 **测试文件**
 - `tests/unit/mcpgateway/protocols/http/test_soap_runtime.py`（扩展：envelope 编码、headers、content-type、fault 端到端映射）
 - `tests/unit/mcpgateway/protocols/http/test_request_builder.py`（新增 `body.codec` 名解析 / SOAP 上下文用例）
+
+## T5.6 已识别缺口（调研 T5.3 时发现，留待 T5.6）
+
+T5.3 只打通了「已有 protocol_config 的 SOAP 工具 → 运行时」；**WSDL → 工具**这一上游仍是断的，T5.6 需补齐：
+
+1. **WSDL operation 无法进入 `OperationToolCompiler`**：`compile()` 要求 `operation.request` 是 `HttpRequestContract`（带 `parameters`/`bodies`），而 `WsdlContractProvider` 产出的是普通 dict。需要为 SOAP operation 增加编译分支，或让 WSDL provider 产出 `HttpRequestContract`。
+2. **字段命名不一致**：WSDL provider 用 snake（`path_template`、`base_url`、`response.preferred_media_types`），而运行时/decoder 读 camel（`pathTemplate`、`response.preferredMediaTypes`）。T5.3 已让 SOAP 绑定块（`request.soap` / `extensions.soap`）双读兼容，但 path/响应媒体类型两处尚未统一。
+3. **`test_soap_full_chain`（§60/§63）**：本地 WSDL server → 注册 → 生成工具 → SOAP 调用，依赖 E2E 环境。
 

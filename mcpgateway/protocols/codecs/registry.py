@@ -18,6 +18,21 @@ from typing import Optional
 # First-Party
 from mcpgateway.protocols.codecs.base import MessageCodec
 
+# ``protocol_config`` codec names → the canonical media type that names
+# them (design-document §70.1).  This is the single place the name mapping
+# lives: both the request builder (outbound body encoding) and the response
+# decoder (inbound codec selection) resolve through it, so a codec can
+# never be reachable by media type but not by name, or vice versa.
+CODEC_NAME_MEDIA_TYPES: dict[str, str] = {
+    "json": "application/json",
+    "text": "text/plain",
+    "binary": "application/octet-stream",
+    "form": "application/x-www-form-urlencoded",
+    "multipart": "multipart/form-data",
+    "xml": "application/xml",
+    "soap": "application/soap+xml",
+}
+
 
 class CodecRegistry:
     """Registry mapping media types to ``MessageCodec`` instances."""
@@ -86,6 +101,30 @@ class CodecRegistry:
                 return codec
 
         return None
+
+    def resolve_name(self, name: Optional[str]) -> Optional[MessageCodec]:
+        """Resolve a ``protocol_config`` codec name to its codec.
+
+        ``protocol_config`` names a codec directly (``body.codec`` /
+        ``response.codec``) rather than by media type, and the name is
+        authoritative: a SOAP 1.1 body declares ``codec: "soap"`` with
+        ``mediaType: text/xml``, where the media type alone would resolve
+        to the plain ``XmlCodec`` and produce an envelope-less payload.
+
+        Args:
+            name: The codec name (e.g. ``"soap"``, ``"json"``).  ``None``
+                and ``"auto"`` mean "no explicit choice".
+
+        Returns:
+            The named codec, or ``None`` when the name is absent, ``auto``,
+            or unrecognised (the caller then falls back to media type).
+        """
+        if not name:
+            return None
+        media_type = CODEC_NAME_MEDIA_TYPES.get(str(name).strip().lower())
+        if media_type is None:
+            return None
+        return self.match(media_type)
 
     def _normalize(self, media_type: Optional[str]) -> Optional[str]:
         """Strip parameters and lower-case a media type.

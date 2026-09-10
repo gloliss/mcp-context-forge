@@ -44,6 +44,7 @@ import re
 import time
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
+from xml.etree import ElementTree as ET
 
 # Third-Party
 import httpx
@@ -55,9 +56,11 @@ from mcpgateway.config import settings
 from mcpgateway.protocols.base import ProtocolAdapter
 from mcpgateway.protocols.codecs import codec_registry
 from mcpgateway.protocols.codecs.base import CodecContext
+from mcpgateway.protocols.codecs.soap import SoapFaultError
 from mcpgateway.protocols.http.redirect import REST_TOO_MANY_REDIRECTS, RedirectSecurity
 from mcpgateway.protocols.http.request_builder import RequestBuilder
 from mcpgateway.protocols.http.response_decoder import ResponseDecoder
+from mcpgateway.protocols.http.soap import is_soap_config, map_soap_fault, soap_content_type, soap_request_headers
 from mcpgateway.protocols.models import ErrorCategory, InvocationContext, ProtocolError, ProtocolResult
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
@@ -236,8 +239,14 @@ class HttpProtocolAdapter(ProtocolAdapter):
 
         # Resolve the full request URL from the tool base URL + rendered path.
         base_url = operation.request.get("url") or operation.request.get("base_url") or ""
-        built = RequestBuilder(codec_registry).build(arguments, request_config)
+        built = RequestBuilder(codec_registry).build(arguments, request_config, config)
         final_url = RedirectSecurity.resolve_absolute(built.url_path, base_url)
+
+        # SOAP binding headers/content type (§33).  The body codec stays the
+        # authority on the media type; the binding only adds the SOAP
+        # specifics (SOAPAction for 1.1, the action parameter for 1.2).
+        soap_headers = soap_request_headers(config)
+        soap_content_type_header = soap_content_type(config, built.body.content_type if built.body else None)
 
         redirect_security = RedirectSecurity()
         response = None
@@ -252,6 +261,9 @@ class HttpProtocolAdapter(ProtocolAdapter):
             hop_headers = {hk: hv for hk, hv in context.headers.items() if hk.lower() != "host"}
             hop_headers.update(target.headers)
             hop_headers.update(built.headers)
+            hop_headers.update(soap_headers)
+            if soap_content_type_header:
+                hop_headers["Content-Type"] = soap_content_type_header
 
             request_options: dict[str, Any] = {
                 "cookies": built.cookies or None,
@@ -310,11 +322,67 @@ class HttpProtocolAdapter(ProtocolAdapter):
             preferred_media_types=tuple((config.get("response") or {}).get("preferredMediaTypes") or ()),
             max_response_bytes=settings.rest_response_text_max_length,
         )
-        decoded = decoder.decode(response.status_code, content_type, payload, codec_context)
+        is_soap = is_soap_config(config)
+        try:
+            decoded = decoder.decode(response.status_code, content_type, payload, codec_context)
+        except SoapFaultError as exc:
+            # A SOAP Fault is an upstream error, not a successful body (§34).
+            raise map_soap_fault(exc) from exc
+        except (ET.ParseError, ValueError) as exc:
+            # Only a SOAP call can reach here: the SOAP codec refuses a
+            # payload that is not a parsable envelope, and a non-2xx SOAP
+            # response is frequently an HTML/plain error page rather than a
+            # Fault.  Non-SOAP codecs do not raise on malformed bodies.
+            if not is_soap:
+                raise
+            raise self._soap_status_error(response, built.method, exc) from exc
+
+        if is_soap and not 200 <= response.status_code < 300:
+            # A SOAP call that fails without a Fault envelope is still a
+            # failure; render it through the shared status-error path so
+            # ToolService produces an is_error result (§73).
+            raise self._soap_status_error(response, built.method, None)
+
         return ProtocolResult(
             data=decoded.data,
             metadata={"status_code": response.status_code, "content_type": decoded.codec_media_type},
             duration_ms=(time.time() - rest_start_time) * 1000,
+        )
+
+    @staticmethod
+    def _soap_status_error(response: Any, method: str, cause: Optional[Exception]) -> ProtocolError:
+        """Build the error for a SOAP call that did not return a usable envelope.
+
+        Two cases reach here: a non-2xx response with no Fault envelope (an
+        HTML/plain error page, or a plain status failure), and a 2xx response
+        whose body is not a parsable SOAP envelope.  Both carry
+        ``protocol_status`` so ToolService renders an ``is_error`` tool result.
+
+        Args:
+            response: The upstream HTTPX response.
+            method: The request method, used for the retry decision (§68).
+            cause: The decode failure that prompted the error, if any.
+
+        Returns:
+            A ``ProtocolError`` describing the failure.
+        """
+        successful = 200 <= response.status_code < 300
+        if successful:
+            return ProtocolError(
+                category=ErrorCategory.UPSTREAM_ERROR,
+                code=REST_UNEXPECTED_STATUS,
+                message=f"Upstream returned a malformed SOAP response: {cause}",
+                origin="http:soap",
+                retryable=False,
+                protocol_status=response.status_code,
+            )
+        return ProtocolError(
+            category=map_http_status_to_category(response.status_code),
+            code=REST_HTTP_STATUS_ERROR,
+            message=f"HTTP {response.status_code}: {response.text or ''}",
+            origin="http:soap",
+            retryable=is_retryable_http_method(method, status_code=response.status_code),
+            protocol_status=response.status_code,
         )
 
     @staticmethod
