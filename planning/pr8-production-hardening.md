@@ -23,7 +23,7 @@
 | 任务 | 内容 | 依赖 | 状态 |
 |---|---|---|---|
 | T8.1 | HttpMonitoringService + `http_health_samples` 表 + 迁移 `6d7e8f9a0b1c`（§57） | — | ✅ `208d896` |
-| T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ✅ 见下「T8.2 细化」（本地已验证；真实网关待 E2E） |
+| T8.2 | schemathesis contract test 基建（§58，`tests/contracts/http/`） | — | ✅ `c88d33a`（见下「T8.2 细化」） |
 | T8.3 | Activation Gate off/warn/strict（§59） | T8.2 | ✅ `e3508e2`（Gate 配置+决策；已被 T8.2 契约套件消费） |
 | T8.4a | `test_http_full_chain` 最小集扩展（§61） | — | ⏳（依赖 E2E 环境） |
 | T8.4b | `test_xml_http_full_chain`（§62） | T4.x | ⏳ |
