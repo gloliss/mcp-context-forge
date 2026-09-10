@@ -43,6 +43,7 @@ from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.secret_policy import check_no_plaintext_secrets
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -125,6 +126,26 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
     re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
     re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
 )
+
+
+def _reject_plaintext_runtime_config(cls: Any, value: Any) -> Any:
+    """Reject plaintext secrets in runtime/protocol configuration (PR8 §67).
+
+    Args:
+        cls: The model class (unused).
+        value: The ``runtime_config``/``protocol_config`` mapping.
+
+    Returns:
+        The original value when no plaintext secret is present.
+
+    Raises:
+        ValueError: When a sensitive key carries a plaintext value.
+    """
+    del cls
+    if value is None:
+        return value
+    check_no_plaintext_secrets(value, label="runtime_config (plaintext secrets forbidden, §67)")
+    return value
 
 
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -8212,6 +8233,12 @@ class GrpcServiceCreate(BaseModel):
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
 
+    @field_validator("runtime_config", mode="before")
+    @classmethod
+    def _validate_runtime_config(cls, value: Any) -> Any:
+        """Reject plaintext secrets in runtime_config (PR8 §67)."""
+        return _reject_plaintext_runtime_config(cls, value)
+
 
 class GrpcServiceUpdate(BaseModel):
     """Schema for updating an existing gRPC service."""
@@ -8286,6 +8313,12 @@ class GrpcServiceUpdate(BaseModel):
             logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("runtime_config", mode="before")
+    @classmethod
+    def _validate_runtime_config(cls, value: Any) -> Any:
+        """Reject plaintext secrets in runtime_config (PR8 §67)."""
+        return _reject_plaintext_runtime_config(cls, value)
 
 
 class GrpcServiceRead(BaseModel):
@@ -8584,6 +8617,12 @@ class HttpServiceCreate(BaseModel):
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
 
+    @field_validator("runtime_config", mode="before")
+    @classmethod
+    def _validate_runtime_config(cls, value: Any) -> Any:
+        """Reject plaintext secrets in runtime_config (PR8 §67)."""
+        return _reject_plaintext_runtime_config(cls, value)
+
 
 class HttpServiceUpdate(BaseModel):
     """Schema for updating an existing HTTP service."""
@@ -8654,6 +8693,12 @@ class HttpServiceUpdate(BaseModel):
             logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("runtime_config", mode="before")
+    @classmethod
+    def _validate_runtime_config(cls, value: Any) -> Any:
+        """Reject plaintext secrets in runtime_config (PR8 §67)."""
+        return _reject_plaintext_runtime_config(cls, value)
 
 
 class HttpServiceRead(BaseModel):
