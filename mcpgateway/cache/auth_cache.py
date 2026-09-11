@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 # This allows distinguishing between "not a member" (cached) and "cache miss"
 _NOT_A_MEMBER_SENTINEL = "__NOT_A_MEMBER__"
 
+# Upper bound on the never-cleared ``_revoked_jtis`` set. Shared with
+# ``CacheInvalidationSubscriber`` so every writer honours the same cap.
+MAX_REVOKED_JTIS = 100_000
+
 
 @dataclass
 class CachedAuthContext:
@@ -528,22 +532,53 @@ class AuthCache:
         local process stops honouring a revoked token immediately, without
         needing a running event loop.
 
-        Without this eviction a context entry cached as ``is_token_revoked=False``
-        by a prior authenticated request keeps the revoked token usable until its
-        TTL expires (``auth_cache_revocation_ttl``, 30s by default).
+        Growth is capped at ``MAX_REVOKED_JTIS`` to match the pub/sub subscriber
+        path (``CacheInvalidationSubscriber``); without the cap this high-frequency
+        write path would grow ``_revoked_jtis`` without bound, since
+        :meth:`invalidate_all` deliberately never clears it.
 
         Args:
             jti: JWT ID of the revoked token.
         """
         with self._lock:
             # Add to local revoked set for fast lookup
-            self._revoked_jtis.add(jti)
+            if len(self._revoked_jtis) < MAX_REVOKED_JTIS:
+                self._revoked_jtis.add(jti)
+            else:
+                logger.warning("AuthCache: _revoked_jtis at cap (%d), skipping add for jti=%s", MAX_REVOKED_JTIS, jti[:8])
             self._revocation_cache.pop(jti, None)
 
             # Clear any context cache entries with this JTI
             keys_to_remove = [k for k in self._context_cache if k.endswith(f":{jti}")]
             for key in keys_to_remove:
                 self._context_cache.pop(key, None)
+
+    def mark_revoked_sync(self, jti: str, redis_client: Any = None) -> None:
+        """Evict local state and publish the shared Redis revocation marker.
+
+        This is the synchronous equivalent of :meth:`invalidate_revocation`,
+        intended for callers that may not have a running event loop (worker
+        threads, sync service methods). It deliberately writes only the shared
+        revocation marker: ``get_auth_context`` consults
+        ``{prefix}auth:revoke:{jti}`` *before* its L1 context cache, so the marker
+        alone is enough for other workers to reject the token — no keyspace SCAN
+        and no pub/sub round-trip are required.
+
+        Args:
+            jti: JWT ID of the revoked token.
+            redis_client: Optional synchronous Redis client used to publish the
+                cross-worker marker. When omitted, only local state is evicted.
+        """
+        self.evict_revocation_local(jti)
+
+        if not redis_client:
+            return
+        try:
+            # 24 hour expiry for revocation markers, matching invalidate_revocation.
+            redis_client.setex(self._get_redis_key("revoke", jti), 86400, "1")
+            redis_client.sadd("mcpgw:auth:revoked_tokens", jti)
+        except Exception as e:
+            logger.warning(f"AuthCache mark_revoked_sync Redis publish failed for jti={jti[:8]}: {e}")
 
     async def invalidate_revocation(self, jti: str) -> None:
         """Invalidate cache for a revoked token.

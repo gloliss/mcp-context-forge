@@ -110,6 +110,10 @@ class TokenBlocklistService:
 
                 if existing:
                     logger.debug("Token %s already revoked", jti)
+                    # A confirmed-revoked jti must always evict local state, even on
+                    # an idempotent re-revocation: this worker may still hold a stale
+                    # "not revoked" context from before the revocation landed.
+                    self._invalidate_auth_cache(jti)
                     return not fail_if_already_revoked
 
                 # Create revocation record
@@ -125,6 +129,9 @@ class TokenBlocklistService:
 
                     if existing:
                         logger.debug("Token %s already revoked", jti)
+                        # See the self.db branch above: an already-revoked jti still
+                        # evicts any stale local "not revoked" context.
+                        self._invalidate_auth_cache(jti)
                         return not fail_if_already_revoked
 
                     # Create revocation record
@@ -175,11 +182,11 @@ class TokenBlocklistService:
         ``is_token_revoked=False``) for ``auth_cache_revocation_ttl`` seconds, so
         without this a revoked token keeps working until that entry expires.
 
-        The local (L1) eviction is done synchronously so it applies even when
-        there is no running event loop — ``revoke_token`` is also called from
-        worker threads (e.g. the session-rotation path runs inside
-        ``asyncio.to_thread``). The cross-worker Redis revocation marker is
-        published on a best-effort basis when a loop is available.
+        Done entirely synchronously — including the cross-worker Redis marker,
+        published through the blocklist's own sync Redis client — because
+        ``revoke_token`` is also called from worker threads (the session-rotation
+        path runs inside ``asyncio.to_thread``), where there is no running event
+        loop to schedule work on.
 
         Args:
             jti: JWT ID that was just revoked.
@@ -188,19 +195,7 @@ class TokenBlocklistService:
             # First-Party
             from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
 
-            auth_cache = get_auth_cache()
-            auth_cache.evict_revocation_local(jti)
-
-            # Standard
-            import asyncio  # pylint: disable=import-outside-toplevel
-
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # No running loop (worker thread / sync caller): the synchronous
-                # L1 eviction above already covers this worker.
-                return
-            loop.create_task(auth_cache.invalidate_revocation(jti))
+            get_auth_cache().mark_revoked_sync(jti, self._get_redis_client())
         except Exception as e:  # noqa: BLE001 - cache invalidation is best-effort
             logger.warning("Failed to invalidate auth cache for revoked token %s: %s", jti, e)
 

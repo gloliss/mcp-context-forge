@@ -63,7 +63,13 @@ uv run --frozen pytest tests/unit/mcpgateway/test_admin_multi_login.py -q
 
 根因：`TokenBlocklistService.revoke_token`（`mcpgateway/services/token_blocklist_service.py`）写入 DB 与 Redis（`token:revoked:{jti}`）后，**未失效 `auth_cache` 的负向吊销缓存**（`AuthCache.set_not_revoked`，TTL = `auth_cache_revocation_ttl` 默认 30s）。`auth_cache.invalidate_revocation()` 的文档注释描述了"吊销时原子驱逐、不存在 stale False 窗口"这一预期契约，但登出路径未调用它。（`TokenCatalogService` 吊销 API token 时本就调用了该失效，只有会话 token 这条路径漏了。）
 
-修复：`revoke_token` 现在调用新增的 `TokenBlocklistService._invalidate_auth_cache`——先同步执行 `AuthCache.evict_revocation_local`（无需事件循环，覆盖 `asyncio.to_thread` 等 worker 线程调用），再在有运行中事件循环时 fire-and-forget `auth_cache.invalidate_revocation` 以发布跨 worker 的 Redis 标记。回归用例见 `tests/unit/mcpgateway/test_token_blocklist_service.py::TestRevocationInvalidatesAuthCache`（已验证：去掉修复后两个用例失败）。
+修复：`revoke_token` 现在调用 `TokenBlocklistService._invalidate_auth_cache`，后者委托给新增的 `AuthCache.mark_revoked_sync(jti, redis_client)` —— **全程同步**：驱逐本地 L1，并通过 blocklist 自带的**同步** Redis 客户端发布跨 worker 吊销标记。失效调用同时被提到「已吊销」早返回之前，保证幂等重复吊销也会驱逐。
+
+> **对提交 `dacbe36` 的更正**：该提交信息称"消除约 30s 的 stale 吊销窗口"，但当时只在**吊销发生的那个 worker** 上成立；在其它 worker 上窗口依旧存在（会话轮转走 `asyncio.to_thread` 时无事件循环、fire-and-forget task 可能被 GC、幂等重复吊销走了早返回）。本次补齐后，跨 worker 标记在**所有调用路径**（含 worker 线程）都会同步写入。
+>
+> 另：`AuthCache.evict_revocation_local` 现在与 `CacheInvalidationSubscriber` 共用 `MAX_REVOKED_JTIS` 上限，`_revoked_jtis` 不再有无上限写入路径。
+
+回归用例（`tests/unit/mcpgateway/test_token_blocklist_service.py::TestRevocationInvalidatesAuthCache`，共 6 条）覆盖：本地驱逐、deny-path、**跨 worker（两个 cache 实例 + 共享标记）**、**`asyncio.to_thread` 工作线程路径**、幂等重复吊销、失效失败不影响吊销。已验证：停掉标记发布后，跨 worker 与工作线程两条用例**失败**。
 
 > 该问题与"多端登录互不顶掉"无关（AC-2 只要求"登出 A 不影响 B"，本就通过），故未纳入本需求的验收范围，仅在此记录。
 > 注意：本次修复仅在本地单测/代码层面验证；10.10.100.15:4444 运行的是旧镜像，需重新构建并部署后才能实网复验。

@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 # Standard
+from collections.abc import Generator
 import os
 import socket
 
@@ -37,28 +38,33 @@ import httpx
 import pytest
 
 # Local
-from ..helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
+from ..helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, skip_no_gateway
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
 
 # The session-wide autouse ``_deterministic_dns`` fixture in tests/conftest.py
 # replaces ``socket.getaddrinfo`` with a stub that maps every non-loopback host
 # to a fixed public IP (so SSRF validators run without real DNS). That breaks
-# live-gateway tests targeting a LAN address like 10.10.100.15. Capture the real
-# resolver at import time — collection imports this module before any autouse
-# fixture runs — and restore it for the duration of each test below.
+# live-gateway tests targeting a LAN address like 10.10.100.15. This module
+# installs the real resolver for the duration of each test and reinstates
+# whatever was in place on teardown, so the session-wide stub is restored and
+# later tests keep their deterministic DNS.
 _REAL_GETADDRINFO = socket.getaddrinfo
 
 
 @pytest.fixture(autouse=True)
-def _real_dns_for_live_gateway() -> None:
-    """Undo the session-wide DNS stub so the configured gateway host resolves."""
+def _real_dns_for_live_gateway() -> Generator[None, None, None]:
+    """Use the real resolver for this module's tests only, then restore."""
+    previous = socket.getaddrinfo
     socket.getaddrinfo = _REAL_GETADDRINFO
+    yield
+    socket.getaddrinfo = previous
 
 
-ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 # Mirrors tests/playwright/conftest.py candidate ordering; the post-rotation
 # password is tried first because a long-lived instance has usually rotated.
+# Both default to the shared env vars, so a deployment-specific credential
+# never has to be committed here.
 _ADMIN_PASSWORD_CANDIDATES = [
     os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "SV^cB9Qx3!em48fy$1VhjxkW"),  # pragma: allowlist secret
     os.getenv("PLATFORM_ADMIN_PASSWORD", "5S1Nd8z$Ivb6N%Lsj^okvVF6"),  # pragma: allowlist secret
@@ -149,54 +155,51 @@ def _establish_admin_session(client: httpx.Client) -> str:
     return status
 
 
+@pytest.fixture
+def admin_sessions() -> Generator[tuple[httpx.Client, httpx.Client], None, None]:
+    """Two independent logged-in Admin UI sessions ("locations"), or skip.
+
+    Skips when the gateway offers no usable admin login (no form / no candidate
+    password works / the account is mid forced-password-change) so the suite
+    stays green on deployments this E2E cannot exercise.
+    """
+    with httpx.Client(timeout=15.0) as session_a, httpx.Client(timeout=15.0) as session_b:
+        status_a = _establish_admin_session(session_a)
+        if status_a != "ok":
+            pytest.skip(f"admin login unavailable for the multi-login E2E ({status_a})")
+        assert _establish_admin_session(session_b) == "ok", "second admin login failed in the same gateway"
+        yield session_a, session_b
+
+
 class TestAdminMultiLoginE2E:
     """Two live admin sessions must not invalidate each other."""
 
-    def test_second_login_does_not_kick_out_first(self) -> None:
+    def test_second_login_does_not_kick_out_first(self, admin_sessions: tuple[httpx.Client, httpx.Client]) -> None:
         """AC-1: a login at location B leaves location A's session valid."""
-        timeout = httpx.Timeout(15.0)
-        with httpx.Client(timeout=timeout) as session_a, httpx.Client(timeout=timeout) as session_b:
-            status_a = _establish_admin_session(session_a)
-            if status_a != "ok":
-                pytest.skip(f"admin login unavailable for the multi-login E2E ({status_a})")
-            assert _admin_response(session_a).status_code == 200
+        session_a, session_b = admin_sessions
+        assert _admin_response(session_a).status_code == 200
 
-            status_b = _establish_admin_session(session_b)
-            assert status_b == "ok", "second admin login failed in the same gateway"
+        # Each location holds its own, distinct session token.
+        token_a = session_a.cookies.get(_ADMIN_COOKIE)
+        token_b = session_b.cookies.get(_ADMIN_COOKIE)
+        assert token_a and token_b and token_a != token_b
 
-            # Each location holds its own, distinct session token.
-            token_a = session_a.cookies.get(_ADMIN_COOKIE)
-            token_b = session_b.cookies.get(_ADMIN_COOKIE)
-            assert token_a and token_b and token_a != token_b
+        # AC-1: the second login did NOT kick out the first session.
+        assert _admin_response(session_a).status_code == 200, "a second login invalidated the first admin session"
 
-            # AC-1: the second login did NOT kick out the first session.
-            assert _admin_response(session_a).status_code == 200, "a second login invalidated the first admin session"
-
-    def test_logout_is_isolated_to_the_calling_session(self) -> None:
+    def test_logout_is_isolated_to_the_calling_session(self, admin_sessions: tuple[httpx.Client, httpx.Client]) -> None:
         """AC-2: logging out location A leaves location B's session valid."""
-        timeout = httpx.Timeout(15.0)
-        with httpx.Client(timeout=timeout) as session_a, httpx.Client(timeout=timeout) as session_b:
-            status_a = _establish_admin_session(session_a)
-            if status_a != "ok":
-                pytest.skip(f"admin login unavailable for the multi-login E2E ({status_a})")
-            assert _establish_admin_session(session_b) == "ok"
-            assert _admin_response(session_b).status_code == 200
+        session_a, session_b = admin_sessions
+        assert _admin_response(session_b).status_code == 200
 
-            _logout(session_a)
+        _logout(session_a)
 
-            # A is logged out: the session cookie is cleared and the dashboard no
-            # longer serves that browser session.
-            #
-            # NOTE: this asserts browser-session logout, not the server-side
-            # blocklist timing. The revoked ``jti`` is written to the blocklist on
-            # logout, but a previously cached negative revocation entry keeps the
-            # old token usable for up to ``auth_cache_revocation_ttl`` (~30s);
-            # asserting immediate server-side rejection here would be flaky and
-            # is out of this requirement's scope ("一处登录不顶掉另一处").
-            assert session_a.cookies.get(_ADMIN_COOKIE) is None
-            logged_out = _admin_response(session_a)
-            assert logged_out.status_code != 200, "logged-out session should not reach the dashboard"
-            assert "/admin/login" in (logged_out.headers.get("location") or "")
+        # A is logged out: the session cookie is cleared and the dashboard no
+        # longer serves that browser session.
+        assert session_a.cookies.get(_ADMIN_COOKIE) is None
+        logged_out = _admin_response(session_a)
+        assert logged_out.status_code != 200, "logged-out session should not reach the dashboard"
+        assert "/admin/login" in (logged_out.headers.get("location") or "")
 
-            # AC-2: B's session survived A's logout.
-            assert _admin_response(session_b).status_code == 200, "logging out one session revoked another admin session"
+        # AC-2: B's session survived A's logout.
+        assert _admin_response(session_b).status_code == 200, "logging out one session revoked another admin session"
