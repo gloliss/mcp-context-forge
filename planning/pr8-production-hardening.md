@@ -63,7 +63,7 @@
 6. Security：SSRF 策略 + 明文拒绝
 7. Tests added：若干
 8. Tests executed：utils/schemas/protocols/db migration
-9. Known limitations：T8.2–8.4（schemathesis/full-chain）依赖 E2E 环境；T8.3 待续
+9. Known limitations：四个 full-chain（T8.4a–d）已本地通过（68 passed）；契约套件（T8.2）对**真实网关**的执行仍待 E2E（本地已用 stand-in 网关验证能真实捕获违约）
 10. Next PR dependency：无（收尾 DoD §82）
 
 ## 更正记录（2026-09-10）
@@ -113,7 +113,7 @@
 3. `tests/contracts/http/test_contract_checks.py`：上述纯逻辑单测（本地全跑）
 4. `tests/contracts/http/test_gateway_contract.py`：schemathesis 驱动的 live 套件；`CONTRACT_BASE_URL` 未设置则 `pytest.skip`（待 E2E）
 
-**范围边界**：本任务只建基建与判定逻辑；**不**新增生产代码（Gate 逻辑已在 T8.3）。
+**范围边界**：本任务只建基建与判定逻辑；**不**新增生产代码（Gate 逻辑已在 T8.3）。full-chain（T8.4a–d）已随各 PR 完成，见任务清单。
 
 **本地验证结论（2026-09-10）**
 - 纯逻辑单测 38 个通过（`tests/contracts/http/test_contract_checks.py`），含 `load_openapi_document` 对本地 HTTP server 的真实加载。

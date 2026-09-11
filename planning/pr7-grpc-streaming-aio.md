@@ -54,7 +54,7 @@
 6. Security：status detail 不泄露内部 stack
 7. Tests added：若干
 8. Tests executed：protocols/grpc + services/grpc
-9. Known limitations：grpc.aio 迁移（T7.4）、client-stream/bidi（T7.5）、ToolService 接线（T7.8）待续
+9. Known limitations：无（T7.4–T7.9 全部完成，见下各「实施结果」）
 10. Next PR dependency：PR8
 
 ## T7.4 细化（§53 grpc.aio.Channel 迁移）

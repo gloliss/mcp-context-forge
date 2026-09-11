@@ -58,5 +58,5 @@
 6. Security：无明文；metadata 统一边界解密
 7. Tests added：若干
 8. Tests executed：protocols/grpc + services/grpc + db migration
-9. Known limitations：运行时 ProtoJSON 序列化转换留待 PR7
+9. Known limitations：无。原记「运行时 ProtoJSON 序列化转换留待 PR7」经复核**不成立**：protobuf 的 `MessageToDict` 默认即按 ProtoJSON 把 64 位整数输出为 JSON 字符串（实测 `1234567890123` → `'1234567890123'`），与 Mapper 声明的 `string + pattern ^-?[0-9]+$` 一致；字段名经 `preserving_proto_field_name=True` 与 Mapper 的 `field.name` 也一致。
 10. Next PR dependency：PR7

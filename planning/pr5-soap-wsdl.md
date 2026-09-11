@@ -49,7 +49,7 @@
 6. Security：复用 XML 安全底线；Fault 不透传内部 stack
 7. Tests added：若干单测
 8. Tests executed：protocols 套件、operation_tool_compiler、http registry/schema/yaml、proto_scan
-9. Known limitations：T5.6（WSDL operation → tool 编译、SOAP full-chain）待续 —— 详见下「T5.6 已识别缺口」
+9. Known limitations：无（T5.6 已完成，见下「T5.6 实施结果」）
 10. Next PR dependency：PR8
 
 ## T5.3 细化（§32–§34 SOAP runtime 接线）
