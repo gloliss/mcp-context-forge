@@ -31,6 +31,15 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional
 
+# First-Party
+# Upper bound on the in-memory revoked-JTI set, shared with AuthCache so every
+# writer honours the same cap. Prevents unbounded memory growth if a compromised
+# Redis channel floods ``revoke:`` messages. When the cap is reached new JTIs are
+# still processed (cache eviction) but not added to the local set; subsequent
+# ``is_token_revoked()`` / ``get_auth_context()`` calls fall through to the Redis
+# check on L1 cache miss, so revocation is still enforced.
+from mcpgateway.cache.auth_cache import MAX_REVOKED_JTIS as _MAX_REVOKED_JTIS
+
 logger = logging.getLogger(__name__)
 
 
@@ -885,15 +894,8 @@ def get_registry_cache() -> RegistryCache:
 registry_cache = get_registry_cache()
 
 
-# Upper bound on the in-memory revoked-JTI set.
-#
-# Prevents unbounded memory growth if a compromised Redis channel floods
-# ``revoke:`` messages.  When the cap is reached new JTIs are still
-# processed (cache eviction) but are not added to the local set;
-# subsequent ``is_token_revoked()`` / ``get_auth_context()`` calls will
-# fall through to the Redis check on L1 cache miss, so revocation is
-# still enforced.
-_MAX_REVOKED_JTIS = 100_000
+# Upper bound on the in-memory revoked-JTI set is imported from AuthCache above
+# (``_MAX_REVOKED_JTIS``) so both writers share a single source of truth.
 
 
 class CacheInvalidationSubscriber:

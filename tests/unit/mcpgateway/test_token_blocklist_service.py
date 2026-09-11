@@ -15,10 +15,12 @@ Tests cover:
 """
 
 # Standard
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import sys
-from unittest.mock import MagicMock, patch
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
@@ -709,3 +711,180 @@ class TestIsTokenRevokedFreshSession:
             result = service.is_token_revoked(str(uuid.uuid4()))
 
         assert result is True
+
+
+class _FakeRedis:
+    """Sync-write / async-read Redis stub shared between two simulated workers.
+
+    ``revoke_token`` publishes the cross-worker marker through the blocklist's
+    *synchronous* client, while ``AuthCache.get_auth_context`` reads it through
+    its own *asynchronous* client, so the stub exposes both surfaces over one
+    keyspace.
+    """
+
+    def __init__(self):
+        self.kv: dict = {}
+        self.sets: dict = {}
+
+    # --- synchronous surface (AuthCache.mark_revoked_sync) ---
+    def setex(self, key, ttl, value):
+        self.kv[key] = value
+
+    def sadd(self, name, value):
+        self.sets.setdefault(name, set()).add(value)
+
+    # --- asynchronous surface (AuthCache.get_auth_context) ---
+    async def exists(self, key):
+        return key in self.kv
+
+
+@pytest.fixture
+def primed_cache():
+    """An ``AuthCache`` holding a stale "this token is fine" entry."""
+    # First-Party
+    from mcpgateway.cache.auth_cache import AuthCache, CachedAuthContext, CacheEntry
+
+    cache = AuthCache(enabled=True)
+    email, jti = "test@example.com", str(uuid.uuid4())
+    cache._context_cache[f"{email}:{jti}"] = CacheEntry(value=CachedAuthContext(user={"email": email}, is_token_revoked=False), expiry=time.time() + 30)
+    cache._revocation_cache[jti] = CacheEntry(value=False, expiry=time.time() + 30)
+    return cache, email, jti
+
+
+class TestRevocationInvalidatesAuthCache:
+    """A revoked token must stop being accepted immediately.
+
+    Regression for the ~30s window in which ``AuthCache`` kept serving a
+    ``is_token_revoked=False`` entry cached by a prior authenticated request, so
+    a logged-out session token still authorised the Admin UI until the cache TTL
+    (``auth_cache_revocation_ttl``, 30s) expired.
+
+    These tests run without a running event loop, which also covers the
+    worker-thread call path (session rotation uses ``asyncio.to_thread``): the
+    invalidation must not depend on a loop being available.
+    """
+
+    def test_revoke_token_evicts_cached_not_revoked_context(self, blocklist_service, primed_cache):
+        """The cached negative entry and context must be gone after revoke."""
+        cache, email, jti = primed_cache
+
+        with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=cache):
+            assert blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout") is True
+
+        assert jti in cache._revoked_jtis
+        assert f"{email}:{jti}" not in cache._context_cache
+        assert jti not in cache._revocation_cache
+
+    def test_get_auth_context_flips_to_revoked_immediately(self, blocklist_service, primed_cache):
+        """Deny-path: the stale 'valid' context must flip to revoked right away."""
+        cache, email, jti = primed_cache
+
+        # Before revocation the cached negative entry is served (the bug's origin).
+        before = asyncio.run(cache.get_auth_context(email, jti))
+        assert before is not None
+        assert before.is_token_revoked is False
+
+        with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=cache):
+            blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout")
+
+        # After revocation the very next lookup must report the token as revoked,
+        # without waiting for the ~30s TTL.
+        after = asyncio.run(cache.get_auth_context(email, jti))
+        assert after is not None
+        assert after.is_token_revoked is True
+
+    def test_cross_worker_marker_reaches_a_second_cache(self, blocklist_service, primed_cache):
+        """A *different* worker's cache must learn about the revocation.
+
+        This is the contract the local-only L1 eviction cannot satisfy: worker B
+        still holds a stale "not revoked" context and only consults the shared
+        Redis marker. It also covers the worker-thread path — the revoke below
+        runs with no event loop, which is exactly the session-rotation case.
+        """
+        worker_b, email, jti = primed_cache
+        shared_redis = _FakeRedis()
+
+        # Sanity: with no marker published, worker B happily serves the stale entry.
+        with patch.object(worker_b, "_get_redis_client", new=AsyncMock(return_value=shared_redis)):
+            stale = asyncio.run(worker_b.get_auth_context(email, jti))
+            assert stale is not None
+            assert stale.is_token_revoked is False
+
+        # Worker A revokes. No running loop here => the sync-only path.
+        # First-Party
+        from mcpgateway.cache.auth_cache import AuthCache
+
+        worker_a = AuthCache(enabled=True)
+        with (
+            patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=worker_a),
+            patch.object(blocklist_service, "_get_redis_client", return_value=shared_redis),
+        ):
+            assert blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="token_refresh") is True
+
+        # The marker must have been published through the sync client...
+        assert shared_redis.kv.get(worker_a._get_redis_key("revoke", jti)) == "1"
+
+        # ...and worker B must now reject the token despite its stale L1 entry.
+        with patch.object(worker_b, "_get_redis_client", new=AsyncMock(return_value=shared_redis)):
+            after = asyncio.run(worker_b.get_auth_context(email, jti))
+            assert after is not None
+            assert after.is_token_revoked is True
+
+    def test_marker_written_when_revoked_from_a_worker_thread(self, primed_cache):
+        """Session rotation calls revoke_token inside ``asyncio.to_thread``.
+
+        That thread has no running loop, so the cross-worker marker must be
+        published synchronously rather than scheduled onto a loop. The DB session
+        is stubbed out: the production concern here is the loop/thread context,
+        not the persistence (covered by the tests above).
+        """
+        cache, email, jti = primed_cache
+        shared_redis = _FakeRedis()
+        service = TokenBlocklistService(db=None)
+
+        @contextmanager
+        def fake_fresh_session():
+            session = MagicMock()
+            session.execute.return_value.scalar_one_or_none.return_value = None
+            yield session
+
+        async def _revoke_in_worker_thread():
+            with (
+                patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=cache),
+                patch.object(service, "_get_redis_client", return_value=shared_redis),
+                patch("mcpgateway.services.token_blocklist_service.fresh_db_session", side_effect=fake_fresh_session),
+            ):
+                return await asyncio.to_thread(service.revoke_token, jti=jti, revoked_by=email, reason="token_refresh")
+
+        assert asyncio.run(_revoke_in_worker_thread()) is True
+        assert shared_redis.kv.get(cache._get_redis_key("revoke", jti)) == "1"
+        assert jti in shared_redis.sets.get("mcpgw:auth:revoked_tokens", set())
+
+    def test_idempotent_rerevocation_still_evicts(self, blocklist_service, primed_cache):
+        """An already-revoked jti must still evict this worker's stale context."""
+        cache, email, jti = primed_cache
+
+        # First revocation records the jti in the DB.
+        with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=cache):
+            assert blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout") is True
+
+        # Re-prime a stale entry, then revoke the same jti again: the second call
+        # takes the "already revoked" early return and used to skip invalidation.
+        # First-Party
+        from mcpgateway.cache.auth_cache import CachedAuthContext, CacheEntry
+
+        cache._context_cache[f"{email}:{jti}"] = CacheEntry(value=CachedAuthContext(user={"email": email}, is_token_revoked=False), expiry=time.time() + 30)
+        cache._revoked_jtis.discard(jti)
+
+        with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=cache):
+            assert blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="idle_timeout") is True
+
+        assert jti in cache._revoked_jtis
+        assert f"{email}:{jti}" not in cache._context_cache
+
+    def test_invalidate_failure_does_not_break_revocation(self, blocklist_service):
+        """Cache invalidation is best-effort; revocation itself must still succeed."""
+        jti = str(uuid.uuid4())
+
+        with patch("mcpgateway.cache.auth_cache.get_auth_cache", side_effect=RuntimeError("cache unavailable")):
+            assert blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout") is True

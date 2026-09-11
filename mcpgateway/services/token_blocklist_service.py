@@ -110,6 +110,10 @@ class TokenBlocklistService:
 
                 if existing:
                     logger.debug("Token %s already revoked", jti)
+                    # A confirmed-revoked jti must always evict local state, even on
+                    # an idempotent re-revocation: this worker may still hold a stale
+                    # "not revoked" context from before the revocation landed.
+                    self._invalidate_auth_cache(jti)
                     return not fail_if_already_revoked
 
                 # Create revocation record
@@ -125,6 +129,9 @@ class TokenBlocklistService:
 
                     if existing:
                         logger.debug("Token %s already revoked", jti)
+                        # See the self.db branch above: an already-revoked jti still
+                        # evicts any stale local "not revoked" context.
+                        self._invalidate_auth_cache(jti)
                         return not fail_if_already_revoked
 
                     # Create revocation record
@@ -147,6 +154,13 @@ class TokenBlocklistService:
                 except Exception as e:
                     logger.warning("Failed to cache revocation in Redis: %s", e)
 
+            # Invalidate the auth cache so a "not revoked" entry cached by a prior
+            # authenticated request cannot outlive the revocation. AuthCache
+            # consults its revoked-jti sets and the Redis revocation marker before
+            # the context cache, so evicting here closes the window in which a
+            # freshly revoked session token is still accepted (~30s otherwise).
+            self._invalidate_auth_cache(jti)
+
             logger.info(
                 "Token revoked: jti=%s, reason=%s, revoked_by=%s",
                 jti,
@@ -160,6 +174,30 @@ class TokenBlocklistService:
         except Exception as e:
             logger.error("Failed to revoke token %s: %s", jti, e)
             return False
+
+    def _invalidate_auth_cache(self, jti: str) -> None:
+        """Drop any cached auth context that would keep a revoked token usable.
+
+        ``AuthCache`` caches a successful authentication (including
+        ``is_token_revoked=False``) for ``auth_cache_revocation_ttl`` seconds, so
+        without this a revoked token keeps working until that entry expires.
+
+        Done entirely synchronously — including the cross-worker Redis marker,
+        published through the blocklist's own sync Redis client — because
+        ``revoke_token`` is also called from worker threads (the session-rotation
+        path runs inside ``asyncio.to_thread``), where there is no running event
+        loop to schedule work on.
+
+        Args:
+            jti: JWT ID that was just revoked.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+
+            get_auth_cache().mark_revoked_sync(jti, self._get_redis_client())
+        except Exception as e:  # noqa: BLE001 - cache invalidation is best-effort
+            logger.warning("Failed to invalidate auth cache for revoked token %s: %s", jti, e)
 
     def is_token_revoked(self, jti: str) -> bool:
         """Check if a token is revoked.
