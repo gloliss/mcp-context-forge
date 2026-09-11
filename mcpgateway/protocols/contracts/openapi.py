@@ -67,6 +67,16 @@ _HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "opt
 # Parameter locations design §9.4 recognises.
 _PARAM_LOCATIONS = frozenset({"path", "query", "header", "cookie"})
 
+# Vendor extension carrying an XSD binding for a media type (design §27).
+# It lives on the media type object so it travels with the body it describes:
+#
+#   content:
+#     application/xml:
+#       x-contextforge-xsd:
+#         schema: "<xs:schema …>"
+#         schema11: false
+_XSD_EXTENSION = "x-contextforge-xsd"
+
 # Parsed-spec LRU (risk table §22: at most 16 specs, keyed by content hash).
 _SPEC_CACHE_MAX = 16
 _spec_cache: OrderedDict[str, OpenAPI] = OrderedDict()
@@ -79,7 +89,8 @@ def _media_type_to_codec(media_type: str) -> str:
         media_type: The raw media type (possibly with parameters).
 
     Returns:
-        One of ``json``/``form``/``multipart``/``text``/``binary``.
+        One of ``json``/``form``/``multipart``/``xml``/``soap``/``text``/
+        ``binary``.
     """
     base = media_type.split(";", 1)[0].strip().lower()
     if base == "application/json" or base.endswith("+json"):
@@ -88,9 +99,38 @@ def _media_type_to_codec(media_type: str) -> str:
         return "form"
     if base == "multipart/form-data":
         return "multipart"
+    # XML/soap are checked before the ``text/*`` fallback: ``text/xml`` is an
+    # XML payload, and routing it to TextCodec would send and decode it as an
+    # opaque string.  ``application/xml`` and ``+xml`` structured suffixes
+    # likewise belong to XmlCodec, not to the binary fallback.
+    if base == "application/soap+xml":
+        return "soap"
+    if base in {"application/xml", "text/xml"} or base.endswith("+xml"):
+        return "xml"
     if base.startswith("text/"):
         return "text"
     return "binary"
+
+
+def _media_type_xsd(media_obj: dict) -> dict[str, Any] | None:
+    """Return the XSD binding declared on an OpenAPI media type object.
+
+    Args:
+        media_obj: The media type object from a ``content`` map.
+
+    Returns:
+        The binding mapping, or ``None`` when the media type declares no
+        usable XSD.  A malformed binding is ignored rather than raising: the
+        document validator owns structural complaints, and a bad extension
+        must not take down the whole catalog.
+    """
+    binding = media_obj.get(_XSD_EXTENSION)
+    if not isinstance(binding, dict):
+        return None
+    schema = binding.get("schema")
+    if not isinstance(schema, str) or not schema.strip():
+        return None
+    return binding
 
 
 def _iter_dicts(node: Any) -> Iterator[dict]:
@@ -506,6 +546,7 @@ class OpenAPIContractProvider:
                     schema=schema,
                     required=required,
                     schema_ref=schema_ref,
+                    xsd=_media_type_xsd(media_obj),
                 )
             )
         return tuple(variants)
@@ -552,6 +593,7 @@ class OpenAPIContractProvider:
                         media_type=media_type,
                         schema=schema,
                         description=description,
+                        xsd=_media_type_xsd(media_obj),
                     )
                 )
         return tuple(variants)

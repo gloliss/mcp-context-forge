@@ -15,9 +15,10 @@ schema-less loose codec, which is exactly what they guard against.
 
 # Standard
 import asyncio
+import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 import textwrap
 
 # Third-Party
@@ -232,3 +233,96 @@ class TestXmlFullChain:
         # string — the contrast with the XSD-backed assertion above is the
         # point of this test.
         assert result.data == {"QueryResponse": {"status": "OK", "total": "7"}}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: the OpenAPI → compiler path also carries the XSD (§27)
+# ══════════════════════════════════════════════════════════════════════
+
+_OPENAPI_WITH_XSD = {
+    "openapi": "3.0.3",
+    "info": {"title": "xml-report", "version": "1.0.0"},
+    "paths": {
+        "/query": {
+            "post": {
+                "operationId": "queryReport",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/xml": {
+                            "x-contextforge-xsd": {"schema": _XSD},
+                            "schema": {"type": "object"},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/xml": {
+                                "x-contextforge-xsd": {"schema": _RESPONSE_XSD},
+                                "schema": {"type": "object"},
+                            }
+                        },
+                    }
+                },
+            }
+        }
+    },
+}
+
+
+def _compile_from_openapi(base_url: str) -> Tuple[Any, Dict[str, Any]]:
+    """Compile the OpenAPI document above and rebuild the runtime operation."""
+    # First-Party
+    from mcpgateway.protocols.contracts.models import ContractArtifact, DiscoveryContext
+    from mcpgateway.protocols.contracts.openapi import OpenAPIContractProvider
+    from mcpgateway.services.operation_tool_compiler import OperationToolCompiler, ToolCompileOverrides
+
+    artifact = ContractArtifact(payload=json.dumps(_OPENAPI_WITH_XSD).encode(), artifact_format="openapi-json", source_type="openapi-upload")
+    catalog = _run(OpenAPIContractProvider().discover(artifact, DiscoveryContext()))
+    assert catalog.operations, "the document must yield an operation"
+
+    compiled = OperationToolCompiler().compile(
+        catalog.operations[0],
+        type("Service", (), {"slug": "report", "base_url": base_url})(),
+        type("Artifact", (), {"content_hash": catalog.source_hash, "source_type": "openapi"})(),
+        ToolCompileOverrides(),
+    )
+    return compiled.protocol_config or {}, compiled.name
+
+
+class TestOpenApiXmlBinding:
+    """An OpenAPI-declared XML operation is schema-driven end to end (§27)."""
+
+    def test_compiled_config_carries_the_xsd_and_the_xml_codec(self):
+        """The compiler emits the xml codec and both XSD bindings."""
+        config, _name = _compile_from_openapi("http://127.0.0.1:1")
+
+        assert config["request"]["body"]["codec"] == "xml"
+        assert config["request"]["body"]["xsd"]["schema"] == _XSD
+        assert config["response"]["xsd"]["schema"] == _RESPONSE_XSD
+
+    def test_openapi_declared_xml_operation_round_trips(self):
+        """A document-declared XML tool reaches the upstream and validates both ways."""
+        with _XmlUpstream() as upstream:
+            config, _name = _compile_from_openapi(upstream.base_url)
+
+            result = _invoke(config, {"body": {"QueryRequest": {"factory": "FAB1", "count": 3}}}, upstream.base_url)
+
+        sent = upstream.requests[0]
+        assert sent["headers"]["content-type"].startswith("application/xml")
+        assert "<QueryRequest>" in sent["body"]
+        # The response XSD coerced the type, proving the schema was applied.
+        assert result.data == {"QueryResponse": {"status": "OK", "total": 7}}
+
+    def test_openapi_declared_xml_operation_rejects_a_bad_request_body(self):
+        """A body the XSD rejects never leaves the gateway."""
+        with _XmlUpstream() as upstream:
+            config, _name = _compile_from_openapi(upstream.base_url)
+
+            with pytest.raises(Exception) as exc_info:
+                _invoke(config, {"body": {"QueryRequest": {"factory": "FAB1"}}}, upstream.base_url)
+
+        assert "count" in str(exc_info.value)
+        assert upstream.requests == []

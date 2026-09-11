@@ -215,12 +215,17 @@ class OperationToolCompiler:
             "response": {
                 "codec": declared_response_codec or "auto",
                 "preferredMediaTypes": [picked_response.media_type] if picked_response is not None else [],
+                # A response bound to an XSD is validated on the way back (§27).
+                **({"xsd": dict(picked_response.xsd)} if picked_response is not None and getattr(picked_response, "xsd", None) else {}),
             },
             "streaming": {"mode": "none"},
         }
         if body_variant is not None:
             protocol_config["request"]["preferredContentType"] = body_variant.media_type
             protocol_config["request"]["body"] = {"codec": body_variant.codec, "mediaType": body_variant.media_type}
+            # An XML body bound to an XSD is validated on the way out (§27).
+            if getattr(body_variant, "xsd", None):
+                protocol_config["request"]["body"]["xsd"] = dict(body_variant.xsd)
         # The SOAP binding is runtime-required (envelope + transport headers),
         # so it is carried in protocol_config rather than left behind with the
         # UI-only operation extensions (design §18/§32).
@@ -284,8 +289,19 @@ def _body_variant_rank(variant) -> int:
 
 
 def _supports_output_schema(variant) -> bool:
-    """Return whether a response variant carries a usable output schema."""
+    """Return whether a response variant carries a usable output schema.
+
+    XML media types count: ``XmlCodec`` decodes a response into the same
+    canonical dict shape ``JsonCodec`` produces, so a ``+xml``/``application/xml``
+    response is just as describable as a JSON one.  Excluding them silently
+    dropped the whole response side of an XML operation — no output schema,
+    no response codec, and no XSD binding.
+    """
     if variant.schema is None or not (variant.media_type or "").lower():
         return False
     media_type = variant.media_type.lower()
-    return media_type == "application/json" or media_type.endswith("+json") or media_type.startswith("text/")
+    if media_type == "application/json" or media_type.endswith("+json"):
+        return True
+    if media_type.startswith("text/"):
+        return True
+    return media_type in {"application/xml", "application/soap+xml"} or media_type.endswith("+xml")
