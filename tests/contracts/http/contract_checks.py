@@ -19,6 +19,7 @@ unit suite supplies synthetic ones, and both go through the same code.
 
 # Standard
 from dataclasses import dataclass, field
+import json
 from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
@@ -381,6 +382,115 @@ def load_openapi_document(url: str) -> Dict[str, Any]:
 __all__ = [
     "ContractViolation",
     "OperationCase",
+    "check_invalid_input_rejected",
+    "classify_response",
+    "collect_operations",
+    "load_openapi_document",
+    "sample_parameter_values",
+    "select_operations",
+]
+
+
+def build_case_strategies(
+    cases: List[OperationCase],
+    *,
+    url: str,
+    schema_path: str = "/openapi.json",
+) -> List[Tuple[OperationCase, Any]]:
+    """Pair each operation with its schemathesis case-generation strategy (§58).
+
+    schemathesis turns an operation's declared parameters and bodies into a
+    Hypothesis strategy, which is what makes the fuzzing *schema-driven*: the
+    values that get generated are the ones the contract says are possible,
+    including the boundary and unusual ones a hand-written probe never sends.
+
+    Args:
+        cases: The operations to generate cases for.
+        url: The gateway base URL serving the document.
+        schema_path: Path of the OpenAPI document on that gateway.
+
+    Returns:
+        One ``(operation, strategy)`` pair per input case, in input order.
+        Empty when schemathesis is unavailable (it is a dev dependency), so
+        the contract suite degrades to its non-fuzzing checks rather than
+        erroring.
+
+    Raises:
+        RuntimeError: When the document cannot be loaded.
+    """
+    try:
+        # Third-Party
+        from schemathesis import openapi  # pylint: disable=import-outside-toplevel
+    except ImportError:  # pragma: no cover - schemathesis is a dev dependency
+        return []
+
+    schema = openapi.from_url(url.rstrip("/") + schema_path)
+    by_label = {f"{operation.method} {operation.path}": operation for operation in cases}
+    pairs: List[Tuple[OperationCase, Any]] = []
+    for result in schema.get_all_operations():
+        # ``Ok.ok`` is a method, not a property: it must be called.
+        operation = result.ok()
+        operation_case = by_label.get(f"{operation.method.upper()} {operation.path}")
+        if operation_case is None:
+            continue
+        pairs.append((operation_case, schema.get_case_strategy(operation)))
+    return pairs
+
+
+def case_request(case: Any) -> Dict[str, Any]:
+    """Translate a schemathesis case into ``httpx`` request arguments.
+
+    Args:
+        case: A schemathesis ``Case``.
+
+    Returns:
+        A mapping with ``method``, ``path`` and the optional ``params`` /
+        ``headers`` / ``cookies`` / ``content`` entries the case carries.
+    """
+    request: Dict[str, Any] = {"method": case.method.upper(), "path": case.path}
+    if case.query:
+        request["params"] = case.query
+    if case.headers:
+        request["headers"] = dict(case.headers)
+    if case.cookies:
+        request["cookies"] = dict(case.cookies)
+    body = getattr(case, "body", None)
+    if body is not None and not _is_not_set(body):
+        request["content"] = body if isinstance(body, (bytes, str)) else json.dumps(body, default=str)
+    media_type = getattr(case, "media_type", None)
+    if media_type:
+        request.setdefault("headers", {})["Content-Type"] = media_type
+    return request
+
+
+def _is_not_set(value: Any) -> bool:
+    """Return whether ``value`` is schemathesis' "no body" marker.
+
+    schemathesis signals "this operation has no body" with a ``NotSet``
+    sentinel rather than ``None``.  Sending it would put the sentinel's repr
+    on the wire, so it is detected by *type* — matching on a look-alike class
+    silently fails and produces exactly that bug.
+
+    Args:
+        value: The ``case.body`` value.
+
+    Returns:
+        ``True`` when the value is the ``NotSet`` sentinel.
+    """
+    try:
+        # Third-Party
+        from schemathesis.core import NotSet  # pylint: disable=import-outside-toplevel
+
+        return isinstance(value, NotSet) or type(value).__name__ == "NotSet"
+    except ImportError:  # pragma: no cover - schemathesis is a dev dependency
+        return type(value).__name__ == "NotSet"
+
+
+__all__ = [
+    "ContractViolation",
+    "OperationCase",
+    "build_case_strategies",
+    "case_request",
     "check_invalid_input_rejected",
     "classify_response",
     "collect_operations",

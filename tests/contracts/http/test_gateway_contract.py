@@ -30,11 +30,14 @@ import os
 from typing import Any, Dict, Optional
 
 # Third-Party
+# Third-Party
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 import httpx
 import pytest
 
 # First-Party
-from tests.contracts.http.contract_checks import OperationCase, check_invalid_input_rejected, classify_response, sample_parameter_values
+from tests.contracts.http.contract_checks import OperationCase, case_request, check_invalid_input_rejected, classify_response, sample_parameter_values
 from tests.contracts.http.conftest import contract_base_url
 
 _TIMEOUT = float(os.environ.get("CONTRACT_TIMEOUT", "10"))
@@ -157,6 +160,42 @@ def test_invalid_input_is_rejected(operation_case: OperationCase) -> None:
 
     violation = check_invalid_input_rejected(response.status_code)
     assert violation is None, violation.message if violation else ""
+
+
+@given(data=st.data())
+@settings(max_examples=int(os.environ.get("CONTRACT_FUZZ_EXAMPLES", "10")), deadline=None, suppress_health_check=list(HealthCheck))
+def test_fuzzed_values_satisfy_their_contract(fuzz_target: Any, data: st.DataObject) -> None:
+    """Schema-generated values never produce a contract breach (§58).
+
+    This is the fuzzing half of the contract suite: schemathesis derives the
+    value space from the operation's own declaration, so the requests include
+    the boundary and unusual values a hand-written probe never sends.
+
+    The strategy is driven by Hypothesis rather than sampled by hand, so a
+    failure shrinks to a minimal case and is replayed on the next run instead
+    of being a one-off draw.
+
+    Args:
+        fuzz_target: A ``(operation, strategy)`` pair for one gated operation.
+        data: Hypothesis' drawing interface.
+    """
+    operation_case, strategy = fuzz_target
+    case = data.draw(strategy)
+    request = case_request(case)
+
+    with _client() as client:
+        response = client.request(
+            request["method"],
+            _absolute(request["path"]),
+            params=request.get("params"),
+            headers=request.get("headers"),
+            cookies=request.get("cookies"),
+            content=request.get("content"),
+        )
+
+    body = _decode(response)
+    violations = classify_response(operation_case, response.status_code, body, response.headers.get("content-type"))
+    assert not violations, "; ".join(f"{violation.message} (case: {request})" for violation in violations)
 
 
 def test_gate_skipped_operations_are_reported() -> None:

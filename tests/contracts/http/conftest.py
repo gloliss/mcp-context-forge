@@ -21,7 +21,7 @@ import pytest
 
 # First-Party
 from mcpgateway.protocols.http.activation_gate import DEFAULT_ACTIVATION_GATE
-from tests.contracts.http.contract_checks import OperationCase, collect_operations, load_openapi_document, select_operations
+from tests.contracts.http.contract_checks import OperationCase, build_case_strategies, collect_operations, load_openapi_document, select_operations
 
 _BASE_URL = os.environ.get("CONTRACT_BASE_URL")
 _OPENAPI_PATH = os.environ.get("CONTRACT_OPENAPI_PATH", "/openapi.json")
@@ -31,6 +31,7 @@ _ALLOW_MUTATING = os.environ.get("CONTRACT_ALLOW_MUTATING", "").lower() in ("1",
 # One document load per pytest session; collection touches it once.
 _document_cache: Optional[Dict[str, Any]] = None
 _selection_cache: Optional[List[OperationCase]] = None
+_fuzz_cache: Optional[List[object]] = None
 
 
 def contract_base_url() -> Optional[str]:
@@ -57,12 +58,41 @@ def selected_operations() -> List[OperationCase]:
     return _selection_cache
 
 
+def fuzz_targets() -> List[object]:
+    """Return ``(operation, strategy)`` pairs for the gate-permitted operations.
+
+    Built once per session.  Returns an empty list when no gateway is
+    configured, so the fuzzing test collects nothing rather than reaching the
+    network during collection.
+
+    Returns:
+        The paired operations and their Hypothesis strategies.
+    """
+    global _fuzz_cache  # pylint: disable=global-statement
+    if _fuzz_cache is not None:
+        return _fuzz_cache
+    base_url = contract_base_url()
+    if not base_url:
+        _fuzz_cache = []
+        return _fuzz_cache
+    _fuzz_cache = build_case_strategies(selected_operations(), url=base_url, schema_path=_OPENAPI_PATH)
+    return _fuzz_cache
+
+
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """Parametrise operation-scoped tests from the live document.
 
     Args:
         metafunc: The collecting test function's metafunc.
     """
+    if "fuzz_target" in metafunc.fixturenames:
+        targets = fuzz_targets()
+        metafunc.parametrize(
+            "fuzz_target",
+            targets,
+            ids=[case.operation_id or case.label for case, _strategy in targets],
+        )
+        return
     if "operation_case" not in metafunc.fixturenames:
         return
     cases = selected_operations()
@@ -71,3 +101,6 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         cases,
         ids=[case.operation_id or case.label for case in cases],
     )
+
+
+

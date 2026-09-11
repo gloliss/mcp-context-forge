@@ -9,12 +9,17 @@ These exercise the judgement logic directly, with no gateway involved, so
 the contract suite's verdicts are trustworthy before the live suite runs.
 """
 
+# Standard
+import json
+
 # Third-Party
 import pytest
 
 # First-Party
 from tests.contracts.http.contract_checks import (
     ContractViolation,
+    build_case_strategies,
+    case_request,
     OperationCase,
     check_invalid_input_rejected,
     classify_response,
@@ -335,3 +340,143 @@ class TestSampleParameterValues:
         case = OperationCase(method="GET", path="/y", parameters=[{"in": "query", "schema": {"type": "integer"}}])
 
         assert sample_parameter_values(case, location="query") == {}
+
+
+class TestCaseRequest:
+    """schemathesis cases translate into httpx arguments (§58)."""
+
+    def _case(self, **overrides):
+        """Build a minimal schemathesis-like case object."""
+        # Standard
+        from types import SimpleNamespace
+
+        fields = {"method": "get", "path": "/things", "query": None, "headers": None, "cookies": None, "body": None, "media_type": None}
+        fields.update(overrides)
+        return SimpleNamespace(**fields)
+
+    def test_method_is_upper_cased(self):
+        """The method is normalised for httpx."""
+        assert case_request(self._case())["method"] == "GET"
+
+    def test_path_is_preserved(self):
+        """The path is passed through untouched."""
+        assert case_request(self._case(path="/a/{b}"))["path"] == "/a/{b}"
+
+    def test_empty_optionals_are_omitted(self):
+        """Absent query/headers/cookies produce no empty httpx kwargs."""
+        request = case_request(self._case())
+
+        assert set(request) == {"method", "path"}
+
+    def test_populated_optionals_are_included(self):
+        """Query, headers and cookies are carried through."""
+        request = case_request(self._case(query={"a": 1}, headers={"X-T": "v"}, cookies={"s": "1"}))
+
+        assert request["params"] == {"a": 1}
+        assert request["headers"] == {"X-T": "v"}
+        assert request["cookies"] == {"s": "1"}
+
+    def test_structured_body_is_serialised_as_json(self):
+        """A dict body becomes JSON content."""
+        request = case_request(self._case(body={"a": 1}))
+
+        assert json.loads(request["content"]) == {"a": 1}
+
+    def test_bytes_body_passes_through(self):
+        """A bytes body is sent unchanged."""
+        assert case_request(self._case(body=b"raw"))["content"] == b"raw"
+
+    def test_media_type_sets_the_content_type(self):
+        """A declared media type becomes the request Content-Type."""
+        request = case_request(self._case(body={"a": 1}, media_type="application/json"))
+
+        assert request["headers"]["Content-Type"] == "application/json"
+
+    def test_not_set_body_is_not_sent(self):
+        """schemathesis' "no body" sentinel must never reach the wire.
+
+        Sending it would put the sentinel's repr in the request body; that
+        bug shipped once and was caught by the live suite's failure output.
+        """
+        # Third-Party
+        from schemathesis.core import NotSet
+
+        request = case_request(self._case(body=NotSet()))
+
+        assert "content" not in request
+
+    def test_a_lookalike_not_set_is_still_detected(self):
+        """Detection is not fooled by a different class of the same name."""
+        class NotSet:  # noqa: N801 - deliberate name collision
+            """A look-alike that is not schemathesis' sentinel type."""
+
+        request = case_request(self._case(body=NotSet()))
+
+        assert "content" not in request
+
+
+class TestBuildCaseStrategies:
+    """Strategies are paired with the operations they belong to (§58)."""
+
+    @pytest.fixture
+    def schema_url(self):
+        """Serve the shared spec on a loopback port."""
+        # Standard
+        import json as json_module
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        payload = json_module.dumps(_SPEC).encode()
+
+        class _Handler(BaseHTTPRequestHandler):
+            """Serve the document at /openapi.json."""
+
+            def do_GET(self):  # noqa: N802 - stdlib handler name
+                """Answer with the document, or 404 elsewhere."""
+                if self.path != "/openapi.json":
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                """Silence the access log."""
+
+        server = HTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}"
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_strategies_are_paired_with_their_operations(self, schema_url):
+        """Each gated operation gets its own strategy, in input order."""
+        cases = collect_operations(_SPEC)
+        selected, _skipped = select_operations(cases)
+
+        pairs = build_case_strategies(selected, url=schema_url)
+
+        assert [operation.label for operation, _strategy in pairs] == [case.label for case in selected]
+
+    def test_mutating_operations_are_absent_unless_selected(self, schema_url):
+        """Only the operations handed in get a strategy — the gate still rules."""
+        selected, _skipped = select_operations(collect_operations(_SPEC))
+
+        pairs = build_case_strategies(selected, url=schema_url)
+
+        assert all(operation.method == "GET" for operation, _strategy in pairs)
+
+    def test_a_strategy_produces_a_case(self, schema_url):
+        """The paired strategy really generates cases for its operation."""
+        selected, _skipped = select_operations(collect_operations(_SPEC))
+        pairs = build_case_strategies(selected, url=schema_url)
+
+        operation, strategy = pairs[0]
+        case = strategy.example()
+
+        assert case.method.upper() == operation.method
+        assert case.path == operation.path

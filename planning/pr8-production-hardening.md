@@ -120,7 +120,14 @@
 - live 套件用**本地 stand-in 网关**实测通过（合规网关 3 passed / 1 skipped），并确认能**真实捕获**违约：对返回 `{"items":"NOT-AN-ARRAY"}` 的 200 报 `response_schema_mismatch`、对 500 报 `server_error`（非空跑）。
 - 无 `CONTRACT_BASE_URL` 时全程 skip、不触网（collection 阶段也不加载文档）。
 
-**待 E2E 的增量**：schema 驱动的 hypothesis 模糊测试用例生成（schemathesis 4.x 的 `get_case_strategy` 集成）留作 E2E 阶段扩展；当前以「有效请求 + 缺参请求」两类用例覆盖 §58 的四项判定。
+**schema 驱动的模糊测试（已补齐）**：`build_case_strategies()` 用 schemathesis 的 `get_case_strategy` 把每个受 gate 允许的操作用例转成 Hypothesis 策略，live 套件以 `@given` 驱动（失败可缩减、可重放）；`case_request()` 把生成的 case 翻译成 httpx 参数。
+
+调研要点（易踩坑，记录备查）：
+- ``Ok.ok`` 是**方法**不是属性，必须写 `result.ok()`；漏括号会把方法对象当 operation 传下去，报 `'function' object has no attribute 'schema'`。
+- ``case.body`` 在「无 body」时是 ``schemathesis.core.NotSet`` **哨兵**而非 ``None``；必须按**类型**判别，用自定义同名类去 `isinstance` 会静默失效并把哨兵 repr 写进请求体（此 bug 在本地 stand-in 的失败输出里被抓到）。
+- 不要用 `strategy.example()` 驱动测试：Hypothesis 明确告警其不可复现、不缩减，应使用 `@given`。
+
+**范围边界**：契约套件对真实网关的执行仍需 E2E；本地已用 stand-in 网关双向验证（合规 7 passed；违约网关准确报出 `response_schema_mismatch`）。
 
 **验收**
 - `collect_operations` 正确枚举 OpenAPI paths（含 `default` 响应）
