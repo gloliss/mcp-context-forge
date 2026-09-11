@@ -198,14 +198,14 @@ def parse_grpc_status_details(trailing_metadata: Any) -> Optional[Any]:
             import base64  # pylint: disable=import-outside-toplevel
 
             candidates.append(base64.b64decode(value, validate=False))
-        except Exception:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-except  # nosec B110 - an undecodable candidate is expected; the raw value is still tried below
             pass
     for candidate in candidates:
         try:
             status = status_pb2.Status()
             status.ParseFromString(candidate)
             return status
-        except Exception:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-except  # nosec B112 - trying the next candidate is the point of this loop
             continue
     return None
 
@@ -275,6 +275,14 @@ async def _collect_reflection_descriptors_async(channel: Any, timeout_seconds: f
     deadline = time.monotonic() + timeout_seconds
 
     def remaining() -> float:
+        """Return the seconds left in the shared reflection budget.
+
+        Returns:
+            The remaining budget in seconds.
+
+        Raises:
+            TimeoutError: When the budget is exhausted.
+        """
         value = deadline - time.monotonic()
         if value <= 0:
             raise TimeoutError("gRPC reflection deadline exceeded")
@@ -1404,6 +1412,7 @@ class GrpcService:
         call_deadline = call_started + effective_timeout
 
         def remaining_timeout() -> float:
+            """Return the seconds left before this invocation's deadline."""
             remaining = call_deadline - time.monotonic()
             if remaining <= 0:
                 raise asyncio.TimeoutError

@@ -18,7 +18,7 @@ The codec is transport-agnostic: it builds/parses XML with the stdlib
 
 # Standard
 from typing import Any, Optional
-from xml.etree import ElementTree as ET
+from xml.etree import ElementTree as ET  # nosec B405 - every parse path runs XmlSecurityLimits.check_bytes() first, which rejects DTD/entity declarations (design §28)
 
 # First-Party
 from mcpgateway.protocols.codecs.base import CodecContext, EncodedBody, MessageCodec
@@ -129,7 +129,7 @@ class SoapCodec(MessageCodec):
             XmlSecurityError: On payload-security violations.
         """
         self._xml._security.check_bytes(payload)  # pylint: disable=protected-access
-        root = ET.fromstring(payload)
+        root = ET.fromstring(payload)  # nosec B314 - the check_bytes() call above rejects DTD/entity declarations before the parser sees the payload (§28)
         body = self._find_body(root)
         if body is None:
             raise ValueError("SOAP response is missing a Body element")

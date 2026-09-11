@@ -606,8 +606,8 @@ async def test_invoke_method_validates_tls_paths_when_configured(service, db):
         description="desc",
         reflection_enabled=False,
         tls_enabled=True,
-        tls_cert_path="/tmp/cert.pem",
-        tls_key_path="/tmp/key.pem",
+        tls_cert_path="/tmp/cert.pem",  # nosec B108 - a literal path string in a test, never created or read
+        tls_key_path="/tmp/key.pem",  # nosec B108 - a literal path string in a test, never created or read
         grpc_metadata={},
         enabled=True,
         reachable=True,
@@ -699,7 +699,7 @@ def test_validate_tls_path_allows_expected_prefixes_and_blocks_other_paths():
     assert allowed.is_relative_to(Path.cwd().joinpath("certs").resolve())
 
     with pytest.raises(GrpcServiceError, match="outside allowed certificate directories"):
-        _ORIGINAL_VALIDATE_TLS_PATH("/tmp/client.pem", "TLS cert path")
+        _ORIGINAL_VALIDATE_TLS_PATH("/tmp/client.pem", "TLS cert path")  # nosec B108 - a literal path string in a test, never created or read
 
 
 @pytest.mark.asyncio

@@ -44,7 +44,7 @@ import re
 import time
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
-from xml.etree import ElementTree as ET
+from xml.etree import ElementTree as ET  # nosec B405 - every parse path runs XmlSecurityLimits.check_bytes() first, which rejects DTD/entity declarations (design §28)
 
 # Third-Party
 import httpx

@@ -262,6 +262,7 @@ class GrpcEndpoint:
             deadline = time.monotonic() + timeout if timeout is not None else None
 
             def remaining_timeout() -> Optional[float]:
+                """Return the seconds left in the shared reflection budget."""
                 if deadline is None:
                     return None
                 remaining = deadline - time.monotonic()

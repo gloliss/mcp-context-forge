@@ -116,6 +116,7 @@ class ProtoJsonSchemaMapper:
         building: set[str] = set()
 
         def build(message: FieldDescriptor) -> dict[str, Any]:
+            """Build (or reference) the schema for one message descriptor."""
             reference = {"$ref": f"#/$defs/{message.full_name}"}
             if message.full_name in definitions or message.full_name in building:
                 return reference

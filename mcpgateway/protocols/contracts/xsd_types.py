@@ -24,7 +24,7 @@ bounded by ``max_depth``.  These limits cannot be switched off by callers.
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
-from xml.etree import ElementTree as ET
+from xml.etree import ElementTree as ET  # nosec B405 - every parse path runs XmlSecurityLimits.check_bytes() first, which rejects DTD/entity declarations (design §28)
 
 # Third-Party
 import xmlschema

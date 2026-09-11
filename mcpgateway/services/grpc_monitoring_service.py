@@ -67,6 +67,7 @@ _CHANNEL_IDLE_TTL = 300
 # check from consuming unbounded memory.
 _TLS_MATERIAL_MAX_BYTES = 10 * 1024 * 1024
 
+
 class _HealthChannel:
     """A pooled gRPC channel with last-used tracking for idle pruning."""
 
@@ -449,6 +450,7 @@ class GrpcMonitoringService:
                         sem = asyncio.Semaphore(max(1, self._max_concurrent))
 
                         async def _check_one(sid: str) -> None:
+                            """Run one scheduled health check under the concurrency cap."""
                             async with sem:
                                 try:
                                     await self.check_service(sid)

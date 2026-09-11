@@ -546,11 +546,11 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
                     """Return an awaitable call object, as grpc.aio does."""
 
                     class _Call:
-                        def __await__(self_inner):
+                        def __await__(self):
                             async def _response():
                                 return DummyResponse()
 
-                            return _response().__await__()
+                            return _response().__await__()  # pylint: disable=no-member - _response() is a coroutine, which is awaitable
 
                         @staticmethod
                         async def initial_metadata():
@@ -636,7 +636,7 @@ async def test_endpoint_start_without_reflection(monkeypatch):
 
     await endpoint.start(trusted_local=True)
     assert endpoint._channel == "chan"
-    endpoint._discover_services.assert_not_called()
+    endpoint._discover_services.assert_not_called()  # pylint: disable=no-member - replaced with an AsyncMock above
 
 
 @pytest.mark.asyncio
@@ -650,8 +650,8 @@ async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
         target="secure.example.com:443",
         reflection_enabled=True,
         tls_enabled=True,
-        tls_cert_path="/tmp/cert.pem",
-        tls_key_path="/tmp/key.pem",
+        tls_cert_path="/tmp/cert.pem",  # nosec B108 - a literal path string in a test, never created or read
+        tls_key_path="/tmp/key.pem",  # nosec B108 - a literal path string in a test, never created or read
     )
 
     mock_grpc = MagicMock()
@@ -665,7 +665,7 @@ async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
 
     assert endpoint._channel == "secure-chan"
     mock_grpc.ssl_channel_credentials.assert_called_once()
-    endpoint._discover_services.assert_awaited()
+    endpoint._discover_services.assert_awaited()  # pylint: disable=no-member - replaced with an AsyncMock above
 
 
 @pytest.mark.asyncio
@@ -677,8 +677,6 @@ async def test_discover_services_success_no_grpc(monkeypatch):
     endpoint._target = "localhost:50051"
     endpoint._channel = "chan"
     endpoint._services = {}
-
-    mock_stub = MagicMock()
 
     mock_service = MagicMock()
     mock_service.name = "test.TestService"
@@ -836,10 +834,10 @@ async def test_invoke_streaming_rpc_error(monkeypatch):
         def unary_stream(self, _path, request_serializer=None, response_deserializer=None):
             def call(_req, timeout=None, metadata=None):
                 class _Stream:
-                    def __aiter__(self_inner):
-                        return self_inner
+                    def __aiter__(self):
+                        return self
 
-                    async def __anext__(self_inner):
+                    async def __anext__(self):
                         raise DummyRpcError("boom")
 
                     @staticmethod

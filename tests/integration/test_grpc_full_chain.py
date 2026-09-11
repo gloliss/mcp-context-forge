@@ -46,7 +46,9 @@ def _wait_for_server(host, port, timeout=10):
 def _run(coro):
     """Run coroutine synchronously."""
     try:
-        loop = asyncio.get_running_loop()
+        # Probe only: we need to know whether a loop is already running, not
+        # the loop itself.
+        asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
     import concurrent.futures
@@ -561,7 +563,6 @@ class TestSchemaChange:
 # ══════════════════════════════════════════════════════════════════════
 
 
-
 # ══════════════════════════════════════════════════════════════════════
 # Tests: gRPC Error Codes (via Echo value triggers)
 # ══════════════════════════════════════════════════════════════════════
@@ -736,17 +737,14 @@ class TestSchemaErrors:
 # ══════════════════════════════════════════════════════════════════════
 
 
-
 # ══════════════════════════════════════════════════════════════════════
 # Tests: Concurrent Calls
 # ══════════════════════════════════════════════════════════════════════
 
 
-
 # ══════════════════════════════════════════════════════════════════════
 # Tests: Concurrent Calls
 # ══════════════════════════════════════════════════════════════════════
-
 
 
 # ══════════════════════════════════════════════════════════════════════

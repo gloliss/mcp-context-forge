@@ -17,7 +17,7 @@ schema-less loose codec, which is exactly what they guard against.
 import asyncio
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 import textwrap
 
 # Third-Party

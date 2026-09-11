@@ -28,7 +28,7 @@ callers.
 
 # Standard
 from typing import Any, Optional
-from xml.etree import ElementTree as ET
+from xml.etree import ElementTree as ET  # nosec B405 - every parse path runs XmlSecurityLimits.check_bytes() first, which rejects DTD/entity declarations (design §28)
 
 # First-Party
 from mcpgateway.protocols.codecs.base import CodecContext, EncodedBody, MessageCodec
@@ -124,7 +124,7 @@ class XmlCodec(MessageCodec):
         Raises:
             ET.ParseError: When the payload is not well-formed XML.
         """
-        root = ET.fromstring(payload)
+        root = ET.fromstring(payload)  # nosec B314 - only reached from decode(), which runs check_bytes() immediately before this call (design §28)
         return {root.tag: self._element_to_value(root)}
 
     def _loose_encode(self, value: Any) -> bytes:
