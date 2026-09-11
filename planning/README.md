@@ -32,14 +32,13 @@ Phase 4  Production    [PR8 Production Hardening]
 
 ## 总任务状态（截至 2026-09-10）
 
-- **已完成**：T4.1–4.7、T5.1–5.6、T6.1–6.9、T7.1–7.9、T8.1–8.4/8.6/8.7
+- **已完成**：T4.1–4.7、T5.1–5.6、T6.1–6.9、T7.1–7.9、T8.1–8.4/8.6/8.7（**规划内任务已全部完成**）
 - **PR3 已实现（不重复做）**：T8.5a/T8.5b（§66 SafeReferenceFetcher/ContractArtifactResolver 在 `services/safe_reference_fetcher.py`）
-- **明确未做**：YAML manifest 显式声明 manual XML 操作（T4.4 只交付了「XSD 绑定 → 运行时生效」这一段，见 pr4 文档范围边界）
 
 ## 本地验证基线（2026-09-10）
 
 - **单元**：protocols（codecs/contracts/http/grpc）、services（grpc_*、http_*、operation_tool_compiler、tool_service）全绿
-- **集成**（`--with-integration`，真实本地 upstream，非 mock）：HTTP 17 + XML 5 + SOAP 3 + gRPC 43 = **68 passed**
+- **集成**（`--with-integration`，真实本地 upstream，非 mock）：**72 passed**（HTTP 20 含 manual XML manifest 3 例 + XML 8 + SOAP 3 + gRPC 43）
 - **gRPC 集成**覆盖：反射全链、四类 RPC、取消传播、deadline、metadata 鉴权、无反射 proto 导入、schema 迁移、并发、大消息
 - 未走全量 `make test`（遵循「不要全量 pytest」约定）；E2E（双远端 → 镜像 → 容器 → 真实网关）由用户执行
 

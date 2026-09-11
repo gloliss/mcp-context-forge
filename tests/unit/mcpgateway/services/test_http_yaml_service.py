@@ -300,3 +300,173 @@ async def test_scan_collects_errors_without_crashing(tmp_path, test_db, monkeypa
     assert result["created"] == [] and len(result["errors"]) == 1
     assert "positive integer" in result["errors"][0]["error"]
     assert test_db.execute(select(DbHttpService).where(DbHttpService.name == name)).scalar_one_or_none() is None
+
+
+# --- §27 manual XML operations ---
+
+_MANUAL_MANIFEST = """apiVersion: contextforge/v1alpha1
+kind: HttpService
+metadata:
+  name: {name}
+  visibility: private
+spec:
+  baseUrl: http://report.internal
+  operations:
+    manual:
+      - name: queryReport
+        method: POST
+        path: /query
+        body:
+          mediaType: application/xml
+          xsd:
+            schema: |
+              <?xml version="1.0"?>
+              <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                <xs:element name="QueryRequest"><xs:complexType><xs:sequence>
+                  <xs:element name="factory" type="xs:string"/>
+                </xs:sequence></xs:complexType></xs:element>
+              </xs:schema>
+        response:
+          mediaType: application/xml
+          xsd:
+            schema: |
+              <?xml version="1.0"?>
+              <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                <xs:element name="QueryResponse"><xs:complexType><xs:sequence>
+                  <xs:element name="status" type="xs:string"/>
+                </xs:sequence></xs:complexType></xs:element>
+              </xs:schema>
+"""
+
+
+def _write_manual_manifest(tmp_path: Path, name: str) -> Path:
+    """Write a manual-operation manifest into its own scan root."""
+    root = tmp_path / f"manual-{name}"
+    root.mkdir()
+    (root / "http-service.yaml").write_text(_MANUAL_MANIFEST.format(name=name), encoding="utf-8")
+    return root
+
+
+def _manual_entries(extra: str) -> str:
+    """Build a manifest body with one manual entry plus extra YAML."""
+    return _MANUAL_MANIFEST.format(name="x").split("    manual:\n")[0] + "    manual:\n" + extra
+
+
+class TestManualOperationValidation:
+    """spec.operations.manual is strictly validated (§27)."""
+
+    def _load(self, tmp_path: Path, body: str) -> dict:
+        """Write ``body`` as a manifest and validate it."""
+        root = tmp_path / "v"
+        root.mkdir()
+        path = root / "http-service.yaml"
+        path.write_text(body, encoding="utf-8")
+        return HttpYamlScanService._load_manifest(path)  # pylint: disable=protected-access
+
+    def test_discovery_may_be_omitted_with_manual_operations(self, tmp_path):
+        """A manifest declaring manual operations needs no discovery source."""
+        data = self._load(tmp_path, _MANUAL_MANIFEST.format(name="ok"))
+
+        assert data["spec"]["operations"]["manual"][0]["name"] == "queryReport"
+
+    def test_discovery_is_still_required_without_manual_operations(self, tmp_path):
+        """A manifest with neither a source nor manual operations is rejected."""
+        body = "apiVersion: contextforge/v1alpha1\nkind: HttpService\nmetadata:\n  name: n\nspec:\n  baseUrl: http://x\n"
+
+        with pytest.raises(HttpServiceError, match="spec.discovery"):
+            self._load(tmp_path, body)
+
+    @pytest.mark.parametrize(
+        "entry,message",
+        [
+            ("      - method: POST\n        path: /q\n        response:\n          mediaType: application/xml\n", "name must be"),
+            ("      - name: a\n        method: FLY\n        path: /q\n        response:\n          mediaType: application/xml\n", "method must be"),
+            ("      - name: a\n        method: POST\n        path: q\n        response:\n          mediaType: application/xml\n", "path must be"),
+            ("      - name: a\n        method: POST\n        path: /q\n", "must declare a body"),
+            ("      - name: a\n        method: POST\n        path: /q\n        response:\n          mediaType: ''\n", "mediaType must be"),
+        ],
+    )
+    def test_malformed_entries_are_rejected(self, tmp_path, entry, message):
+        """Each malformed field is reported with a specific error."""
+        body = "apiVersion: contextforge/v1alpha1\nkind: HttpService\nmetadata:\n  name: n\nspec:\n  baseUrl: http://x\n  operations:\n    manual:\n" + entry
+
+        with pytest.raises(HttpServiceError, match=message):
+            self._load(tmp_path, body)
+
+    def test_duplicate_names_are_rejected(self, tmp_path):
+        """Two manual operations may not share a name."""
+        entry = "      - name: dup\n        method: POST\n        path: /a\n        response:\n          mediaType: application/xml\n      - name: dup\n        method: POST\n        path: /b\n        response:\n          mediaType: application/xml\n"
+        body = "apiVersion: contextforge/v1alpha1\nkind: HttpService\nmetadata:\n  name: n\nspec:\n  baseUrl: http://x\n  operations:\n    manual:\n" + entry
+
+        with pytest.raises(HttpServiceError, match="duplicated"):
+            self._load(tmp_path, body)
+
+    @pytest.mark.parametrize(
+        "xsd,message",
+        [
+            ("            {}\n", "exactly one of schema or file"),
+            ("            schema: '<x/>'\n            file: a.xsd\n", "exactly one of schema or file"),
+            ("            file: ../outside.xsd\n", "relative path inside the scan root"),
+            ("            file: /etc/passwd\n", "relative path inside the scan root"),
+        ],
+    )
+    def test_malformed_xsd_bindings_are_rejected(self, tmp_path, xsd, message):
+        """An XSD binding must name exactly one source, inside the scan root."""
+        entry = "      - name: a\n        method: POST\n        path: /q\n        response:\n          mediaType: application/xml\n          xsd:\n" + xsd
+        body = "apiVersion: contextforge/v1alpha1\nkind: HttpService\nmetadata:\n  name: n\nspec:\n  baseUrl: http://x\n  operations:\n    manual:\n" + entry
+
+        with pytest.raises(HttpServiceError, match=message):
+            self._load(tmp_path, body)
+
+
+class TestManualOperationSynthesis:
+    """Declarations become a document the existing pipeline consumes (§27)."""
+
+    def _synthesize(self, tmp_path: Path, name: str = "synth"):
+        """Run the manifest through validation and synthesis."""
+        root = _write_manual_manifest(tmp_path, name)
+        manifest_path = (root / "http-service.yaml").resolve()
+        manifest = HttpYamlScanService._load_manifest(manifest_path)  # pylint: disable=protected-access
+        payload = HttpYamlScanService._synthesize_manual_openapi(manifest, manifest_path, root.resolve())  # pylint: disable=protected-access
+        return json.loads(payload)
+
+    def test_document_is_valid_openapi_with_the_declared_path(self, tmp_path):
+        """The synthesized document carries the declared operation."""
+        document = self._synthesize(tmp_path)
+
+        assert document["openapi"].startswith("3.")
+        assert list(document["paths"]) == ["/query"]
+        assert document["paths"]["/query"]["post"]["operationId"] == "queryReport"
+
+    def test_both_xsd_bindings_ride_along(self, tmp_path):
+        """Request and response XSDs are attached as vendor extensions."""
+        document = self._synthesize(tmp_path)
+        operation = document["paths"]["/query"]["post"]
+
+        assert "QueryRequest" in operation["requestBody"]["content"]["application/xml"]["x-contextforge-xsd"]["schema"]
+        assert "QueryResponse" in operation["responses"]["200"]["content"]["application/xml"]["x-contextforge-xsd"]["schema"]
+
+    def test_the_synthesized_document_compiles_to_an_xml_tool(self, tmp_path):
+        """End to end: declarations → OpenAPI → compiler → XML protocol_config."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.protocols.contracts.models import ContractArtifact, DiscoveryContext
+        from mcpgateway.protocols.contracts.openapi import OpenAPIContractProvider
+        from mcpgateway.services.operation_tool_compiler import OperationToolCompiler, ToolCompileOverrides
+
+        document = self._synthesize(tmp_path)
+        artifact = ContractArtifact(payload=json.dumps(document).encode(), artifact_format="openapi-json", source_type="manual")
+        catalog = asyncio.run(OpenAPIContractProvider().discover(artifact, DiscoveryContext()))
+        compiled = OperationToolCompiler().compile(
+            catalog.operations[0],
+            type("S", (), {"slug": "report", "base_url": "http://report.internal"})(),
+            type("A", (), {"content_hash": catalog.source_hash, "source_type": "manual"})(),
+            ToolCompileOverrides(),
+        )
+
+        config = compiled.protocol_config
+        assert config["request"]["body"]["codec"] == "xml"
+        assert "QueryRequest" in config["request"]["body"]["xsd"]["schema"]
+        assert "QueryResponse" in config["response"]["xsd"]["schema"]
