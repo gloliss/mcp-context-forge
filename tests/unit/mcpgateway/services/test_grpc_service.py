@@ -509,8 +509,7 @@ class TestGrpcService:
             await service.delete_service(mock_db, "non-existent-id")
 
     @patch("mcpgateway.services.grpc_service.grpc")
-    @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
-    async def test_reflect_service_success(self, mock_reflection_grpc, mock_grpc, service, mock_db, sample_db_service):
+    async def test_reflect_service_success(self, mock_grpc, service, mock_db, sample_db_service):
         """Test successful service reflection."""
         # Mock gRPC channel and reflection exchange
         mock_channel = MagicMock()
@@ -1185,9 +1184,8 @@ class TestGrpcService:
         mock_ep_instance.close.assert_not_called()
 
     @patch("mcpgateway.services.grpc_service.grpc")
-    @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
     @patch("mcpgateway.services.grpc_service.reflection_pb2")
-    async def test_perform_reflection_stores_file_descriptor_bytes(self, mock_reflection_pb2, mock_reflection_pb2_grpc, mock_grpc, service, mock_db, sample_db_service):
+    async def test_perform_reflection_stores_file_descriptor_bytes(self, mock_reflection_pb2, mock_grpc, service, mock_db, sample_db_service):
         """Test that reflection normalizes descriptor bytes into an artifact."""
         # Build a real serialized FileDescriptorProto
         fd_proto = FileDescriptorProto()

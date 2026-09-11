@@ -25,7 +25,7 @@ try:
     from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
     from google.protobuf.message import DecodeError
     import grpc
-    from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc  # pylint: disable=no-member
+    from grpc_reflection.v1alpha import reflection_pb2  # pylint: disable=no-member
 
     GRPC_AVAILABLE = True
 except ImportError:
@@ -37,7 +37,6 @@ except ImportError:
     FileDescriptorProto = None  # type: ignore
     grpc = None  # type: ignore
     reflection_pb2 = None  # type: ignore
-    reflection_pb2_grpc = None  # type: ignore
 
 # 第一方（项目内部）模块
 from mcpgateway.config import settings

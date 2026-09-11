@@ -87,6 +87,12 @@ class _DeadlineQueuePool(QueuePool):
     """QueuePool whose checkout wait honors the current invocation deadline."""
 
     def _do_get(self):  # pylint: disable=protected-access
+        """Check out a connection, capping the wait at the invocation deadline.
+
+        With no deadline in context this is the stock ``QueuePool`` checkout;
+        with one, the wait is shortened so a saturated pool surfaces as a
+        deadline overrun rather than blocking past the caller's budget.
+        """
         deadline = _SQL_EXECUTION_DEADLINE.get()
         if deadline is None:
             return super()._do_get()

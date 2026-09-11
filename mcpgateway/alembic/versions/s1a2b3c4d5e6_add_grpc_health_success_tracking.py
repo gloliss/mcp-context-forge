@@ -22,6 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """Add the gRPC service health-success timestamp column."""
     op.add_column(
         "grpc_services",
         sa.Column("last_health_success", sa.DateTime(timezone=True), nullable=True),
@@ -29,4 +30,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drop the gRPC service health-success timestamp column."""
     op.drop_column("grpc_services", "last_health_success")

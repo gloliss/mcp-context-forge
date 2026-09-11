@@ -22,7 +22,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 try:
     # Third-Party
     import grpc
-    from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
+    from grpc_reflection.v1alpha import reflection_pb2
 
     GRPC_AVAILABLE = True
 except ImportError:
@@ -30,7 +30,6 @@ except ImportError:
     # grpc module will not be used if not available
     grpc = None  # type: ignore
     reflection_pb2 = None  # type: ignore
-    reflection_pb2_grpc = None  # type: ignore
 
 # Third-Party
 from google.protobuf.descriptor_pb2 import FileDescriptorSet
