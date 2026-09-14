@@ -87,6 +87,12 @@ class _DeadlineQueuePool(QueuePool):
     """QueuePool whose checkout wait honors the current invocation deadline."""
 
     def _do_get(self):  # pylint: disable=protected-access
+        """Check out a connection, capping the wait at the invocation deadline.
+
+        With no deadline in context this is the stock ``QueuePool`` checkout;
+        with one, the wait is shortened so a saturated pool surfaces as a
+        deadline overrun rather than blocking past the caller's budget.
+        """
         deadline = _SQL_EXECUTION_DEADLINE.get()
         if deadline is None:
             return super()._do_get()
@@ -323,7 +329,11 @@ class SQLDataService:
             if discard_candidate:
                 candidate.dispose()
 
-        assert entry is not None
+        if entry is None:  # pragma: no cover - internal invariant: every path above assigns or reuses an entry
+            # An assert would be stripped under ``python -O``, leaving the
+            # ``entry.engine`` dereference below to fail with an opaque
+            # AttributeError instead of naming the broken invariant.
+            raise RuntimeError("SQL engine cache entry missing after acquisition")
         try:
             yield entry.engine
         finally:

@@ -26,6 +26,7 @@ from typing import Any, Dict, Optional
 # First-Party
 from mcpgateway.protocols.codecs.base import CodecContext, EncodedBody
 from mcpgateway.protocols.codecs.registry import CodecRegistry
+from mcpgateway.protocols.http.xsd_binding import build_xsd_type_system
 
 # Methods that never carry a request body.
 _BODYLESS_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "DELETE"})
@@ -72,7 +73,7 @@ class RequestBuilder:
         """
         self._codecs = codecs
 
-    def build(self, arguments: Dict[str, Any], request_config: Optional[Dict[str, Any]]) -> BuiltRequest:
+    def build(self, arguments: Dict[str, Any], request_config: Optional[Dict[str, Any]], protocol_config: Optional[Dict[str, Any]] = None) -> BuiltRequest:
         """Assemble the request from arguments and request configuration.
 
         Args:
@@ -80,6 +81,10 @@ class RequestBuilder:
             request_config: The ``request`` sub-object of ``protocol_config``
                 (method, pathTemplate, preferredContentType, body, and an
                 optional ``parameters`` list).
+            protocol_config: The full ``protocol_config``, forwarded to the
+                body codec so binding-specific configuration is visible
+                (SOAP reads ``request.soap`` for version/operation/
+                namespace).  Optional for legacy callers.
 
         Returns:
             A fully-resolved ``BuiltRequest``.
@@ -108,7 +113,7 @@ class RequestBuilder:
         # 2. Encode the body when this method carries one.
         body = None
         if body_value is not None and method not in _BODYLESS_METHODS:
-            body = self._encode_body(body_value, request_config, query_params)
+            body = self._encode_body(body_value, request_config, protocol_config)
 
         return BuiltRequest(
             method=method,
@@ -252,22 +257,33 @@ class RequestBuilder:
         self,
         body_value: Any,
         request_config: Dict[str, Any],
-        query_params: Dict[str, Any],
+        protocol_config: Optional[Dict[str, Any]],
     ) -> EncodedBody:
         """Encode the body using the configured codec.
+
+        The explicit ``body.codec`` name wins over the media type: a SOAP
+        1.1 body declares ``codec: "soap"`` with ``mediaType: text/xml``,
+        where resolving by media type alone would pick the plain
+        ``XmlCodec`` and emit an envelope-less payload (§32).
 
         Args:
             body_value: The outbound body value.
             request_config: The ``request`` configuration (for codec/media
                 type selection).
-            query_params: Query params (never merged into the body).
+            protocol_config: The full ``protocol_config`` handed to the
+                codec so binding configuration is visible (§18).
 
         Returns:
             The encoded ``EncodedBody``.
         """
-        del query_params  # query and body remain independent (§9.6)
         body_config = request_config.get("body") or {}
         media_type = body_config.get("mediaType") or request_config.get("preferredContentType")
-        codec = self._codecs.resolve(media_type)
-        context = CodecContext(preferred_content_type=media_type)
+        codec = self._codecs.resolve_name(body_config.get("codec")) or self._codecs.resolve(media_type)
+        context = CodecContext(
+            protocol_config=protocol_config,
+            preferred_content_type=media_type,
+            # An XML tool that declared an XSD is schema-validated on the way
+            # out too, not just on the way back (design §27).
+            xsd_type_system=build_xsd_type_system(protocol_config),
+        )
         return codec.encode(body_value, context)

@@ -92,6 +92,7 @@ def _operation_to_dict(operation: OperationDefinition) -> dict[str, Any]:
                 "schema": body.schema,
                 "required": body.required,
                 "schema_ref": body.schema_ref,
+                "xsd": body.xsd,
             }
             for body in request.bodies
         ],
@@ -101,6 +102,7 @@ def _operation_to_dict(operation: OperationDefinition) -> dict[str, Any]:
                 "media_type": variant.media_type,
                 "schema": variant.schema,
                 "description": variant.description,
+                "xsd": variant.xsd,
             }
             for variant in response.variants
         ]
@@ -148,6 +150,7 @@ def _operation_from_dict(data: dict[str, Any]) -> OperationDefinition:
                     schema=body.get("schema"),
                     required=bool(body.get("required", False)),
                     schema_ref=body.get("schema_ref"),
+                    xsd=body.get("xsd"),
                 )
                 for body in data.get("bodies", [])
             ),
@@ -159,6 +162,7 @@ def _operation_from_dict(data: dict[str, Any]) -> OperationDefinition:
                     media_type=variant["media_type"],
                     schema=variant.get("schema"),
                     description=variant.get("description"),
+                    xsd=variant.get("xsd"),
                 )
                 for variant in data.get("responses", [])
             )

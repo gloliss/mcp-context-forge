@@ -44,6 +44,7 @@ import re
 import time
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
+from xml.etree import ElementTree as ET  # nosec B405 - every parse path runs XmlSecurityLimits.check_bytes() first, which rejects DTD/entity declarations (design §28)
 
 # Third-Party
 import httpx
@@ -55,9 +56,12 @@ from mcpgateway.config import settings
 from mcpgateway.protocols.base import ProtocolAdapter
 from mcpgateway.protocols.codecs import codec_registry
 from mcpgateway.protocols.codecs.base import CodecContext
+from mcpgateway.protocols.codecs.soap import SoapFaultError
 from mcpgateway.protocols.http.redirect import REST_TOO_MANY_REDIRECTS, RedirectSecurity
 from mcpgateway.protocols.http.request_builder import RequestBuilder
 from mcpgateway.protocols.http.response_decoder import ResponseDecoder
+from mcpgateway.protocols.http.soap import is_soap_config, map_soap_fault, soap_content_type, soap_request_headers
+from mcpgateway.protocols.http.xsd_binding import build_xsd_type_system
 from mcpgateway.protocols.models import ErrorCategory, InvocationContext, ProtocolError, ProtocolResult
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
@@ -73,6 +77,63 @@ REST_URL_VALIDATION_TIMEOUT = "REST_URL_VALIDATION_TIMEOUT"
 REST_SEND_TIMEOUT = "REST_SEND_TIMEOUT"
 REST_HTTP_STATUS_ERROR = "REST_HTTP_STATUS_ERROR"
 REST_UNEXPECTED_STATUS = "REST_UNEXPECTED_STATUS"
+
+
+def map_http_status_to_category(status_code: Optional[int]) -> ErrorCategory:
+    """Map an HTTP status code to a canonical error category (design §73).
+
+    Args:
+        status_code: The upstream HTTP status code.
+
+    Returns:
+        The mapped :class:`ErrorCategory`, defaulting to ``UPSTREAM_ERROR``.
+    """
+    if status_code is None:
+        return ErrorCategory.UPSTREAM_ERROR
+    if status_code == 400:
+        return ErrorCategory.INVALID_ARGUMENT
+    if status_code == 401:
+        return ErrorCategory.UNAUTHENTICATED
+    if status_code == 403:
+        return ErrorCategory.PERMISSION_DENIED
+    if status_code == 404:
+        return ErrorCategory.NOT_FOUND
+    if status_code == 409:
+        return ErrorCategory.CONFLICT
+    if status_code == 429:
+        return ErrorCategory.RATE_LIMITED
+    if status_code == 503:
+        return ErrorCategory.UNAVAILABLE
+    return ErrorCategory.UPSTREAM_ERROR
+
+
+# Methods that are safe to retry automatically on 5xx/429 (design §68).
+_RETRYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Idempotent methods: retry allowed only with an idempotency policy (§68).
+_IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
+
+
+def is_retryable_http_method(method: str, *, status_code: Optional[int] = None) -> bool:
+    """Return whether a method/status combination may be auto-retried (§68).
+
+    GET/HEAD/OPTIONS are always retryable.  PUT/DELETE are only retryable on
+    transient statuses (429/5xx) because they are idempotent; POST/PATCH are
+    never auto-retried by the gateway.
+
+    Args:
+        method: The HTTP method (upper-cased by the caller).
+        status_code: Optional upstream status; transient statuses permit
+            retry of idempotent-but-mutating methods.
+
+    Returns:
+        ``True`` when a same-argument retry is safe.
+    """
+    normalized = (method or "").upper()
+    if normalized in _RETRYABLE_METHODS:
+        return True
+    if normalized in _IDEMPOTENT_METHODS:
+        return status_code is not None and (status_code == 429 or status_code >= 500)
+    return False
 
 
 def _handle_json_parse_error(response: Any, error: Any, is_error_response: bool = False) -> dict:
@@ -179,8 +240,14 @@ class HttpProtocolAdapter(ProtocolAdapter):
 
         # Resolve the full request URL from the tool base URL + rendered path.
         base_url = operation.request.get("url") or operation.request.get("base_url") or ""
-        built = RequestBuilder(codec_registry).build(arguments, request_config)
+        built = RequestBuilder(codec_registry).build(arguments, request_config, config)
         final_url = RedirectSecurity.resolve_absolute(built.url_path, base_url)
+
+        # SOAP binding headers/content type (§33).  The body codec stays the
+        # authority on the media type; the binding only adds the SOAP
+        # specifics (SOAPAction for 1.1, the action parameter for 1.2).
+        soap_headers = soap_request_headers(config)
+        soap_content_type_header = soap_content_type(config, built.body.content_type if built.body else None)
 
         redirect_security = RedirectSecurity()
         response = None
@@ -195,6 +262,15 @@ class HttpProtocolAdapter(ProtocolAdapter):
             hop_headers = {hk: hv for hk, hv in context.headers.items() if hk.lower() != "host"}
             hop_headers.update(target.headers)
             hop_headers.update(built.headers)
+            # The body codec is the authority on the media type it produced:
+            # sending an XML (or form/multipart) body without its declared
+            # Content-Type makes the upstream guess.  Caller headers win, so
+            # an explicitly configured type is never overwritten.
+            if built.body is not None and built.body.content_type:
+                hop_headers.setdefault("Content-Type", built.body.content_type)
+            hop_headers.update(soap_headers)
+            if soap_content_type_header:
+                hop_headers["Content-Type"] = soap_content_type_header
 
             request_options: dict[str, Any] = {
                 "cookies": built.cookies or None,
@@ -209,9 +285,7 @@ class HttpProtocolAdapter(ProtocolAdapter):
             try:
                 response = await asyncio.wait_for(
                     context.send_with_retry(
-                        lambda call_headers, _url=target.url: self._send_new(
-                            context, built.method, _url, call_headers, request_options, body_kwargs
-                        ),
+                        lambda call_headers, _url=target.url: self._send_new(context, built.method, _url, call_headers, request_options, body_kwargs),
                         hop_headers,
                     ),
                     timeout=context.remaining_timeout(),
@@ -254,12 +328,71 @@ class HttpProtocolAdapter(ProtocolAdapter):
             protocol_config=config,
             preferred_media_types=tuple((config.get("response") or {}).get("preferredMediaTypes") or ()),
             max_response_bytes=settings.rest_response_text_max_length,
+            # A manually declared XML tool is validated against its XSD (§27);
+            # tools without a binding keep the schema-less path.
+            xsd_type_system=build_xsd_type_system(config, side="response"),
         )
-        decoded = decoder.decode(response.status_code, content_type, payload, codec_context)
+        is_soap = is_soap_config(config)
+        try:
+            decoded = decoder.decode(response.status_code, content_type, payload, codec_context)
+        except SoapFaultError as exc:
+            # A SOAP Fault is an upstream error, not a successful body (§34).
+            raise map_soap_fault(exc) from exc
+        except (ET.ParseError, ValueError) as exc:
+            # Only a SOAP call can reach here: the SOAP codec refuses a
+            # payload that is not a parsable envelope, and a non-2xx SOAP
+            # response is frequently an HTML/plain error page rather than a
+            # Fault.  Non-SOAP codecs do not raise on malformed bodies.
+            if not is_soap:
+                raise
+            raise self._soap_status_error(response, built.method, exc) from exc
+
+        if is_soap and not 200 <= response.status_code < 300:
+            # A SOAP call that fails without a Fault envelope is still a
+            # failure; render it through the shared status-error path so
+            # ToolService produces an is_error result (§73).
+            raise self._soap_status_error(response, built.method, None)
+
         return ProtocolResult(
             data=decoded.data,
             metadata={"status_code": response.status_code, "content_type": decoded.codec_media_type},
             duration_ms=(time.time() - rest_start_time) * 1000,
+        )
+
+    @staticmethod
+    def _soap_status_error(response: Any, method: str, cause: Optional[Exception]) -> ProtocolError:
+        """Build the error for a SOAP call that did not return a usable envelope.
+
+        Two cases reach here: a non-2xx response with no Fault envelope (an
+        HTML/plain error page, or a plain status failure), and a 2xx response
+        whose body is not a parsable SOAP envelope.  Both carry
+        ``protocol_status`` so ToolService renders an ``is_error`` tool result.
+
+        Args:
+            response: The upstream HTTPX response.
+            method: The request method, used for the retry decision (§68).
+            cause: The decode failure that prompted the error, if any.
+
+        Returns:
+            A ``ProtocolError`` describing the failure.
+        """
+        successful = 200 <= response.status_code < 300
+        if successful:
+            return ProtocolError(
+                category=ErrorCategory.UPSTREAM_ERROR,
+                code=REST_UNEXPECTED_STATUS,
+                message=f"Upstream returned a malformed SOAP response: {cause}",
+                origin="http:soap",
+                retryable=False,
+                protocol_status=response.status_code,
+            )
+        return ProtocolError(
+            category=map_http_status_to_category(response.status_code),
+            code=REST_HTTP_STATUS_ERROR,
+            message=f"HTTP {response.status_code}: {response.text or ''}",
+            origin="http:soap",
+            retryable=is_retryable_http_method(method, status_code=response.status_code),
+            protocol_status=response.status_code,
         )
 
     @staticmethod
@@ -599,11 +732,11 @@ class HttpProtocolAdapter(ProtocolAdapter):
                 else:
                     error_val = f"HTTP {response.status_code}"
                 raise ProtocolError(
-                    category=ErrorCategory.UPSTREAM_ERROR,
+                    category=map_http_status_to_category(response.status_code),
                     code=REST_HTTP_STATUS_ERROR,
                     message=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode(),
                     origin="http",
-                    retryable=False,
+                    retryable=is_retryable_http_method(method, status_code=response.status_code),
                     protocol_status=response.status_code,
                 )
 

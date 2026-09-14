@@ -339,7 +339,7 @@ async def test_broadcast_database_input(monkeypatch, registry: SessionRegistry, 
 
 
 # --------------------------------------------------------------------------- #
-# Fixtures to stub get_db and the three *Service objects                      #
+# Fixture to stub get_db                                                      #
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def stub_db(monkeypatch):
@@ -353,26 +353,6 @@ def stub_db(monkeypatch):
         lambda: _dummy_iter(),
         raising=False,
     )
-
-
-@pytest.fixture()
-def stub_services(monkeypatch):
-    """Replace list_* service methods so they return predictable data."""
-
-    class _Item:
-        def model_dump(self, *_, **__) -> Dict[str, str]:  # noqa: D401
-            return {"name": "demo"}
-
-    async def _return_items(*args, **kwargs):  # noqa: D401
-        return [_Item()]
-
-    mod = "mcpgateway.cache.session_registry"
-    monkeypatch.setattr(f"{mod}.tool_service.list_tools", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.tool_service.list_server_tools", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.prompt_service.list_prompts", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.prompt_service.list_server_prompts", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.resource_service.list_resources", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.resource_service.list_server_resources", _return_items, raising=False)
 
 
 def test_redis_importerror_isolated():
@@ -515,8 +495,8 @@ async def test_generate_response_ping(registry: SessionRegistry):
 
 
 @pytest.mark.asyncio
-async def test_generate_response_tools_list(registry: SessionRegistry, stub_db, stub_services):
-    """*tools/list* responds with the stubbed ToolService payload."""
+async def test_generate_response_tools_list(registry: SessionRegistry, stub_db):
+    """*tools/list* forwards the upstream JSON-RPC result to the transport."""
     tr = FakeSSETransport("tools")
     await registry.add_session("tools", tr)
 
@@ -553,8 +533,8 @@ async def test_generate_response_tools_list(registry: SessionRegistry, stub_db, 
 
 
 @pytest.mark.asyncio
-async def test_generate_response_resources_list(registry: SessionRegistry, stub_db, stub_services):
-    """*resources/list* responds with the stubbed ResourceService payload."""
+async def test_generate_response_resources_list(registry: SessionRegistry, stub_db):
+    """*resources/list* forwards the upstream JSON-RPC result to the transport."""
     tr = FakeSSETransport("resources")
     await registry.add_session("resources", tr)
 
@@ -590,8 +570,8 @@ async def test_generate_response_resources_list(registry: SessionRegistry, stub_
 
 
 @pytest.mark.asyncio
-async def test_generate_response_prompts_list(registry: SessionRegistry, stub_db, stub_services):
-    """*prompts/list* responds with the stubbed PromptService payload."""
+async def test_generate_response_prompts_list(registry: SessionRegistry, stub_db):
+    """*prompts/list* forwards the upstream JSON-RPC result to the transport."""
     tr = FakeSSETransport("prompts")
     await registry.add_session("prompts", tr)
 
@@ -627,7 +607,7 @@ async def test_generate_response_prompts_list(registry: SessionRegistry, stub_db
 
 
 @pytest.mark.asyncio
-async def test_generate_response_tools_call(registry: SessionRegistry, stub_db, stub_services):
+async def test_generate_response_tools_call(registry: SessionRegistry, stub_db):
     """*tools/call* makes HTTP request and returns response."""
     tr = FakeSSETransport("tools_call")
     await registry.add_session("tools_call", tr)
@@ -665,7 +645,7 @@ async def test_generate_response_tools_call(registry: SessionRegistry, stub_db, 
 
 
 @pytest.mark.asyncio
-async def test_generate_response_server_specific_tools_list(registry: SessionRegistry, stub_db, stub_services):
+async def test_generate_response_server_specific_tools_list(registry: SessionRegistry, stub_db):
     """*tools/list* with server_id calls server-specific method."""
     tr = FakeSSETransport("server_tools")
     await registry.add_session("server_tools", tr)
@@ -702,7 +682,7 @@ async def test_generate_response_server_specific_tools_list(registry: SessionReg
 
 
 @pytest.mark.asyncio
-async def test_generate_response_server_specific_resources_list(registry: SessionRegistry, stub_db, stub_services):
+async def test_generate_response_server_specific_resources_list(registry: SessionRegistry, stub_db):
     """*resources/list* responds with server_id calls server-specific method."""
     tr = FakeSSETransport("resources")
     await registry.add_session("resources", tr)
@@ -739,7 +719,7 @@ async def test_generate_response_server_specific_resources_list(registry: Sessio
 
 
 @pytest.mark.asyncio
-async def test_generate_response_server_specific_prompts_list(registry: SessionRegistry, stub_db, stub_services):
+async def test_generate_response_server_specific_prompts_list(registry: SessionRegistry, stub_db):
     """*prompts/list* responds with server_id calls server-specific method."""
     tr = FakeSSETransport("prompts")
     await registry.add_session("prompts", tr)
@@ -1307,7 +1287,7 @@ async def test_shutdown_with_redis_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_full_memory_workflow(stub_db, stub_services):
+async def test_full_memory_workflow(stub_db):
     """Test complete workflow with memory backend."""
     registry = SessionRegistry(backend="memory")
     await registry.initialize()

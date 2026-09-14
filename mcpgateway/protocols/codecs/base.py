@@ -57,12 +57,15 @@ class CodecContext:
             types, if any (e.g. ``response.preferredMediaTypes``).
         max_response_bytes: Optional cap on decoded response bytes (binary
             tools), read from settings by the caller.
+        xsd_type_system: Optional pre-loaded :class:`XsdTypeSystem` for
+            schema-driven XML codecs (PR4).  ``None`` for non-XML codecs.
     """
 
     protocol_config: Optional[Dict[str, Any]] = None
     preferred_content_type: Optional[str] = None
     preferred_media_types: Optional[tuple[str, ...]] = None
     max_response_bytes: Optional[int] = None
+    xsd_type_system: Optional[Any] = None
 
 
 class MessageCodec(Protocol):

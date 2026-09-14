@@ -99,7 +99,7 @@ class TestContentTypeResolution:
     def test_unknown_content_type_sniffs_text(self):
         """An unmatched content type falls to the sniff step, not a JSON probe."""
         payload = b"<xml>text</xml>"
-        decoded = _make_decoder().decode(200, "application/xml", payload, _make_context())
+        decoded = _make_decoder().decode(200, "application/x-custom", payload, _make_context())
 
         assert decoded.data == "<xml>text</xml>"
         assert decoded.codec_media_type == "text/plain"

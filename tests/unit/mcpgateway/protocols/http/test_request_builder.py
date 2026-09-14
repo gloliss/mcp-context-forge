@@ -258,3 +258,41 @@ class TestGroupedArguments:
         assert built.url_path == "/r"
         assert built.query_params == {}
         assert built.body is None
+
+    def test_explicit_body_codec_name_wins_over_media_type(self):
+        """``body.codec`` names the codec; a SOAP 1.1 body keeps its envelope (§32)."""
+        protocol_config = {
+            "request": {
+                "method": "POST",
+                "pathTemplate": "/ReportService",
+                "body": {"codec": "soap", "mediaType": "text/xml"},
+                "soap": {"version": "1.1", "operation": "QueryReport", "namespace": "urn:report"},
+            },
+            "response": {"codec": "soap"},
+        }
+        built = RequestBuilder(build_default_codec_registry()).build(
+            {"body": {"factory": "FAB1"}},
+            protocol_config["request"],
+            protocol_config,
+        )
+
+        # text/xml alone would resolve to XmlCodec and emit no envelope.
+        assert b"soap:Envelope" in built.body.value
+        assert b"QueryReport" in built.body.value
+        assert built.body.content_type == "text/xml"
+
+    def test_soap_binding_read_from_extensions(self):
+        """A WSDL-derived operation carries its binding under extensions.soap."""
+        protocol_config = {
+            "request": {"method": "POST", "pathTemplate": "/svc", "body": {"codec": "soap", "mediaType": "application/soap+xml"}},
+            "response": {"codec": "soap"},
+            "extensions": {"soap": {"version": "1.2", "operation": "Ping", "namespace": "urn:svc"}},
+        }
+        built = RequestBuilder(build_default_codec_registry()).build(
+            {"body": {"a": 1}},
+            protocol_config["request"],
+            protocol_config,
+        )
+
+        assert b"Ping" in built.body.value
+        assert built.body.content_type == "application/soap+xml"

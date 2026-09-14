@@ -279,18 +279,23 @@ class ToolResultCache:
         return self._max_ttl_seconds
 
     def _redis_key(self, key: str) -> str:
+        """Return the Redis key holding one cache entry."""
         return f"{self._cache_prefix}tool_result:{key}"
 
     def _tool_index_key(self, tool_id: str) -> str:
+        """Return the Redis key indexing the entries derived from one tool."""
         return f"{self._cache_prefix}tool_result:index:tool:{tool_id}"
 
     def _gateway_index_key(self, gateway_id: str) -> str:
+        """Return the Redis key indexing the entries derived from one gateway."""
         return f"{self._cache_prefix}tool_result:index:gateway:{gateway_id}"
 
     def _sql_table_index_key(self, sql_table_id: str) -> str:
+        """Return the Redis key indexing the entries derived from one SQL table."""
         return f"{self._cache_prefix}tool_result:index:sql_table:{sql_table_id}"
 
     def _sql_generation_key(self, sql_table_id: str) -> str:
+        """Return the Redis key holding one SQL table's generation counter."""
         return f"{self._cache_prefix}tool_result:generation:sql_table:{sql_table_id}"
 
     async def sql_generation_key_suffix(self, sql_table_ids: Sequence[str]) -> Optional[str]:
@@ -327,6 +332,12 @@ class ToolResultCache:
         return f":sqlgen:{digest}" if digest else ""
 
     async def _get_redis_client(self) -> Any:
+        """Return the Redis client backing L2, or ``None`` when L2 is off.
+
+        A connection failure is logged and reported as "no L2" rather than
+        raised: the cache is an optimisation, so a Redis outage must degrade
+        to L1-only reads instead of failing the tool call.
+        """
         if not self._l2_enabled:
             return None
         try:
@@ -345,6 +356,7 @@ class ToolResultCache:
 
     @staticmethod
     def _serialize_entry(entry: _Entry) -> bytes:
+        """Encode a cache entry into the bytes stored in Redis."""
         return orjson.dumps(
             {
                 "tool_id": entry.tool_id,
@@ -358,6 +370,11 @@ class ToolResultCache:
 
     @staticmethod
     def _deserialize_entry(value: Any) -> _Entry:
+        """Decode a Redis value back into a cache entry.
+
+        Tolerates the pre-index envelope shape (a single ``sql_table_id``)
+        so entries written before the multi-table upgrade stay readable.
+        """
         envelope = orjson.loads(value)
         return _Entry(
             tool_id=str(envelope["tool_id"]),
@@ -375,6 +392,19 @@ class ToolResultCache:
         )
 
     def _set_l1(self, key: str, entry: _Entry, *, expected_sql_generations: Optional[Mapping[str, int]] = None) -> bool:
+        """Insert an entry into L1, evicting LRU entries as needed.
+
+        Args:
+            key: The cache key.
+            entry: The entry to store.
+            expected_sql_generations: When given, the write is skipped if any
+                involved SQL table has moved on — a slow fill that began
+                before a write must not repopulate stale data.
+
+        Returns:
+            ``True`` when the entry was stored, ``False`` when it was refused
+            (generation moved, or the entry exceeds the L1 byte budget).
+        """
         with self._lock:
             if expected_sql_generations and any(self._sql_generations.get(table_id, 0) != generation for table_id, generation in expected_sql_generations.items()):
                 return False
@@ -393,6 +423,11 @@ class ToolResultCache:
             return True
 
     def _get_l1(self, key: str) -> Optional[_Entry]:
+        """Return a live L1 entry, or ``None`` on a miss or expiry.
+
+        A hit is promoted in the LRU order; an expired entry is dropped and
+        counted as a miss.
+        """
         now = time.time()
         with self._lock:
             entry = self._cache.get(key)
@@ -407,6 +442,20 @@ class ToolResultCache:
         return None
 
     def _validated_hit(self, entry: _Entry, source: str) -> Optional[CachedToolResult]:
+        """Re-validate a stored payload into a ``CachedToolResult``.
+
+        The payload was validated when written, but the schema may have moved
+        since; a payload that no longer validates is counted as a decode error
+        and treated as a miss rather than returned to the caller.
+
+        Args:
+            entry: The cache entry whose payload to validate.
+            source: Which tier served the hit (``l1``/``l2``), for reporting.
+
+        Returns:
+            The validated result, or ``None`` when the payload no longer
+            satisfies the current model.
+        """
         try:
             result = ToolResult.model_validate(orjson.loads(entry.payload))
         except Exception:
@@ -535,6 +584,16 @@ class ToolResultCache:
                 logger.debug("ToolResultCache Redis key invalidation failed: %s", exc)
 
     def _invalidate_local_matching(self, *, tool_id: Optional[str] = None, gateway_id: Optional[str] = None, sql_table_id: Optional[str] = None) -> int:
+        """Drop every L1 entry matching any supplied dependency.
+
+        Args:
+            tool_id: Drop entries produced by this tool, when given.
+            gateway_id: Drop entries produced through this gateway, when given.
+            sql_table_id: Drop entries depending on this SQL table, when given.
+
+        Returns:
+            The number of entries removed.
+        """
         with self._lock:
             keys = [
                 key
@@ -550,6 +609,13 @@ class ToolResultCache:
         return len(keys)
 
     async def _invalidate_index(self, index_key: str, message: str) -> None:
+        """Drop an L2 index and every entry it references, then broadcast.
+
+        Args:
+            index_key: The sorted-set index whose members are entries to drop.
+            message: The pub/sub payload telling other workers to drop the
+                same entries from their L1.
+        """
         redis = await self._get_redis_client()
         if not redis:
             return

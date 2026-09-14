@@ -89,19 +89,19 @@ class TestGrpcEndpoint:
     async def test_start_insecure_channel(self, mock_grpc, endpoint):
         """Test starting endpoint with insecure channel."""
         mock_channel = MagicMock()
-        mock_grpc.insecure_channel.return_value = mock_channel
+        mock_grpc.aio.insecure_channel.return_value = mock_channel
 
         with patch.object(endpoint, "_discover_services", new_callable=AsyncMock):
             await endpoint.start(trusted_local=True)
 
-        mock_grpc.insecure_channel.assert_called_once_with("localhost:50051")
+        mock_grpc.aio.insecure_channel.assert_called_once_with("localhost:50051")
         assert endpoint._channel == mock_channel
 
     @patch("mcpgateway.translate_grpc.grpc")
     async def test_start_secure_channel_with_certs(self, mock_grpc, endpoint_with_tls):
         """Test starting endpoint with TLS certificates."""
         mock_channel = MagicMock()
-        mock_grpc.secure_channel.return_value = mock_channel
+        mock_grpc.aio.secure_channel.return_value = mock_channel
         mock_grpc.ssl_channel_credentials.return_value = MagicMock()
 
         with patch("mcpgateway.translate_grpc.asyncio.to_thread", new_callable=AsyncMock, return_value=b"cert_data"):
@@ -110,7 +110,7 @@ class TestGrpcEndpoint:
 
         assert endpoint_with_tls._channel == mock_channel
         mock_grpc.ssl_channel_credentials.assert_called_once_with(private_key=b"cert_data", certificate_chain=b"cert_data")
-        mock_grpc.secure_channel.assert_called_once()
+        mock_grpc.aio.secure_channel.assert_called_once()
 
     @patch("mcpgateway.translate_grpc.grpc")
     async def test_start_secure_channel_without_certs(self, mock_grpc):
@@ -122,7 +122,7 @@ class TestGrpcEndpoint:
         )
 
         mock_channel = MagicMock()
-        mock_grpc.secure_channel.return_value = mock_channel
+        mock_grpc.aio.secure_channel.return_value = mock_channel
         mock_grpc.ssl_channel_credentials.return_value = MagicMock()
 
         with patch.object(endpoint, "_discover_services", new_callable=AsyncMock):
@@ -143,26 +143,26 @@ class TestGrpcEndpoint:
             await endpoint.start()
 
         # No channel may be opened once validation rejects the target.
-        mock_grpc.insecure_channel.assert_not_called()
-        mock_grpc.secure_channel.assert_not_called()
+        mock_grpc.aio.insecure_channel.assert_not_called()
+        mock_grpc.aio.secure_channel.assert_not_called()
 
     @patch("mcpgateway.translate_grpc.grpc")
     async def test_start_trusted_local_skips_validation(self, mock_grpc, monkeypatch):
         """trusted_local=True skips SSRF validation for an otherwise-blocked target."""
         monkeypatch.setattr("mcpgateway.config.settings.ssrf_protection_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.config.settings.ssrf_blocked_hosts", ["metadata.google.internal"], raising=False)
-        mock_grpc.insecure_channel.return_value = MagicMock()
+        mock_grpc.aio.insecure_channel.return_value = MagicMock()
 
         endpoint = GrpcEndpoint(target="metadata.google.internal:443", reflection_enabled=False)
 
         await endpoint.start(trusted_local=True)  # must not raise
 
-        mock_grpc.insecure_channel.assert_called_once_with("metadata.google.internal:443")
+        mock_grpc.aio.insecure_channel.assert_called_once_with("metadata.google.internal:443")
 
     @patch("mcpgateway.translate_grpc.grpc")
     async def test_start_validates_target_and_tls_paths_by_default(self, mock_grpc, endpoint_with_tls):
         """start() validates the target and both TLS paths by default (trusted_local=False)."""
-        mock_grpc.secure_channel.return_value = MagicMock()
+        mock_grpc.aio.secure_channel.return_value = MagicMock()
         mock_grpc.ssl_channel_credentials.return_value = MagicMock()
 
         with (
@@ -177,16 +177,12 @@ class TestGrpcEndpoint:
         assert mock_validate_tls.call_count == 2  # cert + key
 
     @patch("mcpgateway.translate_grpc.grpc")
-    @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2")
-    async def test_discover_services_success(self, mock_reflection_pb2, mock_reflection_grpc, mock_grpc, endpoint):
+    async def test_discover_services_success(self, mock_reflection_pb2, mock_grpc, endpoint):
         """Test successful service discovery."""
         # Setup mocks
         mock_channel = MagicMock()
         endpoint._channel = mock_channel
-
-        mock_stub = MagicMock()
-        mock_reflection_grpc.ServerReflectionStub.return_value = mock_stub
 
         # Mock service discovery response
         mock_service = MagicMock()
@@ -199,12 +195,14 @@ class TestGrpcEndpoint:
         mock_response.HasField.return_value = True
         mock_response.list_services_response = mock_list_response
 
-        mock_stub.ServerReflectionInfo.return_value = [mock_response]
+        async def _responses(_channel, _requests, timeout=None, metadata=None):
+            """Stand in for the aio reflection exchange (design §53)."""
+            return [mock_response]
 
         # Mock _discover_service_details to populate services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
 
-            async def populate_service(stub, service_name, timeout=None):
+            async def populate_service(service_name, timeout=None):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
@@ -212,20 +210,17 @@ class TestGrpcEndpoint:
 
             mock_details.side_effect = populate_service
 
-            await endpoint._discover_services()
+            with patch("mcpgateway.translate_grpc._collect_reflection_responses", _responses):
+                await endpoint._discover_services()
 
         assert "test.TestService" in endpoint._services
         assert endpoint._services["test.TestService"]["name"] == "test.TestService"
 
     @patch("mcpgateway.translate_grpc.grpc")
-    @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
-    async def test_discover_services_skip_reflection_service(self, mock_reflection_grpc, mock_grpc, endpoint):
+    async def test_discover_services_skip_reflection_service(self, mock_grpc, endpoint):
         """Test that ServerReflection service is skipped."""
         mock_channel = MagicMock()
         endpoint._channel = mock_channel
-
-        mock_stub = MagicMock()
-        mock_reflection_grpc.ServerReflectionStub.return_value = mock_stub
 
         # Mock response with ServerReflection service (should be skipped)
         mock_service1 = MagicMock()
@@ -241,12 +236,14 @@ class TestGrpcEndpoint:
         mock_response.HasField.return_value = True
         mock_response.list_services_response = mock_list_response
 
-        mock_stub.ServerReflectionInfo.return_value = [mock_response]
+        async def _responses(_channel, _requests, timeout=None, metadata=None):
+            """Stand in for the aio reflection exchange (design §53)."""
+            return [mock_response]
 
         # Mock _discover_service_details to populate only non-reflection services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
 
-            async def populate_service(stub, service_name, timeout=None):
+            async def populate_service(service_name, timeout=None):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
@@ -254,7 +251,8 @@ class TestGrpcEndpoint:
 
             mock_details.side_effect = populate_service
 
-            await endpoint._discover_services()
+            with patch("mcpgateway.translate_grpc._collect_reflection_responses", _responses):
+                await endpoint._discover_services()
 
         # ServerReflection should be skipped
         assert "grpc.reflection.v1alpha.ServerReflection" not in endpoint._services
@@ -262,18 +260,18 @@ class TestGrpcEndpoint:
         assert "test.TestService" in endpoint._services
 
     @patch("mcpgateway.translate_grpc.grpc")
-    @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
-    async def test_discover_services_error(self, mock_reflection_grpc, mock_grpc, endpoint):
+    async def test_discover_services_error(self, mock_grpc, endpoint):
         """Test service discovery error handling."""
         mock_channel = MagicMock()
         endpoint._channel = mock_channel
 
-        mock_stub = MagicMock()
-        mock_reflection_grpc.ServerReflectionStub.return_value = mock_stub
-        mock_stub.ServerReflectionInfo.side_effect = Exception("Connection failed")
+        async def _responses(_channel, _requests, timeout=None, metadata=None):
+            """Stand in for an aio reflection exchange that fails (design §53)."""
+            raise Exception("Connection failed")
 
-        with pytest.raises(Exception) as exc_info:
-            await endpoint._discover_services()
+        with patch("mcpgateway.translate_grpc._collect_reflection_responses", _responses):
+            with pytest.raises(Exception) as exc_info:
+                await endpoint._discover_services()
 
         assert "Connection failed" in str(exc_info.value)
 
@@ -540,16 +538,33 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
     monkeypatch.setattr(tg.message_factory, "GetMessageClass", lambda _desc: next(proto_classes))
 
     class DummyChannel:
+        """aio-shaped fake: calls are awaited and streams are async iterators."""
+
         def unary_unary(self, _path, request_serializer=None, response_deserializer=None):
             class UnaryCall:
-                @staticmethod
-                def with_call(_req, timeout=None, metadata=None):
-                    call = SimpleNamespace(
-                        initial_metadata=lambda: (("x-header", "one"),),
-                        trailing_metadata=lambda: (("x-trailer", "two"),),
-                        code=lambda: SimpleNamespace(name="OK"),
-                    )
-                    return DummyResponse(), call
+                def __call__(self, _req, timeout=None, metadata=None):
+                    """Return an awaitable call object, as grpc.aio does."""
+
+                    class _Call:
+                        def __await__(self):
+                            async def _response():
+                                return DummyResponse()
+
+                            return _response().__await__()  # pylint: disable=no-member - _response() is a coroutine, which is awaitable
+
+                        @staticmethod
+                        async def initial_metadata():
+                            return (("x-header", "one"),)
+
+                        @staticmethod
+                        async def trailing_metadata():
+                            return (("x-trailer", "two"),)
+
+                        @staticmethod
+                        async def code():
+                            return SimpleNamespace(name="OK")
+
+                    return _Call()
 
             return UnaryCall()
 
@@ -559,22 +574,25 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
                     def __init__(self):
                         self._items = iter([DummyResponse(), DummyResponse()])
 
-                    def __iter__(self):
+                    def __aiter__(self):
                         return self
 
-                    def __next__(self):
-                        return next(self._items)
+                    async def __anext__(self):
+                        try:
+                            return next(self._items)
+                        except StopIteration:
+                            raise StopAsyncIteration from None
 
                     @staticmethod
-                    def initial_metadata():
+                    async def initial_metadata():
                         return (("x-header", "one"),)
 
                     @staticmethod
-                    def trailing_metadata():
+                    async def trailing_metadata():
                         return (("x-trailer", "two"),)
 
                     @staticmethod
-                    def code():
+                    async def code():
                         return SimpleNamespace(name="OK")
 
                     @staticmethod
@@ -612,13 +630,13 @@ async def test_endpoint_start_without_reflection(monkeypatch):
     monkeypatch.setattr("mcpgateway.translate_grpc.message_factory", SimpleNamespace(MessageFactory=lambda *_a, **_kw: MagicMock()))
     endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False, tls_enabled=False)
     mock_grpc = MagicMock()
-    mock_grpc.insecure_channel.return_value = "chan"
+    mock_grpc.aio.insecure_channel.return_value = "chan"
     monkeypatch.setattr("mcpgateway.translate_grpc.grpc", mock_grpc)
     monkeypatch.setattr(endpoint, "_discover_services", AsyncMock())
 
     await endpoint.start(trusted_local=True)
     assert endpoint._channel == "chan"
-    endpoint._discover_services.assert_not_called()
+    endpoint._discover_services.assert_not_called()  # pylint: disable=no-member - replaced with an AsyncMock above
 
 
 @pytest.mark.asyncio
@@ -632,13 +650,13 @@ async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
         target="secure.example.com:443",
         reflection_enabled=True,
         tls_enabled=True,
-        tls_cert_path="/tmp/cert.pem",
-        tls_key_path="/tmp/key.pem",
+        tls_cert_path="/tmp/cert.pem",  # nosec B108 - a literal path string in a test, never created or read
+        tls_key_path="/tmp/key.pem",  # nosec B108 - a literal path string in a test, never created or read
     )
 
     mock_grpc = MagicMock()
     mock_grpc.ssl_channel_credentials.return_value = "creds"
-    mock_grpc.secure_channel.return_value = "secure-chan"
+    mock_grpc.aio.secure_channel.return_value = "secure-chan"
     monkeypatch.setattr(tg, "grpc", mock_grpc)
     monkeypatch.setattr(tg.asyncio, "to_thread", AsyncMock(return_value=b"cert-data"))
     monkeypatch.setattr(endpoint, "_discover_services", AsyncMock())
@@ -647,7 +665,7 @@ async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
 
     assert endpoint._channel == "secure-chan"
     mock_grpc.ssl_channel_credentials.assert_called_once()
-    endpoint._discover_services.assert_awaited()
+    endpoint._discover_services.assert_awaited()  # pylint: disable=no-member - replaced with an AsyncMock above
 
 
 @pytest.mark.asyncio
@@ -660,8 +678,6 @@ async def test_discover_services_success_no_grpc(monkeypatch):
     endpoint._channel = "chan"
     endpoint._services = {}
 
-    mock_stub = MagicMock()
-
     mock_service = MagicMock()
     mock_service.name = "test.TestService"
 
@@ -672,12 +688,14 @@ async def test_discover_services_success_no_grpc(monkeypatch):
     mock_response.HasField.return_value = True
     mock_response.list_services_response = mock_list_response
 
-    mock_stub.ServerReflectionInfo.return_value = [mock_response]
+    async def _responses(_channel, _requests, timeout=None, metadata=None):
+        """Stand in for the aio reflection exchange (design §53)."""
+        return [mock_response]
 
-    monkeypatch.setattr(tg, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=lambda _chan: mock_stub))
     monkeypatch.setattr(tg, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+    monkeypatch.setattr(tg, "_collect_reflection_responses", _responses)
 
-    async def _populate(_stub, service_name, timeout=None):
+    async def _populate(service_name, timeout=None):
         endpoint._services[service_name] = {"name": service_name, "methods": []}
 
     monkeypatch.setattr(endpoint, "_discover_service_details", AsyncMock(side_effect=_populate))
@@ -696,14 +714,16 @@ async def test_discover_service_details_error_fallback(monkeypatch):
     endpoint._services = {}
     endpoint._descriptors = {}
     endpoint._pool = MagicMock()
+    endpoint._channel = MagicMock()
 
-    class DummyStub:
-        def ServerReflectionInfo(self, _request_iter):
-            raise RuntimeError("boom")
+    async def _responses(_channel, _requests, timeout=None, metadata=None):
+        """Stand in for an aio reflection exchange that fails (design §53)."""
+        raise RuntimeError("boom")
 
     monkeypatch.setattr(tg, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+    monkeypatch.setattr(tg, "_collect_reflection_responses", _responses)
 
-    await tg.GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    await tg.GrpcEndpoint._discover_service_details(endpoint, "pkg.TestService")
 
     assert endpoint._services["pkg.TestService"]["methods"] == []
 
@@ -814,15 +834,22 @@ async def test_invoke_streaming_rpc_error(monkeypatch):
         def unary_stream(self, _path, request_serializer=None, response_deserializer=None):
             def call(_req, timeout=None, metadata=None):
                 class _Stream:
-                    def __iter__(self_inner):
+                    def __aiter__(self):
+                        return self
+
+                    async def __anext__(self):
                         raise DummyRpcError("boom")
 
                     @staticmethod
-                    def trailing_metadata():
+                    async def initial_metadata():
                         return ()
 
                     @staticmethod
-                    def code():
+                    async def trailing_metadata():
+                        return ()
+
+                    @staticmethod
+                    async def code():
                         return None
 
                     @staticmethod
@@ -906,6 +933,7 @@ async def test_discover_service_details_success(monkeypatch):
     endpoint._services = {}
     endpoint._descriptors = {}
     endpoint._pool = MagicMock()
+    endpoint._channel = MagicMock()
 
     class DummyMethod:
         def __init__(self, name, input_type, output_type):
@@ -935,14 +963,15 @@ async def test_discover_service_details_success(monkeypatch):
         def HasField(self, name):
             return name == "file_descriptor_response"
 
-    class DummyStub:
-        def ServerReflectionInfo(self, _request_iter):
-            return [DummyResponse()]
+    async def _responses(_channel, _requests, timeout=None, metadata=None):
+        """Stand in for the aio reflection exchange (design §53)."""
+        return [DummyResponse()]
 
     monkeypatch.setattr("mcpgateway.translate_grpc.FileDescriptorProto", DummyFileDesc)
     monkeypatch.setattr("mcpgateway.translate_grpc.reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+    monkeypatch.setattr("mcpgateway.translate_grpc._collect_reflection_responses", _responses)
 
-    await GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    await GrpcEndpoint._discover_service_details(endpoint, "pkg.TestService")
     assert "pkg.TestService" in endpoint._services
     assert endpoint._services["pkg.TestService"]["methods"][0]["name"] == "Ping"
 
@@ -958,13 +987,15 @@ async def test_discover_services_ignores_non_list_services_response(monkeypatch)
     endpoint._channel = "chan"
     endpoint._services = {}
 
-    mock_stub = MagicMock()
     mock_response = MagicMock()
     mock_response.HasField.return_value = False
-    mock_stub.ServerReflectionInfo.return_value = [mock_response]
 
-    monkeypatch.setattr(tg, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=lambda _chan: mock_stub))
+    async def _responses(_channel, _requests, timeout=None, metadata=None):
+        """Stand in for the aio reflection exchange (design §53)."""
+        return [mock_response]
+
     monkeypatch.setattr(tg, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+    monkeypatch.setattr(tg, "_collect_reflection_responses", _responses)
 
     endpoint._discover_service_details = AsyncMock()
     await tg.GrpcEndpoint._discover_services(endpoint)
@@ -982,18 +1013,20 @@ async def test_discover_service_details_ignores_non_descriptor_response(monkeypa
     endpoint._services = {}
     endpoint._descriptors = {}
     endpoint._pool = MagicMock()
+    endpoint._channel = MagicMock()
 
     class DummyResponse:
         def HasField(self, _name):
             return False
 
-    class DummyStub:
-        def ServerReflectionInfo(self, _request_iter):
-            return [DummyResponse()]
+    async def _responses(_channel, _requests, timeout=None, metadata=None):
+        """Stand in for the aio reflection exchange (design §53)."""
+        return [DummyResponse()]
 
     monkeypatch.setattr(tg, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+    monkeypatch.setattr(tg, "_collect_reflection_responses", _responses)
 
-    await tg.GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    await tg.GrpcEndpoint._discover_service_details(endpoint, "pkg.TestService")
     assert endpoint._services == {}
 
 
@@ -1007,6 +1040,7 @@ async def test_discover_service_details_pool_add_error_is_swallowed(monkeypatch)
     endpoint._services = {}
     endpoint._descriptors = {}
     endpoint._pool = MagicMock()
+    endpoint._channel = MagicMock()
     endpoint._pool.Add.side_effect = Exception("duplicate")
 
     class DummyMethod:
@@ -1037,14 +1071,15 @@ async def test_discover_service_details_pool_add_error_is_swallowed(monkeypatch)
         def HasField(self, name):
             return name == "file_descriptor_response"
 
-    class DummyStub:
-        def ServerReflectionInfo(self, _request_iter):
-            return [DummyResponse()]
+    async def _responses(_channel, _requests, timeout=None, metadata=None):
+        """Stand in for the aio reflection exchange (design §53)."""
+        return [DummyResponse()]
 
     monkeypatch.setattr("mcpgateway.translate_grpc.FileDescriptorProto", DummyFileDesc)
     monkeypatch.setattr("mcpgateway.translate_grpc.reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+    monkeypatch.setattr("mcpgateway.translate_grpc._collect_reflection_responses", _responses)
 
-    await tg.GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    await tg.GrpcEndpoint._discover_service_details(endpoint, "pkg.TestService")
     assert "pkg.TestService" in endpoint._services
 
 
@@ -1058,6 +1093,7 @@ async def test_discover_service_details_skips_unrelated_service(monkeypatch):
     endpoint._services = {}
     endpoint._descriptors = {}
     endpoint._pool = MagicMock()
+    endpoint._channel = MagicMock()
 
     class DummyMethod:
         def __init__(self, name, input_type, output_type):
@@ -1087,14 +1123,15 @@ async def test_discover_service_details_skips_unrelated_service(monkeypatch):
         def HasField(self, name):
             return name == "file_descriptor_response"
 
-    class DummyStub:
-        def ServerReflectionInfo(self, _request_iter):
-            return [DummyResponse()]
+    async def _responses(_channel, _requests, timeout=None, metadata=None):
+        """Stand in for the aio reflection exchange (design §53)."""
+        return [DummyResponse()]
 
     monkeypatch.setattr("mcpgateway.translate_grpc.FileDescriptorProto", DummyFileDesc)
     monkeypatch.setattr("mcpgateway.translate_grpc.reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+    monkeypatch.setattr("mcpgateway.translate_grpc._collect_reflection_responses", _responses)
 
-    await tg.GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    await tg.GrpcEndpoint._discover_service_details(endpoint, "pkg.TestService")
     assert endpoint._services == {}
 
 

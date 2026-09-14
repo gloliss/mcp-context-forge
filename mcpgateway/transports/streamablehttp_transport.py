@@ -94,7 +94,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
-from mcpgateway.services.tool_service import tool_service
+from mcpgateway.services.tool_service import tool_service  # pylint: disable=no-name-in-module
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -2408,7 +2408,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         final_teams = normalize_token_teams(payload)
 
     # SECURITY: API/legacy team claims must still match current active memberships.
-    if token_use != "session" and final_teams and email:
+    if token_use != "session" and final_teams and email:  # nosec B105 - "session" is a token *purpose*, not a credential
         # First-Party
         from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
 

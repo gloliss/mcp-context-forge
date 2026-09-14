@@ -22,6 +22,7 @@ manifest path/hash columns, so the scanner records them in
 # Standard
 import asyncio
 from hashlib import sha256
+import json
 import logging
 from pathlib import Path
 import re
@@ -42,6 +43,7 @@ from mcpgateway.db import HttpService as DbHttpService
 from mcpgateway.schemas import HttpServiceCreate, HttpServiceUpdate
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.http_service import HttpService
+from mcpgateway.protocols.http.activation_gate import ACTIVATION_GATES
 from mcpgateway.utils.http_validation import HttpServiceError
 from mcpgateway.utils.primary_worker import is_primary_worker
 
@@ -51,14 +53,24 @@ _MANIFEST_KIND = "HttpService"
 # Strict per-level field allowlists (§21).  Unknown keys are errors.
 _TOP_LEVEL_FIELDS = {"apiVersion", "kind", "metadata", "spec"}
 _METADATA_FIELDS = {"name", "description", "team", "visibility", "tags"}
-_SPEC_FIELDS = {"baseUrl", "discovery", "runtime", "validation", "operations", "health"}
+_SPEC_FIELDS = {"baseUrl", "discovery", "runtime", "validation", "testing", "operations", "health"}
 _DISCOVERY_FIELDS = {"mode", "source", "references"}
 _SOURCE_FIELDS = {"url"}
 _REFERENCES_FIELDS = {"allowRemote"}
 _RUNTIME_FIELDS = {"http2", "redirects", "timeout", "limits"}
 _REDIRECTS_FIELDS = {"follow"}
-_OPERATIONS_FIELDS = {"include"}
+_OPERATIONS_FIELDS = {"include", "manual"}
+# §27 manual XML operations: an operation declared outright rather than
+# discovered from an OpenAPI document, optionally bound to an XSD.
+_MANUAL_OPERATION_FIELDS = {"name", "method", "path", "body", "response"}
+_MANUAL_BODY_FIELDS = {"mediaType", "xsd"}
+_MANUAL_XSD_FIELDS = {"schema", "file", "schema11"}
+_MANUAL_METHODS = ("GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE")
+# Filename the synthesized document is imported under.  It must carry a
+# suffix the artifact pipeline accepts, and be stable so re-scans diff cleanly.
+_MANUAL_ARTIFACT_FILENAME = "manual-operations.json"
 _HEALTH_FIELDS = {"enabled", "interval", "timeout", "failureThreshold"}
+_TESTING_FIELDS = {"allowMutatingOperations"}
 
 _ALLOWED_SUFFIXES = (".json", ".yaml", ".yml", ".zip")
 
@@ -225,6 +237,75 @@ class HttpYamlScanService:
         return roots
 
     @staticmethod
+    def _validate_manual_operations(manual: Any) -> None:
+        """Validate the ``spec.operations.manual`` declarations (§27).
+
+        Args:
+            manual: The raw ``manual`` list from the manifest.
+
+        Raises:
+            HttpServiceError: On any structural or naming violation.  The
+                checks are shape-only; resolving an XSD ``file`` needs the
+                scan root and happens during synthesis.
+        """
+        if not isinstance(manual, list) or not manual:
+            raise HttpServiceError("spec.operations.manual must be a non-empty list")
+        seen: set[str] = set()
+        for index, entry in enumerate(manual):
+            label = f"spec.operations.manual[{index}]"
+            operation = _mapping(entry, label, _MANUAL_OPERATION_FIELDS)
+            name = operation.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise HttpServiceError(f"{label}.name must be a non-empty string")
+            if name in seen:
+                raise HttpServiceError(f"{label}.name is duplicated: {name}")
+            seen.add(name)
+            method = operation.get("method")
+            if not isinstance(method, str) or method.upper() not in _MANUAL_METHODS:
+                raise HttpServiceError(f"{label}.method must be one of {', '.join(_MANUAL_METHODS)}")
+            path = operation.get("path")
+            if not isinstance(path, str) or not path.startswith("/"):
+                raise HttpServiceError(f"{label}.path must be a path starting with '/'")
+            if "body" not in operation and "response" not in operation:
+                raise HttpServiceError(f"{label} must declare a body, a response, or both")
+            for side in ("body", "response"):
+                if side not in operation:
+                    continue
+                block = _mapping(operation[side], f"{label}.{side}", _MANUAL_BODY_FIELDS)
+                media_type = block.get("mediaType")
+                if not isinstance(media_type, str) or not media_type.strip():
+                    raise HttpServiceError(f"{label}.{side}.mediaType must be a non-empty string")
+                if "xsd" in block:
+                    HttpYamlScanService._validate_manual_xsd(block["xsd"], f"{label}.{side}")
+
+    @staticmethod
+    def _validate_manual_xsd(xsd: Any, label: str) -> None:
+        """Validate an XSD binding declared for one side of an operation (§27).
+
+        Args:
+            xsd: The raw ``xsd`` mapping.
+            label: Dotted manifest path, for the error message.
+
+        Raises:
+            HttpServiceError: When neither or both of ``schema``/``file`` are
+                given, or ``file`` looks like an escape attempt.
+        """
+        binding = _mapping(xsd, f"{label}.xsd", _MANUAL_XSD_FIELDS)
+        # Both must be plain booleans: comparing a truthy string against a
+        # bool (``'<x/>' == True``) is False, so the "both given" case would
+        # slip through the check entirely.
+        has_schema = bool(isinstance(binding.get("schema"), str) and binding["schema"].strip())
+        has_file = bool(isinstance(binding.get("file"), str) and binding["file"].strip())
+        if has_schema == has_file:
+            raise HttpServiceError(f"{label}.xsd must declare exactly one of schema or file")
+        if has_file:
+            candidate = str(binding["file"])
+            if candidate.startswith(("/", "\\")) or ".." in Path(candidate).parts:
+                raise HttpServiceError(f"{label}.xsd.file must be a relative path inside the scan root")
+        if "schema11" in binding and not isinstance(binding["schema11"], bool):
+            raise HttpServiceError(f"{label}.xsd.schema11 must be a boolean")
+
+    @staticmethod
     def _load_manifest(manifest_path: Path) -> dict[str, Any]:
         """Load one strict, secret-free HTTP service manifest.
 
@@ -269,15 +350,23 @@ class HttpYamlScanService:
         base_url = spec.get("baseUrl")
         if not isinstance(base_url, str) or not base_url.lower().startswith(("http://", "https://")):
             raise HttpServiceError("spec.baseUrl must be an http:// or https:// URL")
-        discovery = _mapping(spec.get("discovery"), "spec.discovery", _DISCOVERY_FIELDS)
-        if discovery.get("mode", "manual") != "manual":
-            raise HttpServiceError("spec.discovery.mode must be manual")
-        source = _mapping(discovery.get("source"), "spec.discovery.source", _SOURCE_FIELDS)
-        if not isinstance(source.get("url"), str) or not source["url"].strip():
-            raise HttpServiceError("spec.discovery.source.url must be a non-empty string")
-        references = _mapping(discovery.get("references") or {}, "spec.discovery.references", _REFERENCES_FIELDS)
-        if "allowRemote" in references and not isinstance(references["allowRemote"], bool):
-            raise HttpServiceError("spec.discovery.references.allowRemote must be a boolean")
+        # Manual XML operations (§27) are declared outright rather than
+        # discovered, so they are the one case where a manifest carries no
+        # discovery source at all.  Everything else still requires one.
+        operations_section = spec.get("operations")
+        manual_operations = (operations_section or {}).get("manual") if isinstance(operations_section, dict) else None
+        has_manual = bool(manual_operations)
+
+        if "discovery" in spec or not has_manual:
+            discovery = _mapping(spec.get("discovery"), "spec.discovery", _DISCOVERY_FIELDS)
+            if discovery.get("mode", "manual") != "manual":
+                raise HttpServiceError("spec.discovery.mode must be manual")
+            source = _mapping(discovery.get("source"), "spec.discovery.source", _SOURCE_FIELDS)
+            if not isinstance(source.get("url"), str) or not source["url"].strip():
+                raise HttpServiceError("spec.discovery.source.url must be a non-empty string")
+            references = _mapping(discovery.get("references") or {}, "spec.discovery.references", _REFERENCES_FIELDS)
+            if "allowRemote" in references and not isinstance(references["allowRemote"], bool):
+                raise HttpServiceError("spec.discovery.references.allowRemote must be a boolean")
         if "runtime" in spec:
             runtime = _mapping(spec["runtime"], "spec.runtime", _RUNTIME_FIELDS)
             if "http2" in runtime and not isinstance(runtime["http2"], bool):
@@ -292,11 +381,22 @@ class HttpYamlScanService:
                 raise HttpServiceError("spec.runtime.limits must be a mapping")
         if "validation" in spec and not isinstance(spec["validation"], dict):
             raise HttpServiceError("spec.validation must be a mapping")
+        # §59 Activation Gate: off/warn/strict (mutating contract tests are
+        # opt-in via spec.testing.allowMutatingOperations).
+        activation_gate = (spec.get("validation") or {}).get("activationGate")
+        if activation_gate is not None and activation_gate not in ACTIVATION_GATES:
+            raise HttpServiceError(f"spec.validation.activationGate must be one of {', '.join(ACTIVATION_GATES)}")
+        if "testing" in spec:
+            testing = _mapping(spec["testing"], "spec.testing", _TESTING_FIELDS)
+            if "allowMutatingOperations" in testing and not isinstance(testing["allowMutatingOperations"], bool):
+                raise HttpServiceError("spec.testing.allowMutatingOperations must be a boolean")
         if "operations" in spec:
             operations = _mapping(spec["operations"], "spec.operations", _OPERATIONS_FIELDS)
             include = operations.get("include") or []
             if not isinstance(include, list) or not all(isinstance(item, str) for item in include):
                 raise HttpServiceError("spec.operations.include must be a list of strings")
+            if "manual" in operations:
+                HttpYamlScanService._validate_manual_operations(operations["manual"])
         if "health" in spec:
             health = _mapping(spec["health"], "spec.health", _HEALTH_FIELDS)
             if "enabled" in health and not isinstance(health["enabled"], bool):
@@ -350,6 +450,100 @@ class HttpYamlScanService:
         return payload, filename
 
     @staticmethod
+    def _resolve_manual_xsd(binding: dict[str, Any], manifest_path: Path, allowed_root: Path) -> dict[str, Any]:
+        """Read an XSD binding into the shape the OpenAPI extension expects.
+
+        Args:
+            binding: The validated ``xsd`` mapping.
+            manifest_path: Path to the manifest (relative ``file`` resolves here).
+            allowed_root: The configured scan root the file must stay inside.
+
+        Returns:
+            A ``{"schema": <text>, "schema11": bool}`` mapping.
+
+        Raises:
+            HttpServiceError: On path escape, unreadable file, or oversized XSD.
+        """
+        resolved: dict[str, Any] = {"schema11": bool(binding.get("schema11", False))}
+        if "schema" in binding and isinstance(binding["schema"], str) and binding["schema"].strip():
+            resolved["schema"] = binding["schema"]
+            return resolved
+
+        candidate = manifest_path.parent.joinpath(str(binding["file"])).resolve()
+        # Same guard as the OpenAPI source loader: a manifest may only reach
+        # files under the scan root it was discovered in.
+        if not candidate.is_relative_to(allowed_root) or candidate.is_symlink() or not candidate.is_file():
+            raise HttpServiceError(f"Manual XSD escapes its allowed scan root: {binding['file']}")
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HttpServiceError(f"Unable to read manual XSD {binding['file']}") from exc
+        if len(text.encode("utf-8")) > settings.mcpgateway_http_spec_max_bytes:
+            raise HttpServiceError(f"Manual XSD exceeds the {settings.mcpgateway_http_spec_max_bytes}-byte limit")
+        resolved["schema"] = text
+        return resolved
+
+    @classmethod
+    def _synthesize_manual_openapi(cls, manifest: dict[str, Any], manifest_path: Path, allowed_root: Path) -> bytes:
+        """Build an OpenAPI document from ``spec.operations.manual`` (§27).
+
+        The manual declarations are expressed as an OpenAPI document rather
+        than as a bespoke pipeline so that everything downstream — artifact
+        hashing, schema drift, candidate-then-activate, tool compilation —
+        is the same code path a discovered OpenAPI service already uses.
+        The XSD binding rides along in the ``x-contextforge-xsd`` vendor
+        extension the compiler already understands.
+
+        Args:
+            manifest: The validated manifest mapping.
+            manifest_path: Path to the manifest.
+            allowed_root: The configured scan root.
+
+        Returns:
+            The serialized OpenAPI document bytes.
+        """
+        spec = manifest["spec"]
+        # First-Party
+        from mcpgateway.protocols.contracts.openapi import _XSD_EXTENSION  # pylint: disable=import-outside-toplevel,protected-access
+
+        paths: dict[str, Any] = {}
+        for entry in spec["operations"]["manual"]:
+            media_content: dict[str, Any] = {}
+            for side in ("body", "response"):
+                block = entry.get(side)
+                if not block:
+                    continue
+                media_type = str(block["mediaType"])
+                media: dict[str, Any] = {"schema": {"type": "object"}}
+                if block.get("xsd"):
+                    media[_XSD_EXTENSION] = cls._resolve_manual_xsd(block["xsd"], manifest_path, allowed_root)
+                media_content[side] = {"mediaType": media_type, "media": media}
+
+            operation: dict[str, Any] = {"operationId": str(entry["name"])}
+            if "body" in media_content:
+                body = media_content["body"]
+                operation["requestBody"] = {"required": True, "content": {body["mediaType"]: body["media"]}}
+            response_media = media_content.get("response")
+            operation["responses"] = {
+                "200": {
+                    "description": "Manual operation",
+                    **( {"content": {response_media["mediaType"]: response_media["media"]}} if response_media else {} ),
+                }
+            }
+            path_item = paths.setdefault(str(entry["path"]), {})
+            method = str(entry["method"]).lower()
+            if method in path_item:
+                raise HttpServiceError(f"spec.operations.manual declares {method.upper()} {entry['path']} twice")
+            path_item[method] = operation
+
+        document = {
+            "openapi": "3.0.3",
+            "info": {"title": str(manifest["metadata"]["name"]), "version": "1.0.0"},
+            "paths": paths,
+        }
+        return json.dumps(document).encode("utf-8")
+
+    @staticmethod
     def _matches_managed_state(service: DbHttpService | None, manifest_hash: str) -> bool:
         """Return whether the manifest driving this service is unchanged."""
         return bool(service and (service.discovery_config or {}).get("manifest_hash") == manifest_hash)
@@ -375,7 +569,7 @@ class HttpYamlScanService:
         manifest_hash: str,
         team_id: str | None,
         manifest_path: Path,
-        source_url: str,
+        source_url: str | None,
     ) -> dict[str, Any]:
         """Map a validated manifest onto HttpServiceCreate/Update field values.
 
@@ -384,7 +578,8 @@ class HttpYamlScanService:
             manifest_hash: Content hash of the manifest file
             team_id: Resolved team ID (or None)
             manifest_path: Resolved manifest path (stored in discovery_config)
-            source_url: The manifest's spec.discovery.source.url value
+            source_url: The manifest's spec.discovery.source.url value, or
+                ``None`` for a manifest that declares manual operations
 
         Returns:
             Field values accepted by both HttpServiceCreate and
@@ -402,7 +597,7 @@ class HttpYamlScanService:
                 "manifest_path": str(manifest_path),
                 "manifest_hash": manifest_hash,
                 "source_url": source_url,
-                "references": manifest["spec"]["discovery"].get("references") or {},
+                "references": (manifest["spec"].get("discovery") or {}).get("references") or {},
             },
             "runtime_config": spec.get("runtime") or {},
             "health_check_enabled": health.get("enabled", True),
@@ -440,11 +635,20 @@ class HttpYamlScanService:
                     continue
                 try:
                     manifest = self._load_manifest(resolved_manifest)
-                    payload, filename = await self._load_source(manifest, resolved_manifest, root)
+                    manual = (manifest["spec"].get("operations") or {}).get("manual")
+                    if manual:
+                        # Manual operations (§27): the declarations *are* the
+                        # contract, so synthesize the document the rest of the
+                        # pipeline already knows how to consume.
+                        payload = self._synthesize_manual_openapi(manifest, resolved_manifest, root)
+                        filename = _MANUAL_ARTIFACT_FILENAME
+                        source_url: str | None = None
+                    else:
+                        payload, filename = await self._load_source(manifest, resolved_manifest, root)
+                        source_url = str(manifest["spec"]["discovery"]["source"]["url"])
                     team_id = self._resolve_team(db, manifest["metadata"].get("team"))
                     manifest_hash = sha256(resolved_manifest.read_bytes()).hexdigest()
-                    source_url = str(manifest["spec"]["discovery"]["source"]["url"])
-                    references = manifest["spec"]["discovery"].get("references") or {}
+                    references = (manifest["spec"].get("discovery") or {}).get("references") or {}
                     allow_remote = bool(references.get("allowRemote", False))
                     name = str(manifest["metadata"]["name"])
                     service = db.execute(select(DbHttpService).where(DbHttpService.name == name)).scalar_one_or_none()
@@ -463,9 +667,7 @@ class HttpYamlScanService:
                             metadata={"created_via": "http-yaml-scan"},
                         )
                         service = db.get(DbHttpService, created.id)
-                        await self.http.import_schema(
-                            db, service.id, payload, filename, "system", activate=True, allow_remote=allow_remote
-                        )
+                        await self.http.import_schema(db, service.id, payload, filename, "system", activate=True, allow_remote=allow_remote)
                         action = "created"
                     else:
                         update_fields = {key: value for key, value in fields.items() if key != "team_id"}
@@ -478,9 +680,7 @@ class HttpYamlScanService:
                         )
                         service = db.get(DbHttpService, service.id)
                         service.team_id = team_id
-                        await self.http.import_schema(
-                            db, service.id, payload, filename, "system", activate=False, allow_remote=allow_remote
-                        )
+                        await self.http.import_schema(db, service.id, payload, filename, "system", activate=False, allow_remote=allow_remote)
                         action = "updated"
                     if service is None:
                         raise HttpServiceError("Unable to load scanned HTTP service")

@@ -571,7 +571,8 @@ async def test_error_status_uses_error_field_message():
         await HttpProtocolAdapter().invoke(_make_operation(), {}, context)
     error = exc_info.value
     assert error.code == REST_HTTP_STATUS_ERROR
-    assert error.category is ErrorCategory.UPSTREAM_ERROR
+    # PR8 §73: 400 maps to INVALID_ARGUMENT (previously UPSTREAM_ERROR).
+    assert error.category is ErrorCategory.INVALID_ARGUMENT
     assert error.protocol_status == 400
 
 

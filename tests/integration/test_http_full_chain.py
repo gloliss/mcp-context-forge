@@ -439,3 +439,154 @@ class TestHttpFullChain:
         assert service.active_artifact_id is not None
         tools = test_db.execute(select(DbTool).where(DbTool.http_service_id == service.id)).scalars().all()
         assert len(tools) == 8
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: manual XML operations declared in the manifest (§27)
+# ══════════════════════════════════════════════════════════════════════
+
+_XML_REQUEST_XSD = """<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="QueryRequest"><xs:complexType><xs:sequence>
+    <xs:element name="factory" type="xs:string"/>
+    <xs:element name="count" type="xs:integer"/>
+  </xs:sequence></xs:complexType></xs:element>
+</xs:schema>
+"""
+
+_XML_RESPONSE_XSD = """<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="QueryResponse"><xs:complexType><xs:sequence>
+    <xs:element name="status" type="xs:string"/>
+    <xs:element name="total" type="xs:integer"/>
+  </xs:sequence></xs:complexType></xs:element>
+</xs:schema>
+"""
+
+
+@pytest.fixture(scope="module")
+def xml_server():
+    """Serve a real XML endpoint that answers every POST with a fixed document."""
+    # Standard
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    captured: list[dict] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        """Record the request and answer with a conforming XML document."""
+
+        def do_POST(self):  # noqa: N802 - stdlib handler name
+            """Record the body and reply."""
+            length = int(self.headers.get("Content-Length") or 0)
+            captured.append({"headers": {k.lower(): v for k, v in self.headers.items()}, "body": self.rfile.read(length).decode("utf-8", "replace")})
+            payload = b"<QueryResponse><status>OK</status><total>7</total></QueryResponse>"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/xml")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            """Silence the access log."""
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", captured
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _manual_manifest(name: str, base_url: str) -> str:
+    """Build a manifest declaring one XSD-bound manual XML operation."""
+    return f"""apiVersion: contextforge/v1alpha1
+kind: HttpService
+metadata:
+  name: {name}
+  visibility: public
+spec:
+  baseUrl: {base_url}
+  operations:
+    manual:
+      - name: queryReport
+        method: POST
+        path: /query
+        body:
+          mediaType: application/xml
+          xsd:
+            schema: |
+{_indent(_XML_REQUEST_XSD, 14)}
+        response:
+          mediaType: application/xml
+          xsd:
+            schema: |
+{_indent(_XML_RESPONSE_XSD, 14)}
+"""
+
+
+def _indent(text: str, spaces: int) -> str:
+    """Indent every line of ``text`` for embedding in YAML."""
+    pad = " " * spaces
+    return "\n".join(pad + line if line.strip() else line for line in text.splitlines())
+
+
+class TestManualXmlManifestFullChain:
+    """Manifest → scan → tool → real HTTP, with the XSD driving both ways (§27)."""
+
+    def _scan(self, tmp_path, test_db, monkeypatch, name: str, base_url: str) -> DbHttpService:
+        """Write the manifest, enable scanning, and run one scan."""
+        root = tmp_path / f"root-{name}"
+        root.mkdir()
+        (root / "http-service.yaml").write_text(_manual_manifest(name, base_url), encoding="utf-8")
+        monkeypatch.setattr(settings, "mcpgateway_http_yaml_scan_enabled", True)
+        monkeypatch.setattr(settings, "mcpgateway_http_yaml_scan_roots", [str(root)])
+        monkeypatch.setattr("mcpgateway.services.http_yaml_service.is_primary_worker", lambda: True)
+        result = _run(HttpYamlScanService().scan(test_db))
+        assert result["created"] == [name], result
+        return test_db.execute(select(DbHttpService).where(DbHttpService.name == name)).scalar_one()
+
+    def test_scan_publishes_an_xml_tool_with_both_bindings(self, tmp_path, test_db, monkeypatch, xml_server):
+        """The scanned tool carries the xml codec and both XSD bindings."""
+        base_url, _captured = xml_server
+        name = f"manual-xml-{uuid.uuid4().hex[:6]}"
+        service = self._scan(tmp_path, test_db, monkeypatch, name, base_url)
+
+        tools = test_db.execute(select(DbTool).where(DbTool.http_service_id == service.id)).scalars().all()
+        assert len(tools) == 1
+        config = tools[0].protocol_config
+        assert config["request"]["body"]["codec"] == "xml"
+        assert "QueryRequest" in config["request"]["body"]["xsd"]["schema"]
+        assert "QueryResponse" in config["response"]["xsd"]["schema"]
+
+    def test_invoking_the_scanned_tool_round_trips_through_real_http(self, tmp_path, test_db, monkeypatch, xml_server):
+        """A manifest-declared XML tool really calls the upstream and validates both ways."""
+        base_url, captured = xml_server
+        name = f"manual-xml-{uuid.uuid4().hex[:6]}"
+        service = self._scan(tmp_path, test_db, monkeypatch, name, base_url)
+        tool = test_db.execute(select(DbTool).where(DbTool.http_service_id == service.id)).scalars().one()
+
+        before = len(captured)
+        result = _invoke(test_db, tool, {"body": {"QueryRequest": {"factory": "FAB1", "count": 3}}})
+
+        assert len(captured) == before + 1
+        sent = captured[-1]
+        assert sent["headers"]["content-type"].startswith("application/xml")
+        assert "<QueryRequest>" in sent["body"] and "FAB1" in sent["body"]
+        # The response XSD coerced ``total`` to an integer: schema really applied.
+        text = result.content[0].text
+        assert '"total": 7' in text
+
+    def test_the_scan_rejects_a_request_body_the_xsd_refuses(self, tmp_path, test_db, monkeypatch, xml_server):
+        """A body the XSD rejects never reaches the upstream."""
+        base_url, captured = xml_server
+        name = f"manual-xml-{uuid.uuid4().hex[:6]}"
+        service = self._scan(tmp_path, test_db, monkeypatch, name, base_url)
+        tool = test_db.execute(select(DbTool).where(DbTool.http_service_id == service.id)).scalars().one()
+
+        before = len(captured)
+        with pytest.raises(Exception):
+            _invoke(test_db, tool, {"body": {"QueryRequest": {"factory": "FAB1"}}})
+
+        assert len(captured) == before

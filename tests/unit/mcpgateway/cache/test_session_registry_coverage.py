@@ -2219,7 +2219,7 @@ class TestGenerateResponseEdgeCases:
     """Cover generate_response edge cases."""
 
     @pytest.mark.asyncio
-    async def test_generate_response_auth_token_path(self, registry, stub_db, stub_services):
+    async def test_generate_response_auth_token_path(self, registry, stub_db):
         """Line 1926: user has auth_token."""
         tr = FakeSSETransport("auth_tok")
         await registry.add_session("auth_tok", tr)
@@ -2252,7 +2252,7 @@ class TestGenerateResponseEdgeCases:
         assert tr.sent[-1] == {"jsonrpc": "2.0", "result": {}, "id": 77}
 
     @pytest.mark.asyncio
-    async def test_generate_response_session_affinity_enabled(self, registry, monkeypatch, stub_db, stub_services):
+    async def test_generate_response_session_affinity_enabled(self, registry, monkeypatch, stub_db):
         """Lines 1951, 1955: Session affinity enabled path."""
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
 
@@ -2294,7 +2294,7 @@ class TestGenerateResponseEdgeCases:
         assert "x-mcp-session-id" in headers
 
     @pytest.mark.asyncio
-    async def test_generate_response_uses_loopback_url(self, registry, stub_db, stub_services):
+    async def test_generate_response_uses_loopback_url(self, registry, stub_db):
         """Verify generate_response uses loopback URL for internal RPC call (#3049)."""
         tr = FakeSSETransport("loopback_test")
         await registry.add_session("loopback_test", tr)
@@ -2331,7 +2331,7 @@ class TestGenerateResponseEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# Fixtures for stub_db and stub_services (copied from existing test file)
+# Fixture for stub_db (copied from existing test file)
 # ---------------------------------------------------------------------------
 @pytest.fixture()
 def stub_db(monkeypatch):
@@ -2345,26 +2345,6 @@ def stub_db(monkeypatch):
         lambda: _dummy_iter(),
         raising=False,
     )
-
-
-@pytest.fixture()
-def stub_services(monkeypatch):
-    """Replace list_* service methods so they return predictable data."""
-
-    class _Item:
-        def model_dump(self, *_, **__) -> Dict[str, str]:
-            return {"name": "demo"}
-
-    async def _return_items(*args, **kwargs):
-        return [_Item()]
-
-    mod = "mcpgateway.cache.session_registry"
-    monkeypatch.setattr(f"{mod}.tool_service.list_tools", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.tool_service.list_server_tools", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.prompt_service.list_prompts", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.prompt_service.list_server_prompts", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.resource_service.list_resources", _return_items, raising=False)
-    monkeypatch.setattr(f"{mod}.resource_service.list_server_resources", _return_items, raising=False)
 
 
 # ---------------------------------------------------------------------------

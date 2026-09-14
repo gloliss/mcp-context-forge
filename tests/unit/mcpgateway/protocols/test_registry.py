@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 # First-Party
+from mcpgateway.protocols.grpc.adapter import GrpcProtocolAdapter
 from mcpgateway.protocols.http.adapter import HttpProtocolAdapter
 from mcpgateway.protocols.models import ErrorCategory, ProtocolError, ProtocolResult
 from mcpgateway.protocols.registry import ProtocolRegistry, build_default_protocol_registry, protocol_registry
@@ -110,3 +111,39 @@ def test_build_default_protocol_registry_registers_http_adapter():
 def test_module_level_singleton_has_http_registered():
     """The module singleton used by ToolService has 'http' registered."""
     assert isinstance(protocol_registry.get("http"), HttpProtocolAdapter)
+
+
+class TestGrpcAdapterRegistration:
+    """gRPC is reachable through the registry (design §47)."""
+
+    def test_default_registry_exposes_http_and_grpc(self):
+        """Both protocols are registered by default."""
+        registry = build_default_protocol_registry()
+
+        assert registry.protocols() == ("grpc", "http")
+
+    def test_http_adapter_is_a_shared_instance(self):
+        """HTTP is stateless, so one adapter instance serves every call."""
+        registry = build_default_protocol_registry()
+
+        assert isinstance(registry.get("http"), HttpProtocolAdapter)
+        assert registry.get("http") is registry.get("http")
+
+    def test_grpc_is_registered_as_a_factory(self):
+        """gRPC wraps one live endpoint, so it resolves through a factory."""
+        registry = build_default_protocol_registry()
+        endpoint = SimpleNamespace()
+
+        adapter = registry.get_factory("grpc")(endpoint)
+
+        assert isinstance(adapter, GrpcProtocolAdapter)
+        assert adapter._endpoint is endpoint  # pylint: disable=protected-access
+
+    def test_an_unregistered_factory_is_unsupported(self):
+        """Asking for a protocol with no factory is an UNSUPPORTED error."""
+        registry = build_default_protocol_registry()
+
+        with pytest.raises(ProtocolError) as exc_info:
+            registry.get_factory("carrier-pigeon")
+
+        assert exc_info.value.category is ErrorCategory.UNSUPPORTED

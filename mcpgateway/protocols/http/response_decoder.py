@@ -18,7 +18,7 @@ from typing import Any, Optional, Tuple
 
 # First-Party
 from mcpgateway.protocols.codecs.base import CodecContext
-from mcpgateway.protocols.codecs.registry import CodecRegistry
+from mcpgateway.protocols.codecs.registry import CODEC_NAME_MEDIA_TYPES, CodecRegistry
 
 # Status codes whose success carries no body (design-document §9.8).
 _BODYLESS_STATUSES = frozenset({204, 205})
@@ -26,15 +26,6 @@ _BODYLESS_STATUSES = frozenset({204, 205})
 # A bounded first window used only to sniff text vs binary when nothing
 # else matched; never a full-body JSON probe (design-document §70.4).
 _SNIFF_WINDOW = 512
-
-# protocol_config response.codec names mapped to their media types (§70.1).
-_CODEC_NAME_MEDIA_TYPES = {
-    "json": "application/json",
-    "text": "text/plain",
-    "binary": "application/octet-stream",
-    "form": "application/x-www-form-urlencoded",
-    "multipart": "multipart/form-data",
-}
 
 
 @dataclass(frozen=True)
@@ -143,7 +134,7 @@ class ResponseDecoder:
         codec_name = response_config.get("codec")
         if not codec_name or codec_name == "auto":
             return None
-        name_media_type = _CODEC_NAME_MEDIA_TYPES.get(str(codec_name).lower())
+        name_media_type = CODEC_NAME_MEDIA_TYPES.get(str(codec_name).lower())
         if name_media_type is not None:
             return self._codecs.resolve(name_media_type), name_media_type
         preferred = response_config.get("preferredMediaTypes") or []

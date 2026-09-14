@@ -8,7 +8,6 @@ Versioned gRPC descriptor artifacts and safe Proto compilation.
 
 # Standard
 import base64
-from collections import defaultdict
 from datetime import datetime, timezone
 import hashlib
 from importlib import resources
@@ -30,6 +29,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import GrpcSchemaArtifact, GrpcService
+from mcpgateway.protocols.grpc.schema_mapper import proto_json_schema_mapper
 from mcpgateway.schemas import GrpcSchemaDiff
 from mcpgateway.utils.artifact_security import ArtifactSecurityError, safe_zip_members
 from mcpgateway.utils.grpc_validation import GrpcServiceError
@@ -107,79 +107,22 @@ class GrpcSchemaService:
 
     @staticmethod
     def _field_schema(field: pb_descriptor.FieldDescriptor, build_message) -> dict[str, Any]:
-        """Convert a protobuf field descriptor into JSON Schema."""
-        scalar_types = {
-            pb_descriptor.FieldDescriptor.TYPE_DOUBLE: {"type": "number", "format": "double"},
-            pb_descriptor.FieldDescriptor.TYPE_FLOAT: {"type": "number", "format": "float"},
-            pb_descriptor.FieldDescriptor.TYPE_INT64: {"type": "integer", "format": "int64"},
-            pb_descriptor.FieldDescriptor.TYPE_UINT64: {"type": "integer", "minimum": 0},
-            pb_descriptor.FieldDescriptor.TYPE_INT32: {"type": "integer", "format": "int32"},
-            pb_descriptor.FieldDescriptor.TYPE_FIXED64: {"type": "integer", "minimum": 0},
-            pb_descriptor.FieldDescriptor.TYPE_FIXED32: {"type": "integer", "minimum": 0},
-            pb_descriptor.FieldDescriptor.TYPE_BOOL: {"type": "boolean"},
-            pb_descriptor.FieldDescriptor.TYPE_STRING: {"type": "string"},
-            pb_descriptor.FieldDescriptor.TYPE_BYTES: {"type": "string", "contentEncoding": "base64"},
-            pb_descriptor.FieldDescriptor.TYPE_UINT32: {"type": "integer", "minimum": 0},
-            pb_descriptor.FieldDescriptor.TYPE_SFIXED32: {"type": "integer"},
-            pb_descriptor.FieldDescriptor.TYPE_SFIXED64: {"type": "integer"},
-            pb_descriptor.FieldDescriptor.TYPE_SINT32: {"type": "integer"},
-            pb_descriptor.FieldDescriptor.TYPE_SINT64: {"type": "integer"},
-        }
-        if field.type == pb_descriptor.FieldDescriptor.TYPE_ENUM:
-            schema: dict[str, Any] = {"type": "string", "enum": [value.name for value in field.enum_type.values]}
-        elif field.type == pb_descriptor.FieldDescriptor.TYPE_MESSAGE:
-            well_known = {
-                "google.protobuf.Timestamp": {"type": "string", "format": "date-time"},
-                "google.protobuf.Duration": {"type": "string", "pattern": r"^-?[0-9]+(?:\\.[0-9]+)?s$"},
-                "google.protobuf.Any": {"type": "object", "additionalProperties": True},
-                "google.protobuf.Struct": {"type": "object", "additionalProperties": True},
-                "google.protobuf.Value": {},
-            }
-            schema = well_known.get(field.message_type.full_name, build_message(field.message_type))
-        else:
-            schema = dict(scalar_types.get(field.type, {"type": "string"}))
+        """Convert a protobuf field descriptor into JSON Schema.
 
-        if field.message_type is not None and field.message_type.GetOptions().map_entry:
-            value_field = field.message_type.fields_by_name["value"]
-            return {"type": "object", "additionalProperties": GrpcSchemaService._field_schema(value_field, build_message)}
-        if field.is_repeated:
-            return {"type": "array", "items": schema}
-        return schema
+        Delegates to :class:`mcpgateway.protocols.grpc.ProtoJsonSchemaMapper`
+        (design §37).  The mapper owns the 64-bit-integer string form (§38)
+        and the full WKT mapping (§39).
+        """
+        return proto_json_schema_mapper.field_schema(field, build_message)
 
     @classmethod
     def _message_schema(cls, root: pb_descriptor.Descriptor) -> dict[str, Any]:
-        """Build recursive JSON Schema with shared definitions and oneof hints."""
-        definitions: dict[str, Any] = {}
-        building: set[str] = set()
+        """Build recursive JSON Schema with shared definitions and oneof hints.
 
-        def build(message: pb_descriptor.Descriptor) -> dict[str, Any]:
-            """Build or reference one message definition without infinite recursion."""
-            reference = {"$ref": f"#/$defs/{message.full_name}"}
-            if message.full_name in definitions or message.full_name in building:
-                return reference
-            building.add(message.full_name)
-            schema: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}
-            required: list[str] = []
-            oneofs: dict[str, list[str]] = defaultdict(list)
-            definitions[message.full_name] = schema
-            for field in message.fields:
-                schema["properties"][field.name] = cls._field_schema(field, build)
-                if field.is_required:
-                    required.append(field.name)
-                if field.containing_oneof is not None:
-                    oneofs[field.containing_oneof.name].append(field.name)
-            if required:
-                schema["required"] = required
-            if oneofs:
-                schema["x-protobuf-oneof"] = oneofs
-            building.remove(message.full_name)
-            return reference
-
-        build(root)
-        result = dict(definitions[root.full_name])
-        result["$schema"] = "https://json-schema.org/draft/2020-12/schema"
-        result["$defs"] = definitions
-        return result
+        Delegates to :class:`mcpgateway.protocols.grpc.ProtoJsonSchemaMapper`
+        (design §37/§40).
+        """
+        return proto_json_schema_mapper.message_schema(root)
 
     @classmethod
     def _example(cls, message: pb_descriptor.Descriptor, seen: Optional[set[str]] = None) -> dict[str, Any]:

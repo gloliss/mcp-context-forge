@@ -29,6 +29,7 @@ from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceUpdate
 from mcpgateway.services.grpc_service import _decrypt_metadata, GrpcService
 from mcpgateway.utils.grpc_validation import _validate_grpc_target, GrpcServiceError
 from mcpgateway.utils.primary_worker import is_primary_worker
+from mcpgateway.utils.secret_policy import check_no_plaintext_secrets
 
 _MANIFEST_FIELDS = {
     "service_name",
@@ -39,6 +40,7 @@ _MANIFEST_FIELDS = {
     "tls_cert_path",
     "tls_key_path",
     "metadata_env",
+    "runtime",
     "tags",
     "team",
     "visibility",
@@ -117,6 +119,8 @@ class ProtoScanService:
                 raise GrpcServiceError(f"grpc-service.yaml is missing {required}")
         if "grpc_metadata" in data or "metadata" in data:
             raise GrpcServiceError("Plaintext metadata is forbidden; use metadata_env")
+        if data.get("runtime"):
+            check_no_plaintext_secrets(data["runtime"], label="grpc-service.yaml runtime")
         mode = data.get("reflection_mode", "auto")
         if mode not in {"auto", "reflection", "artifact"}:
             raise GrpcServiceError("reflection_mode must be auto, reflection, or artifact")
@@ -228,6 +232,7 @@ class ProtoScanService:
                                 tls_cert_path=manifest.get("tls_cert_path"),
                                 tls_key_path=manifest.get("tls_key_path"),
                                 grpc_metadata=metadata,
+                                runtime_config=manifest.get("runtime") or {},
                                 tags=list(manifest.get("tags") or []),
                                 team_id=team_id,
                                 visibility=manifest.get("visibility", "private"),
@@ -249,6 +254,7 @@ class ProtoScanService:
                                 tls_cert_path=manifest.get("tls_cert_path"),
                                 tls_key_path=manifest.get("tls_key_path"),
                                 grpc_metadata=metadata,
+                                runtime_config=manifest.get("runtime") or {},
                                 tags=list(manifest.get("tags") or []),
                                 visibility=manifest.get("visibility", "private"),
                             ),

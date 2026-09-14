@@ -43,6 +43,7 @@ from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.secret_policy import check_no_plaintext_secrets
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -125,6 +126,26 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
     re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
     re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
 )
+
+
+def _reject_plaintext_runtime_config(cls: Any, value: Any) -> Any:
+    """Reject plaintext secrets in runtime/protocol configuration (PR8 §67).
+
+    Args:
+        cls: The model class (unused).
+        value: The ``runtime_config``/``protocol_config`` mapping.
+
+    Returns:
+        The original value when no plaintext secret is present.
+
+    Raises:
+        ValueError: When a sensitive key carries a plaintext value.
+    """
+    del cls
+    if value is None:
+        return value
+    check_no_plaintext_secrets(value, label="runtime_config (plaintext secrets forbidden, §67)")
+    return value
 
 
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -813,7 +834,9 @@ class ToolCreate(BaseModel):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
-    protocol_config: Optional[Dict[str, Any]] = Field(None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path.")
+    protocol_config: Optional[Dict[str, Any]] = Field(
+        None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path."
+    )
     http_service_id: Optional[str] = Field(None, description="ID of the HTTP service this tool is generated from (registry sync)")
     http_schema_artifact_id: Optional[str] = Field(None, description="ID of the HTTP schema artifact that produced this tool revision (registry sync)")
 
@@ -1396,7 +1419,9 @@ class ToolUpdate(BaseModelWithConfigDict):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
-    protocol_config: Optional[Dict[str, Any]] = Field(None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path.")
+    protocol_config: Optional[Dict[str, Any]] = Field(
+        None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path."
+    )
 
     @field_validator("tags")
     @classmethod
@@ -1897,7 +1922,9 @@ class ToolRead(BaseModelWithConfigDict):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
-    protocol_config: Optional[Dict[str, Any]] = Field(None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path.")
+    protocol_config: Optional[Dict[str, Any]] = Field(
+        None, description="Protocol runtime configuration (PR2): request/response codec and redirect policy for the HTTP runtime. NULL means legacy path."
+    )
 
     # MCP protocol extension field
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
@@ -8143,6 +8170,7 @@ class GrpcServiceCreate(BaseModel):
     tls_cert_path: Optional[str] = Field(None, description="Path to a root CA file, or to the client certificate chain when tls_key_path is set")
     tls_key_path: Optional[str] = Field(None, description="Path to the client private key for mTLS")
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata headers")
+    runtime_config: Optional[Dict[str, Any]] = Field(None, description="Per-service gRPC runtime policy (PR6 §42)")
     discovery_mode: Literal["auto", "reflection", "artifact"] = Field(default="auto", description="Descriptor discovery mode")
     health_check_enabled: bool = Field(default=True, description="Enable periodic health checks")
     health_check_interval: int = Field(default_factory=lambda: settings.mcpgateway_grpc_health_interval, ge=10, le=3600, description="Health-check interval in seconds")
@@ -8205,6 +8233,12 @@ class GrpcServiceCreate(BaseModel):
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
 
+    @field_validator("runtime_config", mode="before")
+    @classmethod
+    def _validate_runtime_config(cls, value: Any) -> Any:
+        """Reject plaintext secrets in runtime_config (PR8 §67)."""
+        return _reject_plaintext_runtime_config(cls, value)
+
 
 class GrpcServiceUpdate(BaseModel):
     """Schema for updating an existing gRPC service."""
@@ -8217,6 +8251,7 @@ class GrpcServiceUpdate(BaseModel):
     tls_cert_path: Optional[str] = Field(None, description="Root CA path, or client certificate-chain path when tls_key_path is set")
     tls_key_path: Optional[str] = Field(None, description="Client private-key path for mTLS")
     grpc_metadata: Optional[Dict[str, str]] = Field(None, description="gRPC metadata headers")
+    runtime_config: Optional[Dict[str, Any]] = Field(None, description="Per-service gRPC runtime policy (PR6 §42)")
     discovery_mode: Optional[Literal["auto", "reflection", "artifact"]] = Field(None, description="Descriptor discovery mode")
     health_check_enabled: Optional[bool] = Field(None, description="Enable health checks")
     health_check_interval: Optional[int] = Field(None, ge=10, le=3600, description="Health-check interval")
@@ -8279,6 +8314,12 @@ class GrpcServiceUpdate(BaseModel):
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
 
+    @field_validator("runtime_config", mode="before")
+    @classmethod
+    def _validate_runtime_config(cls, value: Any) -> Any:
+        """Reject plaintext secrets in runtime_config (PR8 §67)."""
+        return _reject_plaintext_runtime_config(cls, value)
+
 
 class GrpcServiceRead(BaseModel):
     """Schema for reading gRPC service information."""
@@ -8297,6 +8338,7 @@ class GrpcServiceRead(BaseModel):
     tls_cert_path: Optional[str] = Field(None, description="Root CA or mTLS client certificate-chain path")
     tls_key_path: Optional[str] = Field(None, description="mTLS client private-key path")
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata")
+    runtime_config: Optional[Dict[str, Any]] = Field(None, description="Per-service gRPC runtime policy (PR6 §42)")
     discovery_mode: Literal["auto", "reflection", "artifact"] = Field(default="auto", description="Descriptor discovery mode")
     active_artifact_id: Optional[str] = Field(None, description="Active descriptor artifact ID")
     candidate_artifact_id: Optional[str] = Field(None, description="Latest non-activated candidate schema artifact ID")
@@ -8575,6 +8617,12 @@ class HttpServiceCreate(BaseModel):
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
 
+    @field_validator("runtime_config", mode="before")
+    @classmethod
+    def _validate_runtime_config(cls, value: Any) -> Any:
+        """Reject plaintext secrets in runtime_config (PR8 §67)."""
+        return _reject_plaintext_runtime_config(cls, value)
+
 
 class HttpServiceUpdate(BaseModel):
     """Schema for updating an existing HTTP service."""
@@ -8645,6 +8693,12 @@ class HttpServiceUpdate(BaseModel):
             logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("runtime_config", mode="before")
+    @classmethod
+    def _validate_runtime_config(cls, value: Any) -> Any:
+        """Reject plaintext secrets in runtime_config (PR8 §67)."""
+        return _reject_plaintext_runtime_config(cls, value)
 
 
 class HttpServiceRead(BaseModel):
@@ -8892,9 +8946,7 @@ class GrpcDataLineageRead(BaseModel):
     paths: List[GrpcDataLineagePathRead] = Field(default_factory=list)
     summary: GrpcDataLineageSummaryRead = Field(default_factory=GrpcDataLineageSummaryRead)
     truncated: bool = False
-    relationship_semantics: str = Field(
-        default="API/SQL bindings describe catalog/impact metadata; they do not imply that the gRPC request directly executes SQL."
-    )
+    relationship_semantics: str = Field(default="API/SQL bindings describe catalog/impact metadata; they do not imply that the gRPC request directly executes SQL.")
 
 
 class SQLDataSourceCreate(BaseModel):

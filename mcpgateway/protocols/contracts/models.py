@@ -37,6 +37,11 @@ class OperationDefinition:
             path_template).
         response: Protocol-specific response shape (PR1 HTTP:
             output_schema, jsonpath_filter).
+        soap_binding: SOAP binding metadata (version / operation / namespace
+            / soapAction) for operations compiled from a WSDL.  This is
+            runtime-required — the SOAP codec and the HTTP glue read it to
+            build the envelope and the transport headers — so it is a typed
+            field rather than an ``extensions`` entry.
         extensions: Source/debug/UI metadata only — runtime-required
             information must live in typed fields, never here.
     """
@@ -50,6 +55,7 @@ class OperationDefinition:
     tags: tuple[str, ...] = ()
     request: Any = None
     response: Any = None
+    soap_binding: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
 

@@ -67,6 +67,7 @@ _CHANNEL_IDLE_TTL = 300
 # check from consuming unbounded memory.
 _TLS_MATERIAL_MAX_BYTES = 10 * 1024 * 1024
 
+
 class _HealthChannel:
     """A pooled gRPC channel with last-used tracking for idle pruning."""
 
@@ -86,7 +87,7 @@ class _HealthChannel:
             try:
                 self.channel.close()
             except Exception:  # pylint: disable=broad-except
-                pass
+                logger.debug("Pooled gRPC channel close failed", exc_info=True)
             self.channel = None
 
 
@@ -406,7 +407,7 @@ class GrpcMonitoringService:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
         row = db.execute(
             select(
-                func.count().label("total"),
+                func.count().label("total"),  # pylint: disable=not-callable
                 func.sum(case((GrpcHealthSample.healthy.is_(True), 1), else_=0)).label("success"),
             ).where(
                 GrpcHealthSample.grpc_service_id == service_id,
@@ -449,6 +450,7 @@ class GrpcMonitoringService:
                         sem = asyncio.Semaphore(max(1, self._max_concurrent))
 
                         async def _check_one(sid: str) -> None:
+                            """Run one scheduled health check under the concurrency cap."""
                             async with sem:
                                 try:
                                     await self.check_service(sid)

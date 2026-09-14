@@ -676,7 +676,7 @@ class AsyncJobService:
         if user is None and not bootstrap_admin:
             raise AsyncJobAuthorizationError("Authenticated session is no longer active")
 
-        if record.token_use != "session":
+        if record.token_use != "session":  # nosec B105 - "session" is a token *purpose*, not a credential
             current_teams = list(record.token_teams) if record.token_teams is not None else None
             if catalog_team_id:
                 if current_teams is None:

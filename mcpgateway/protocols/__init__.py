@@ -13,6 +13,7 @@ legacy REST invocations through :data:`protocol_registry`.
 # First-Party
 from mcpgateway.protocols.base import ProtocolAdapter
 from mcpgateway.protocols.contracts import ContractBuilder, OperationDefinition
+from mcpgateway.protocols.grpc import GrpcProtocolAdapter
 from mcpgateway.protocols.http import HttpProtocolAdapter, LegacyRestContractBuilder
 from mcpgateway.protocols.models import ErrorCategory, InvocationContext, ProtocolError, ProtocolResult
 from mcpgateway.protocols.registry import ProtocolRegistry, protocol_registry
@@ -20,6 +21,7 @@ from mcpgateway.protocols.registry import ProtocolRegistry, protocol_registry
 __all__ = [
     "ContractBuilder",
     "ErrorCategory",
+    "GrpcProtocolAdapter",
     "HttpProtocolAdapter",
     "InvocationContext",
     "LegacyRestContractBuilder",

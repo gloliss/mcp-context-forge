@@ -59,6 +59,7 @@ def _make_new_context(response, protocol_config=None) -> object:
 @pytest.fixture(autouse=True)
 def _neutralize_ssrf(monkeypatch):
     """Neutralize SSRF validation and settings for the new path."""
+
     async def _validate_unpinned(url, label):
         return {"resolved_ip": None, "hostname": None, "original_authority": None}
 
@@ -120,7 +121,7 @@ class TestNewPathContentTypes:
 
     async def test_multipart_response_is_returned_raw(self):
         """multipart/form-data responses decode to raw bytes (no parsing)."""
-        raw = b"--boundary\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nv\r\n--boundary--"
+        raw = b'--boundary\r\nContent-Disposition: form-data; name="a"\r\n\r\nv\r\n--boundary--'
         response = _NewPathResponse(content_type="multipart/form-data; boundary=boundary", content=raw)
         context = _make_new_context(response)
 
@@ -131,7 +132,7 @@ class TestNewPathContentTypes:
     async def test_unknown_content_type_never_force_parses_json(self):
         """An unmatched content type falls to sniffing, never response.json()."""
         payload = b"<xml>not json</xml>"
-        response = _NewPathResponse(content_type="application/xml", content=payload)
+        response = _NewPathResponse(content_type="application/x-custom", content=payload)
         config = _make_protocol_config(response={"codec": "auto"})
         context = _make_new_context(response, protocol_config=config)
 
@@ -142,7 +143,7 @@ class TestNewPathContentTypes:
 
     async def test_preferred_media_types_apply_when_content_type_unknown(self):
         """Configured preferences are tried after an unmatched Content-Type."""
-        response = _NewPathResponse(content_type="application/xml", content=b'{"via": "pref"}')
+        response = _NewPathResponse(content_type="application/x-custom", content=b'{"via": "pref"}')
         context = _make_new_context(response)
 
         result = await HttpProtocolAdapter().invoke(_make_operation(), {}, context)

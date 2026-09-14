@@ -142,6 +142,8 @@ async def data_lineage(
         include_unbound=include_unbound,
         limit=limit,
     )
+
+
 @router.get("/{service_id}/registry", response_model=GrpcRegistryServiceRead)
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def registry_service_detail(service_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):

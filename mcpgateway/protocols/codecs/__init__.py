@@ -16,21 +16,25 @@ from mcpgateway.protocols.codecs.form import FormCodec
 from mcpgateway.protocols.codecs.json import JsonCodec
 from mcpgateway.protocols.codecs.multipart import MultipartCodec
 from mcpgateway.protocols.codecs.registry import CodecRegistry
+from mcpgateway.protocols.codecs.soap import SoapCodec
 from mcpgateway.protocols.codecs.text import TextCodec
+from mcpgateway.protocols.codecs.xml import XmlCodec
 
 
 def build_default_codec_registry() -> CodecRegistry:
-    """Build a registry with the PR2 default codecs registered.
+    """Build a registry with the PR2/PR4/PR5 default codecs registered.
 
     BinaryCodec is registered last so it is the natural fallback for any
-    unknown content type.
-
-    Returns:
-        A populated ``CodecRegistry``.
+    unknown content type.  XmlCodec (PR4) is registered ahead of it so
+    ``application/xml``/``text/xml`` (and the ``+xml`` structured suffix)
+    resolve to XML rather than binary.  SoapCodec (PR5) claims only
+    ``application/soap+xml`` so plain XML keeps resolving to XmlCodec.
     """
     registry = CodecRegistry()
     registry.register(JsonCodec())
     registry.register(TextCodec())
+    registry.register(XmlCodec())
+    registry.register(SoapCodec())
     registry.register(FormCodec())
     registry.register(MultipartCodec())
     registry.register(BinaryCodec())
@@ -49,7 +53,9 @@ __all__ = [
     "JsonCodec",
     "MessageCodec",
     "MultipartCodec",
+    "SoapCodec",
     "TextCodec",
+    "XmlCodec",
     "build_default_codec_registry",
     "codec_registry",
 ]

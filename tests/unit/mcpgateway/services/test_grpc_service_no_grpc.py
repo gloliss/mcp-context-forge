@@ -606,8 +606,8 @@ async def test_invoke_method_validates_tls_paths_when_configured(service, db):
         description="desc",
         reflection_enabled=False,
         tls_enabled=True,
-        tls_cert_path="/tmp/cert.pem",
-        tls_key_path="/tmp/key.pem",
+        tls_cert_path="/tmp/cert.pem",  # nosec B108 - a literal path string in a test, never created or read
+        tls_key_path="/tmp/key.pem",  # nosec B108 - a literal path string in a test, never created or read
         grpc_metadata={},
         enabled=True,
         reachable=True,
@@ -699,7 +699,7 @@ def test_validate_tls_path_allows_expected_prefixes_and_blocks_other_paths():
     assert allowed.is_relative_to(Path.cwd().joinpath("certs").resolve())
 
     with pytest.raises(GrpcServiceError, match="outside allowed certificate directories"):
-        _ORIGINAL_VALIDATE_TLS_PATH("/tmp/client.pem", "TLS cert path")
+        _ORIGINAL_VALIDATE_TLS_PATH("/tmp/client.pem", "TLS cert path")  # nosec B108 - a literal path string in a test, never created or read
 
 
 @pytest.mark.asyncio
@@ -725,8 +725,10 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
             return None
 
     module.grpc = SimpleNamespace(
-        insecure_channel=lambda _target: FakeChannel(),
-        secure_channel=lambda _target, _creds: FakeChannel(),
+        aio=SimpleNamespace(
+            insecure_channel=lambda _target: FakeChannel(),
+            secure_channel=lambda _target, _creds: FakeChannel(),
+        ),
         ssl_channel_credentials=lambda **_kwargs: "creds",
     )
 
@@ -753,23 +755,20 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
 
     reflection_timeouts = []
 
-    class FakeStub:
-        def __init__(self, _channel):
-            return None
-
-        def ServerReflectionInfo(self, request_iter, timeout=None):
-            reflection_timeouts.append(timeout)
-            req = next(iter(request_iter))
-            if req.list_services is not None:
-                return iter([FakeResponse(list_services=["MyService", "BadService", "grpc.reflection.v1alpha.ServerReflection"])])
-            if req.file_containing_symbol == "MyService":
-                return iter([FakeResponse(file_descriptor_bytes=[descriptor_bytes])])
-            if req.file_containing_symbol == "BadService":
-                raise RuntimeError("boom")
-            return iter([])
+    async def fake_collect(_channel, requests, timeout=None, metadata=None):
+        """Serve one reflection exchange over the aio path (design §53)."""
+        reflection_timeouts.append(timeout)
+        req = requests[0]
+        if req.list_services is not None:
+            return [FakeResponse(list_services=["MyService", "BadService", "grpc.reflection.v1alpha.ServerReflection"])]
+        if req.file_containing_symbol == "MyService":
+            return [FakeResponse(file_descriptor_bytes=[descriptor_bytes])]
+        if req.file_containing_symbol == "BadService":
+            raise RuntimeError("boom")
+        return []
 
     module.reflection_pb2 = SimpleNamespace(ServerReflectionRequest=FakeRequest)
-    module.reflection_pb2_grpc = SimpleNamespace(ServerReflectionStub=FakeStub)
+    monkeypatch.setattr(module.translate_grpc, "_collect_reflection_responses", fake_collect)
 
     def persist_artifact(_db, reflected, payload, _filename, **_kwargs):
         _normalized, catalog = module.GrpcSchemaService.normalize_descriptor_set(payload)
@@ -825,7 +824,10 @@ async def test_perform_reflection_tls_cert_missing(monkeypatch, service, db):
     # First-Party
     from mcpgateway.services import grpc_service as module
 
-    module.grpc = SimpleNamespace(ssl_channel_credentials=lambda **_kwargs: "creds", secure_channel=lambda _t, _c: MagicMock())
+    module.grpc = SimpleNamespace(
+        aio=SimpleNamespace(secure_channel=lambda _t, _c: MagicMock()),
+        ssl_channel_credentials=lambda **_kwargs: "creds",
+    )
 
     db_service = DbGrpcService(
         id="svc-1",
@@ -869,8 +871,10 @@ async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
             return None
 
     module.grpc = SimpleNamespace(
-        insecure_channel=lambda _target: FakeChannel(),
-        secure_channel=lambda _target, _creds: FakeChannel(),
+        aio=SimpleNamespace(
+            insecure_channel=lambda _target: FakeChannel(),
+            secure_channel=lambda _target, _creds: FakeChannel(),
+        ),
         ssl_channel_credentials=lambda **_kwargs: "creds",
     )
 
@@ -879,15 +883,12 @@ async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
             self.list_services = list_services
             self.file_containing_symbol = file_containing_symbol
 
-    class FakeStub:
-        def __init__(self, _channel):
-            return None
-
-        def ServerReflectionInfo(self, _requests, timeout=None):  # pylint: disable=unused-argument
-            return iter([])
+    async def fake_collect(_channel, _requests, timeout=None, metadata=None):
+        """Return no reflected services over the aio path (design §53)."""
+        return []
 
     monkeypatch.setattr(module, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=FakeRequest))
-    monkeypatch.setattr(module, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=FakeStub))
+    monkeypatch.setattr(module.translate_grpc, "_collect_reflection_responses", fake_collect)
 
     db_service = DbGrpcService(
         id="svc-1",
@@ -928,7 +929,7 @@ async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, d
             return None
 
     module.grpc = SimpleNamespace(
-        secure_channel=lambda _target, _creds: FakeChannel(),
+        aio=SimpleNamespace(secure_channel=lambda _target, _creds: FakeChannel()),
         ssl_channel_credentials=lambda **_kwargs: "creds",
     )
 
@@ -937,15 +938,12 @@ async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, d
             self.list_services = list_services
             self.file_containing_symbol = file_containing_symbol
 
-    class FakeStub:
-        def __init__(self, _channel):
-            return None
-
-        def ServerReflectionInfo(self, _requests, timeout=None):  # pylint: disable=unused-argument
-            return iter([])
+    async def fake_collect(_channel, _requests, timeout=None, metadata=None):
+        """Return no reflected services over the aio path (design §53)."""
+        return []
 
     monkeypatch.setattr(module, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=FakeRequest))
-    monkeypatch.setattr(module, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=FakeStub))
+    monkeypatch.setattr(module.translate_grpc, "_collect_reflection_responses", fake_collect)
 
     db_service = DbGrpcService(
         id="svc-1",
@@ -985,7 +983,10 @@ async def test_perform_reflection_tls_missing_cert(monkeypatch, service, db):
     # First-Party
     from mcpgateway.services import grpc_service as module
 
-    module.grpc = SimpleNamespace(ssl_channel_credentials=lambda **_kwargs: "creds", secure_channel=lambda _t, _c: MagicMock())
+    module.grpc = SimpleNamespace(
+        aio=SimpleNamespace(secure_channel=lambda _t, _c: MagicMock()),
+        ssl_channel_credentials=lambda **_kwargs: "creds",
+    )
 
     db_service = DbGrpcService(
         id="svc-1",
@@ -1029,15 +1030,17 @@ async def test_perform_reflection_sets_reachable_false_on_error(monkeypatch, ser
             return None
 
     module.grpc = SimpleNamespace(
-        insecure_channel=lambda _target: FakeChannel(),
-        secure_channel=lambda _target, _creds: FakeChannel(),
+        aio=SimpleNamespace(
+            insecure_channel=lambda _target: FakeChannel(),
+            secure_channel=lambda _target, _creds: FakeChannel(),
+        ),
         ssl_channel_credentials=lambda **_kwargs: "creds",
     )
 
-    def _raise_stub(_channel):
+    async def _raise_collect(_channel, _requests, timeout=None, metadata=None):
         raise RuntimeError("boom")
 
-    module.reflection_pb2_grpc = SimpleNamespace(ServerReflectionStub=_raise_stub)
+    monkeypatch.setattr(module.translate_grpc, "_collect_reflection_responses", _raise_collect)
     module.reflection_pb2 = SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: object())
 
     db.commit = MagicMock()

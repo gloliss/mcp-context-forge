@@ -5576,6 +5576,7 @@ class GrpcService(Base):
     tls_cert_path: Mapped[Optional[str]] = mapped_column(String(767))
     tls_key_path: Mapped[Optional[str]] = mapped_column(String(767))
     grpc_metadata: Mapped[Dict[str, str]] = mapped_column(JSON, default=dict)  # gRPC metadata headers
+    runtime_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # per-service gRPC runtime policy (PR6 §42)
     discovery_mode: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)
     active_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     candidate_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
@@ -5724,6 +5725,7 @@ class HttpService(Base):
     tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="http_service", cascade="all, delete-orphan")
     # Immutable OpenAPI artifacts imported for this service.
     artifacts: Mapped[List["HttpSchemaArtifact"]] = relationship("HttpSchemaArtifact", back_populates="http_service", cascade="all, delete-orphan")
+    health_samples: Mapped[List["HttpHealthSample"]] = relationship("HttpHealthSample", back_populates="http_service", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         """Return a string representation of the HttpService instance.
@@ -5759,6 +5761,28 @@ class HttpSchemaArtifact(Base):
 
     http_service: Mapped["HttpService"] = relationship("HttpService", back_populates="artifacts")
     tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="http_schema_artifact")
+
+
+class HttpHealthSample(Base):
+    """Per-check HTTP service health sample (PR8, design §57).
+
+    Records one row per health-check round-trip against an ``http_services``
+    entry.  This is the PR8 addition over PR3: PR3 persisted only the rolling
+    health state on ``http_services``; PR8 adds the historical sample table.
+    """
+
+    __tablename__ = "http_health_samples"
+    __table_args__ = (Index("ix_http_health_samples_service_timestamp", "http_service_id", "timestamp"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    http_service_id: Mapped[str] = mapped_column(String(36), ForeignKey("http_services.id", ondelete="CASCADE"), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    healthy: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    http_service: Mapped["HttpService"] = relationship("HttpService", back_populates="health_samples")
 
 
 class SessionRecord(Base):

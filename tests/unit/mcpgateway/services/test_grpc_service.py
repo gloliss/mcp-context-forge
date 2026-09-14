@@ -8,6 +8,7 @@ Tests for gRPC Service functionality.
 
 # Standard
 import asyncio
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
@@ -508,16 +509,11 @@ class TestGrpcService:
             await service.delete_service(mock_db, "non-existent-id")
 
     @patch("mcpgateway.services.grpc_service.grpc")
-    @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
-    async def test_reflect_service_success(self, mock_reflection_grpc, mock_grpc, service, mock_db, sample_db_service):
+    async def test_reflect_service_success(self, mock_grpc, service, mock_db, sample_db_service):
         """Test successful service reflection."""
-        # Mock gRPC channel and stub
+        # Mock gRPC channel and reflection exchange
         mock_channel = MagicMock()
-        mock_grpc.insecure_channel.return_value = mock_channel
-
-        # Mock reflection response
-        mock_stub = MagicMock()
-        mock_reflection_grpc.ServerReflectionStub.return_value = mock_stub
+        mock_grpc.aio.insecure_channel.return_value = mock_channel
 
         # Mock service list response
         mock_service = MagicMock()
@@ -530,12 +526,15 @@ class TestGrpcService:
         mock_response_item.HasField.return_value = True
         mock_response_item.list_services_response = mock_list_response
 
-        mock_stub.ServerReflectionInfo.return_value = [mock_response_item]
+        async def _responses(_channel, _requests, timeout=None, metadata=None):
+            """Stand in for the aio reflection exchange (design §53)."""
+            return [mock_response_item]
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
         mock_db.commit = MagicMock()
 
-        result = await service.reflect_service(mock_db, sample_db_service.id)
+        with patch("mcpgateway.translate_grpc._collect_reflection_responses", _responses):
+            result = await service.reflect_service(mock_db, sample_db_service.id)
 
         assert result.service_count >= 0
         assert result.reachable is True
@@ -551,7 +550,7 @@ class TestGrpcService:
     @patch("mcpgateway.services.grpc_service.grpc")
     async def test_reflect_service_connection_error(self, mock_grpc, service, mock_db, sample_db_service):
         """Test reflection with connection error."""
-        mock_grpc.insecure_channel.side_effect = Exception("Connection failed")
+        mock_grpc.aio.insecure_channel.side_effect = Exception("Connection failed")
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
         mock_db.commit = MagicMock()
@@ -775,8 +774,8 @@ class TestGrpcService:
         assert stale_tool.reachable is False
         assert stale_tool.grpc_schema_artifact_id == "artifact-previous"
 
-    def test_sync_tools_client_streaming_change_binds_active_artifact(self, service, mock_db, sample_db_service):
-        """A method that becomes client-streaming records the artifact that changed it."""
+    def test_sync_tools_publishes_client_streaming_methods(self, service, mock_db, sample_db_service):
+        """Client-streaming methods are published as executable tools (design §48)."""
         sample_db_service.active_artifact_id = "artifact-current"
         sample_db_service.discovered_services = {
             "test.TestService": {
@@ -803,8 +802,8 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        assert existing_tool.enabled is False
-        assert existing_tool.deprecated is True
+        assert existing_tool.enabled is True
+        assert existing_tool.deprecated is False
         assert existing_tool.grpc_schema_artifact_id == "artifact-current"
         assert existing_tool.version == 2
 
@@ -982,10 +981,10 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        # Client-streaming methods remain catalog-only and are not executable MCP tools.
-        assert mock_db.add.call_count == 2
+        # Client-streaming methods are published like any other mode (design §48).
+        assert mock_db.add.call_count == 3
         tool_names = {call[0][0].original_name for call in mock_db.add.call_args_list}
-        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1"}
+        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1", "pkg.ServiceB.MethodB2"}
 
     def test_sync_tools_skips_underscore_keys(self, service, mock_db, sample_db_service):
         """Test that _sync_tools_from_reflection skips _-prefixed keys like _file_descriptors."""
@@ -1185,9 +1184,8 @@ class TestGrpcService:
         mock_ep_instance.close.assert_not_called()
 
     @patch("mcpgateway.services.grpc_service.grpc")
-    @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
     @patch("mcpgateway.services.grpc_service.reflection_pb2")
-    async def test_perform_reflection_stores_file_descriptor_bytes(self, mock_reflection_pb2, mock_reflection_pb2_grpc, mock_grpc, service, mock_db, sample_db_service):
+    async def test_perform_reflection_stores_file_descriptor_bytes(self, mock_reflection_pb2, mock_grpc, service, mock_db, sample_db_service):
         """Test that reflection normalizes descriptor bytes into an artifact."""
         # Build a real serialized FileDescriptorProto
         fd_proto = FileDescriptorProto()
@@ -1217,12 +1215,14 @@ class TestGrpcService:
         fd_resp.HasField = lambda f: f == "file_descriptor_response"
         fd_resp.file_descriptor_response.file_descriptor_proto = [proto_bytes]
 
-        mock_stub = MagicMock()
-        # First call: list services, second call: file descriptor
-        mock_stub.ServerReflectionInfo = MagicMock(side_effect=[iter([list_resp]), iter([fd_resp])])
-        mock_reflection_pb2_grpc.ServerReflectionStub.return_value = mock_stub
+        async def collect(_channel, requests, timeout=None, metadata=None):
+            """Serve the list request first, then the descriptor request."""
+            request = requests[0]
+            if getattr(request, "list_services", None) is not None:
+                return [list_resp]
+            return [fd_resp]
 
-        mock_grpc.insecure_channel.return_value = MagicMock()
+        mock_grpc.aio.insecure_channel.return_value = MagicMock()
 
         # The candidate artifact must look non-empty so activation proceeds past the guard.
         candidate_artifact = MagicMock()
@@ -1238,7 +1238,10 @@ class TestGrpcService:
         }
 
         # Patch persistence while still verifying the normalized protoset payload.
-        with patch.object(service, "_sync_tools_from_reflection"), patch("mcpgateway.services.grpc_service.GrpcSchemaService.import_artifact") as import_artifact:
+        mock_reflection_pb2.ServerReflectionRequest = _FakeReflectionRequest
+        with patch.object(service, "_sync_tools_from_reflection"), patch(
+            "mcpgateway.translate_grpc._collect_reflection_responses", collect
+        ), patch("mcpgateway.services.grpc_service.GrpcSchemaService.import_artifact") as import_artifact:
             import_artifact.return_value = candidate_artifact
             await service._perform_reflection(mock_db, sample_db_service)
 
@@ -1277,8 +1280,25 @@ def _fds(*method_names):
     return [fd_proto.SerializeToString()], descriptor_set.SerializeToString()
 
 
-def _reflection_stub(fd_bytes_list):
-    """Build a ServerReflectionStub double listing one service with the given descriptor bytes."""
+class _FakeReflectionRequest:
+    """Minimal stand-in for ServerReflectionRequest (design §53)."""
+
+    def __init__(self, list_services=None, file_containing_symbol=None):
+        """Record whichever reflection field the caller asked for."""
+        self.list_services = list_services
+        self.file_containing_symbol = file_containing_symbol
+
+
+FAKE_REFLECTION_PB2 = SimpleNamespace(ServerReflectionRequest=_FakeReflectionRequest)
+
+
+def _reflection_responses(fd_bytes_list):
+    """Build an aio reflection double listing one service with the given descriptor bytes.
+
+    The sync ``ServerReflectionStub`` is gone with the grpc.aio migration
+    (design §53): reflection is now one generic bidi exchange per request, so
+    the double answers the list request first and the descriptor request next.
+    """
     list_resp = MagicMock()
     list_resp.HasField = lambda field: field == "list_services_response"
     svc_info = MagicMock()
@@ -1289,9 +1309,23 @@ def _reflection_stub(fd_bytes_list):
     fd_resp.HasField = lambda field: field == "file_descriptor_response"
     fd_resp.file_descriptor_response.file_descriptor_proto = fd_bytes_list
 
-    stub = MagicMock()
-    stub.ServerReflectionInfo = MagicMock(side_effect=[iter([list_resp]), iter([fd_resp])])
-    return stub
+    async def collect(_channel, requests, timeout=None, metadata=None):
+        """Return the descriptor response for a file request, list otherwise."""
+        request = requests[0]
+        if getattr(request, "list_services", None) is not None:
+            return [list_resp]
+        return [fd_resp]
+
+    return collect
+
+
+def _reflection_raises(exc):
+    """Build an aio reflection double that always fails."""
+
+    async def collect(_channel, _requests, timeout=None, metadata=None):
+        raise exc
+
+    return collect
 
 
 class TestReflectionPublicationProtection:
@@ -1302,12 +1336,10 @@ class TestReflectionPublicationProtection:
         monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _target: None)
 
     async def _reflect(self, test_db, service, fd_bytes_list):
-        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch(
-            "mcpgateway.services.grpc_service.reflection_pb2_grpc"
-        ) as mock_pb2_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2"):
-            mock_pb2_grpc.ServerReflectionStub.return_value = _reflection_stub(fd_bytes_list)
-            mock_grpc.insecure_channel.return_value = MagicMock()
-            await GrpcService()._perform_reflection(test_db, service)
+        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2", FAKE_REFLECTION_PB2):
+            mock_grpc.aio.insecure_channel.return_value = MagicMock()
+            with patch("mcpgateway.translate_grpc._collect_reflection_responses", _reflection_responses(fd_bytes_list)):
+                await GrpcService()._perform_reflection(test_db, service)
 
     @pytest.mark.asyncio
     async def test_reflection_success_publishes_candidate_then_activates_and_syncs(self, test_db):
@@ -1360,17 +1392,13 @@ class TestReflectionPublicationProtection:
         test_db.commit()
         tool_id = tool.id
 
-        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch(
-            "mcpgateway.services.grpc_service.reflection_pb2_grpc"
-        ) as mock_pb2_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2"), patch.object(
+        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2"), patch.object(
             GrpcService, "_sync_tools_from_reflection"
         ) as mock_sync:
-            mock_stub = MagicMock()
-            mock_stub.ServerReflectionInfo = MagicMock(side_effect=RuntimeError("connection jitter"))
-            mock_pb2_grpc.ServerReflectionStub.return_value = mock_stub
-            mock_grpc.insecure_channel.return_value = MagicMock()
-            with pytest.raises(RuntimeError, match="connection jitter"):
-                await GrpcService()._perform_reflection(test_db, service)
+            mock_grpc.aio.insecure_channel.return_value = MagicMock()
+            with patch("mcpgateway.translate_grpc._collect_reflection_responses", _reflection_raises(RuntimeError("connection jitter"))):
+                with pytest.raises(RuntimeError, match="connection jitter"):
+                    await GrpcService()._perform_reflection(test_db, service)
 
         mock_sync.assert_not_called()
         test_db.refresh(service)
@@ -1469,15 +1497,11 @@ class TestReflectionPublicationProtection:
         test_db.add(service)
         test_db.commit()
 
-        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch(
-            "mcpgateway.services.grpc_service.reflection_pb2_grpc"
-        ) as mock_pb2_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2"):
-            mock_stub = MagicMock()
-            mock_stub.ServerReflectionInfo = MagicMock(side_effect=RuntimeError("jitter"))
-            mock_pb2_grpc.ServerReflectionStub.return_value = mock_stub
-            mock_grpc.insecure_channel.return_value = MagicMock()
-            with pytest.raises(RuntimeError):
-                await GrpcService()._perform_reflection(test_db, service)
+        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2", FAKE_REFLECTION_PB2):
+            mock_grpc.aio.insecure_channel.return_value = MagicMock()
+            with patch("mcpgateway.translate_grpc._collect_reflection_responses", _reflection_raises(RuntimeError("jitter"))):
+                with pytest.raises(RuntimeError):
+                    await GrpcService()._perform_reflection(test_db, service)
         test_db.refresh(service)
         assert service.reachable is False
         assert "jitter" in service.last_reflection_error

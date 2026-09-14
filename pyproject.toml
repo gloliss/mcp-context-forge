@@ -270,6 +270,19 @@ templating = [
     "cookiecutter>=2.7.1",
 ]
 
+# XML / XSD support (PR4).  Design-document §29 keeps SOAP out of this
+# extra: the SOAP extra pulls in zeep on top of xmlschema separately.
+xml = [
+    "xmlschema>=4.3.0",
+]
+
+# SOAP / WSDL support (PR5).  Design-document §35 adds zeep as an optional
+# dependency; it is used for WSDL parsing only, never for the business
+# call chain (design §32).
+soap = [
+    "zeep>=4.3.0",
+]
+
 # External plugin packages (optional)
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
@@ -727,6 +740,7 @@ markers = [
     "iframe: marks tests that run inside an iframe host page",
     "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
+    "contracts: marks HTTP contract tests (require a live gateway; set CONTRACT_BASE_URL)",
 ]
 
 # Playwright-specific test discovery patterns

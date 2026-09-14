@@ -55,6 +55,10 @@ class HttpBodyVariant:
         required: Whether the enclosing requestBody marks itself required.
         schema_ref: The original ``$ref`` string (post-materialization),
             kept for provenance only.
+        xsd: An XSD binding for this body (design §27), or ``None`` when the
+            contract declares no XML schema.  Carried as a typed field rather
+            than a vendor extension so the compiler can put it in
+            ``protocol_config`` without re-reading the document.
     """
 
     media_type: str
@@ -62,6 +66,7 @@ class HttpBodyVariant:
     schema: dict[str, Any] | None
     required: bool = False
     schema_ref: str | None = None
+    xsd: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -92,12 +97,14 @@ class HttpResponseVariant:
         media_type: The media type.
         schema: Resolved schema fragment (None for empty bodies).
         description: Contract-provided response description.
+        xsd: An XSD binding for this response body (design §27), or ``None``.
     """
 
     status_code: str
     media_type: str
     schema: dict[str, Any] | None
     description: str | None = None
+    xsd: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +114,12 @@ class HttpResponseContract:
     Attributes:
         variants: All response variants across status codes, in contract
             order (2xx first for determinism, then others).
+        codec: The codec the contract requires for decoding the response,
+            or ``None`` to let the runtime resolve one from the response
+            ``Content-Type`` (design §70).  A SOAP operation pins ``"soap"``
+            here: SOAP 1.1 responses arrive as ``text/xml``, which would
+            otherwise decode as plain XML and hide a Fault.
     """
 
     variants: tuple[HttpResponseVariant, ...] = ()
+    codec: str | None = None

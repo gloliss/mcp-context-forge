@@ -2900,7 +2900,7 @@ class ToolService(BaseService):
                         try:
                             auth_value_changed = decode_auth(existing_tool.auth_value) != decode_auth(auth_value)
                         except Exception:  # pragma: no cover - defensive fallback for malformed legacy values
-                            pass
+                            logger.debug("Falling back to raw auth_value comparison", exc_info=True)
                     if existing_tool.auth_value != auth_value:
                         existing_tool.auth_value = auth_value
                     semantic_changed = semantic_changed or auth_value_changed
@@ -4191,7 +4191,10 @@ class ToolService(BaseService):
                             "mcp.tool.name": remote_name,
                             "contextforge.gateway_id": str(gateway.id),
                             "contextforge.runtime": "python",
-                            "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
+                            # ``tool_result`` is bound by every branch of the two context managers
+                            # above (registry vs. direct, with and without request meta); pylint
+                            # loses track of it across the nested ``async with`` scopes.
+                            "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),  # pylint: disable=possibly-used-before-assignment
                         },
                     ):
                         pass
@@ -5554,6 +5557,7 @@ class ToolService(BaseService):
         db: Session,
         name: str,
         arguments: Dict[str, Any],
+        *,
         request_headers: Optional[Dict[str, str]] = None,
         app_user_email: Optional[str] = None,
         user_email: Optional[str] = None,
@@ -8097,7 +8101,7 @@ class ToolService(BaseService):
                         try:
                             auth_value_changed = decode_auth(tool.auth_value) != decode_auth(tool_update.auth.auth_value)
                         except Exception:  # pragma: no cover - defensive fallback for malformed legacy values
-                            pass
+                            logger.debug("Falling back to raw auth_value comparison", exc_info=True)
                     if auth_value_changed:
                         tool.auth_value = tool_update.auth.auth_value
                         semantic_changed = True

@@ -12,9 +12,9 @@ retrieval, updates, activation toggling, and deletion.
 
 # Standard
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone
+import inspect
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
@@ -22,7 +22,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 try:
     # Third-Party
     import grpc
-    from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
+    from grpc_reflection.v1alpha import reflection_pb2
 
     GRPC_AVAILABLE = True
 except ImportError:
@@ -30,7 +30,6 @@ except ImportError:
     # grpc module will not be used if not available
     grpc = None  # type: ignore
     reflection_pb2 = None  # type: ignore
-    reflection_pb2_grpc = None  # type: ignore
 
 # Third-Party
 from google.protobuf.descriptor_pb2 import FileDescriptorSet
@@ -48,6 +47,9 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_child_span
+from mcpgateway.protocols.contracts.models import OperationDefinition
+from mcpgateway.protocols.grpc.adapter import GrpcProtocolAdapter
+from mcpgateway.protocols.grpc.stream import StreamLimiter, item_size
 from mcpgateway.schemas import GrpcSchemaDiff, GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -97,6 +99,28 @@ def _decrypt_metadata(metadata: Dict[str, str]) -> Dict[str, str]:
     return decrypted
 
 
+def _resolve_grpc_metadata(service: Any, metadata_override: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Resolve the unified outbound gRPC metadata (design §41).
+
+    Reflection requests, health checks, and business RPCs all use the same
+    per-service metadata source (the encrypted ``grpc_metadata`` column,
+    fed from ``metadata_env`` in YAML manifests), plus an optional
+    invocation-time override.  There is deliberately no separate
+    ``reflection_metadata`` field (§41).
+
+    Args:
+        service: The ``DbGrpcService`` (or duck-typed snapshot).
+        metadata_override: Optional per-invocation metadata to merge on top.
+
+    Returns:
+        The decrypted, merged metadata mapping.
+    """
+    metadata = _decrypt_metadata(getattr(service, "grpc_metadata", None) or {})
+    if metadata_override:
+        metadata = {**metadata, **metadata_override}
+    return metadata
+
+
 def _masked_call_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     """Mask sensitive response metadata before returning debugger diagnostics."""
     result: Dict[str, Any] = {"status": metadata.get("status")}
@@ -104,6 +128,107 @@ def _masked_call_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
         values = metadata.get(section) or {}
         result[section] = {key: ["********"] if any(fragment in key.lower() for fragment in _SENSITIVE_METADATA_FRAGMENTS) else value for key, value in values.items()}
     return result
+
+
+# gRPC StatusCode → canonical ErrorCategory (design §55/§73).
+_GRPC_STATUS_TO_CATEGORY = {
+    "INVALID_ARGUMENT": "INVALID_ARGUMENT",
+    "FAILED_PRECONDITION": "FAILED_PRECONDITION",
+    "OUT_OF_RANGE": "INVALID_ARGUMENT",
+    "UNAUTHENTICATED": "UNAUTHENTICATED",
+    "PERMISSION_DENIED": "PERMISSION_DENIED",
+    "NOT_FOUND": "NOT_FOUND",
+    "ALREADY_EXISTS": "CONFLICT",
+    "ABORTED": "CONFLICT",
+    "RESOURCE_EXHAUSTED": "RATE_LIMITED",
+    "UNAVAILABLE": "UNAVAILABLE",
+    "DEADLINE_EXCEEDED": "UNAVAILABLE",
+    "CANCELLED": "UNAVAILABLE",
+    "UNKNOWN": "UPSTREAM_ERROR",
+    "INTERNAL": "INTERNAL",
+    "UNIMPLEMENTED": "UNSUPPORTED",
+}
+
+
+def map_grpc_status_to_category(code: Any) -> str:
+    """Map a gRPC status code to a canonical error category (design §55/§73).
+
+    Args:
+        code: A ``grpc.StatusCode`` (or its ``.name`` string).
+
+    Returns:
+        The canonical ``ErrorCategory`` value.
+    """
+    name = getattr(code, "name", str(code)) if code is not None else "UNKNOWN"
+    return _GRPC_STATUS_TO_CATEGORY.get(name, "UPSTREAM_ERROR")
+
+
+def parse_grpc_status_details(trailing_metadata: Any) -> Optional[Any]:
+    """Parse ``grpc-status-details-bin`` into a ``google.rpc.Status`` (design §55).
+
+    Args:
+        trailing_metadata: An iterable of ``(key, value)`` trailer pairs,
+            or an object with an ``items()``/iteration that yields pairs.
+
+    Returns:
+        The parsed ``google.rpc.Status``, or ``None`` when absent/unparseable.
+    """
+    try:
+        from google.rpc import status_pb2  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        return None
+
+    value = None
+    for item in trailing_metadata or ():
+        try:
+            key, val = item
+        except (TypeError, ValueError):
+            continue
+        if key and str(key).lower() == "grpc-status-details-bin":
+            value = val
+            break
+    if value is None:
+        return None
+    # Binary gRPC metadata arrives base64-encoded on the wire, but client
+    # libraries decode ``-bin`` keys before exposing trailers.  Try both.
+    candidates = [value]
+    if isinstance(value, (bytes, bytearray)) and value:
+        try:
+            import base64  # pylint: disable=import-outside-toplevel
+
+            candidates.append(base64.b64decode(value, validate=False))
+        except Exception:  # pylint: disable=broad-except  # nosec B110 - an undecodable candidate is expected; the raw value is still tried below
+            pass
+    for candidate in candidates:
+        try:
+            status = status_pb2.Status()
+            status.ParseFromString(candidate)
+            return status
+        except Exception:  # pylint: disable=broad-except  # nosec B112 - trying the next candidate is the point of this loop
+            continue
+    return None
+
+
+def _stream_policy(service: Any) -> Dict[str, Any]:
+    """Return the stream policy in the shape ``StreamLimiter`` expects (§44).
+
+    The service's ``runtime_config.streaming`` uses camelCase keys and
+    milliseconds; the limiter takes snake_case and seconds.  Projecting here
+    keeps one translation point instead of threading the raw policy into the
+    adapter.
+
+    Args:
+        service: The registered gRPC service row.
+
+    Returns:
+        A ``StreamLimiter`` keyword mapping.
+    """
+    streaming = (service.runtime_config or {}).get("streaming") or {}
+    return {
+        "max_items": int(streaming.get("maxItems", 100)),
+        "max_bytes": int(streaming.get("maxBytes", 0)),
+        "idle_timeout": float(streaming.get("idleTimeoutMs", 0)) / 1000.0,
+    }
 
 
 def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
@@ -126,22 +251,51 @@ def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
         raise GrpcServiceError(f"Reflected descriptor total size {total} bytes exceeds aggregate limit {_GRPC_MAX_TOTAL_DESCRIPTOR_BYTES}")
 
 
-def _collect_reflection_descriptors(channel: Any, timeout_seconds: float) -> set[bytes]:
-    """Collect reflection descriptors on a worker thread under one deadline."""
+async def _collect_reflection_descriptors_async(channel: Any, timeout_seconds: float, metadata: Optional[Dict[str, str]] = None) -> set[bytes]:
+    """Collect reflection descriptors over an aio channel under one deadline.
+
+    A single absolute budget is shared by the service listing and every detail
+    request, so N advertised services cannot multiply the configured timeout.
+    Reflection runs on the transport itself (design §53) rather than on a
+    worker thread, which also lets a caller's cancellation reach the RPC.
+
+    Args:
+        channel: An established ``grpc.aio`` channel.
+        timeout_seconds: The shared reflection budget in seconds.
+        metadata: Unified metadata (design §41): reflection requests carry the
+            same per-service metadata as business RPCs.
+
+    Returns:
+        The set of reflected ``FileDescriptorProto`` serialisations.
+
+    Raises:
+        TimeoutError: When the shared budget is exhausted.
+    """
     deadline = time.monotonic() + timeout_seconds
 
     def remaining() -> float:
+        """Return the seconds left in the shared reflection budget.
+
+        Returns:
+            The remaining budget in seconds.
+
+        Raises:
+            TimeoutError: When the budget is exhausted.
+        """
         value = deadline - time.monotonic()
         if value <= 0:
             raise TimeoutError("gRPC reflection deadline exceeded")
         return value
 
-    stub = reflection_pb2_grpc.ServerReflectionStub(channel)
+    # Unified metadata (design §41): reflection requests carry the same
+    # per-service metadata as business RPCs.
+    metadata_tuple = tuple((str(k), str(v)) for k, v in (metadata or {}).items()) or None
+
     request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
-    response = stub.ServerReflectionInfo(iter([request]), timeout=remaining())
+    responses = await translate_grpc._collect_reflection_responses(channel, [request], timeout=remaining(), metadata=metadata_tuple)  # pylint: disable=protected-access
 
     service_names: List[str] = []
-    for item in response:
+    for item in responses:
         remaining()
         if item.HasField("list_services_response"):
             for reflected_service in item.list_services_response.service:
@@ -152,8 +306,8 @@ def _collect_reflection_descriptors(channel: Any, timeout_seconds: float) -> set
     for service_name in service_names:
         file_request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
         try:
-            file_response = stub.ServerReflectionInfo(iter([file_request]), timeout=remaining())
-            for item in file_response:
+            file_responses = await translate_grpc._collect_reflection_responses(channel, [file_request], timeout=remaining(), metadata=metadata_tuple)  # pylint: disable=protected-access
+            for item in file_responses:
                 remaining()
                 if item.HasField("file_descriptor_response"):
                     descriptor_bytes.update(item.file_descriptor_response.file_descriptor_proto)
@@ -165,26 +319,6 @@ def _collect_reflection_descriptors(channel: Any, timeout_seconds: float) -> set
             logger.warning("Failed to get reflection details for %s: %s", service_name, exc)
 
     return descriptor_bytes
-
-
-async def _collect_reflection_descriptors_async(channel: Any, timeout_seconds: float) -> set[bytes]:
-    """Run blocking reflection without occupying the application event loop."""
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="grpc-reflection")
-    future = executor.submit(_collect_reflection_descriptors, channel, timeout_seconds)
-    deadline = time.monotonic() + timeout_seconds
-    try:
-        # Poll the concurrent future instead of relying on a loop cross-thread
-        # callback. This also remains deterministic in restricted runtimes where
-        # the loop's self-pipe notification is unavailable.
-        while not future.done():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                future.cancel()
-                raise TimeoutError("gRPC reflection deadline exceeded")
-            await asyncio.sleep(min(0.01, remaining))
-        return future.result()
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _validate_reflected_tool_name(tool_name: str) -> None:
@@ -416,6 +550,7 @@ class GrpcService:
             tls_cert_path=service_data.tls_cert_path,
             tls_key_path=service_data.tls_key_path,
             grpc_metadata=_encrypt_metadata(service_data.grpc_metadata or {}),
+            runtime_config=service_data.runtime_config,
             discovery_mode=service_data.discovery_mode,
             health_check_enabled=service_data.health_check_enabled,
             health_check_interval=service_data.health_check_interval,
@@ -639,9 +774,7 @@ class GrpcService:
 
         # Check name conflict if name is being changed
         if service_data.name and service_data.name != service.name:
-            existing = db.execute(
-                select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))
-            ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+            existing = db.execute(select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))).scalar_one_or_none()  # pylint: disable=comparison-with-callable
 
             if existing:
                 raise GrpcServiceNameConflictError(name=service_data.name, is_active=existing.enabled, service_id=existing.id)
@@ -909,9 +1042,9 @@ class GrpcService:
                 # Use default system certificates
                 credentials = grpc.ssl_channel_credentials()
 
-            channel = grpc.secure_channel(service.target, credentials)
+            channel = grpc.aio.secure_channel(service.target, credentials)
         else:
-            channel = grpc.insecure_channel(service.target)
+            channel = grpc.aio.insecure_channel(service.target)
 
         reflection_outcome = "error"
         span_context = create_child_span(
@@ -924,7 +1057,10 @@ class GrpcService:
             # loop, with one absolute budget shared by listing and every detail
             # request so N services cannot multiply the configured timeout.
             reflection_timeout = float(settings.mcpgateway_grpc_timeout)
-            file_descriptor_bytes_set = await _collect_reflection_descriptors_async(channel, reflection_timeout)
+            # Unified metadata (§41): reflection requests carry the same
+            # per-service metadata as business RPCs (from grpc_metadata /
+            # metadata_env), so auth-gated reflection works out of the box.
+            file_descriptor_bytes_set = await _collect_reflection_descriptors_async(channel, reflection_timeout, metadata=_resolve_grpc_metadata(service))
 
             _enforce_descriptor_limits(file_descriptor_bytes_set)
 
@@ -996,7 +1132,9 @@ class GrpcService:
             raise
 
         finally:
-            channel.close()
+            closed = channel.close()
+            if inspect.isawaitable(closed):
+                await closed
             grpc_reflection_counter.labels(service=service.slug, outcome=reflection_outcome).inc()
             span_context.__exit__(*sys.exc_info())
 
@@ -1065,23 +1203,6 @@ class GrpcService:
                 continue
             for method in svc_desc.get("methods", []):
                 tool_name = f"{svc_name}.{method['name']}"
-                # Client-streaming and bidi methods remain visible in the gRPC
-                # catalog but are intentionally not executable MCP tools.
-                if method.get("client_streaming"):
-                    existing_tool = existing_tools_map.get(tool_name)
-                    if existing_tool:
-                        changed = False
-                        if existing_tool.enabled or not existing_tool.deprecated:
-                            existing_tool.enabled = False
-                            existing_tool.deprecated = True
-                            changed = True
-                        if active_artifact_id is not None and existing_tool.grpc_schema_artifact_id != active_artifact_id:
-                            existing_tool.grpc_schema_artifact_id = active_artifact_id
-                            changed = True
-                        if changed:
-                            existing_tool.version = (existing_tool.version or 1) + 1
-                            changed_tools.append(existing_tool)
-                    continue
                 # Per-tool try/except: a single bad method must not poison the whole sync.
                 try:
                     _validate_reflected_tool_name(tool_name)
@@ -1290,6 +1411,7 @@ class GrpcService:
         call_deadline = call_started + effective_timeout
 
         def remaining_timeout() -> float:
+            """Return the seconds left before this invocation's deadline."""
             remaining = call_deadline - time.monotonic()
             if remaining <= 0:
                 raise asyncio.TimeoutError
@@ -1319,7 +1441,14 @@ class GrpcService:
                 # classes. Reflection-only services deliberately keep a fresh pool
                 # per call so a live schema change cannot collide with descriptors
                 # already loaded by a prior invocation on the same channel.
-                metadata_decrypted = _decrypt_metadata(service.grpc_metadata or {})
+                metadata_decrypted = _resolve_grpc_metadata(service)
+                # The cached channel is a grpc.aio channel and therefore bound
+                # to this event loop, so the loop is part of the cache identity
+                # (design §53).
+                try:
+                    loop_id: Optional[int] = id(asyncio.get_running_loop())
+                except RuntimeError:
+                    loop_id = None
                 cache_key = runtime_cache.key_for(
                     service.id,
                     getattr(service, "active_schema_hash", None) or getattr(service, "reflected_schema_hash", None),
@@ -1328,6 +1457,7 @@ class GrpcService:
                     service.tls_cert_path,
                     service.tls_key_path,
                     metadata_decrypted,
+                    loop_id,
                 )
                 cache_entry = runtime_cache.acquire(
                     cache_key,
@@ -1355,7 +1485,7 @@ class GrpcService:
                     tls_enabled=service.tls_enabled,
                     tls_cert_path=service.tls_cert_path,
                     tls_key_path=service.tls_key_path,
-                    metadata={**_decrypt_metadata(service.grpc_metadata or {}), **(metadata_override or {})},
+                    metadata=_resolve_grpc_metadata(service, metadata_override),
                 )
 
             # Both the asyncio wrapper AND the underlying gRPC call get the deadline so a slow
@@ -1369,33 +1499,40 @@ class GrpcService:
                 endpoint._services = {k: v for k, v in discovered.items() if not k.startswith("_")}  # pylint: disable=protected-access
 
             method_info = next((item for item in discovered.get(service_name, {}).get("methods", []) if item.get("name") == method), None)
-            if method_info and method_info.get("client_streaming"):
-                raise GrpcServiceError("Client-streaming and bidirectional gRPC methods are not supported")
-            if method_info and method_info.get("server_streaming"):
+            # The choice of RPC class lives in GrpcProtocolAdapter (design §47):
+            # whichever entry point a call arrives through, there is exactly one
+            # implementation of "which of the four modes is this" and of the
+            # bounded-stream policy (§52).  This method keeps what the adapter
+            # must not own — endpoint lifecycle, the runtime cache, and the
+            # service-level metrics.
+            adapter = GrpcProtocolAdapter(endpoint, default_limiter=StreamLimiter(**_stream_policy(service), serialize=item_size))
+            operation = OperationDefinition(
+                key=f"{service_name}.{method}",
+                protocol="grpc",
+                source_operation_id=method,
+                request={
+                    "service_name": service_name,
+                    "method": method,
+                    "client_streaming": bool(method_info.get("client_streaming")) if method_info else False,
+                    "server_streaming": bool(method_info.get("server_streaming")) if method_info else False,
+                },
+                extensions={"streaming": _stream_policy(service)},
+            )
 
-                async def collect_stream() -> Dict[str, Any]:
-                    """Collect at most 100 server-stream items before returning to MCP."""
-                    items: List[Dict[str, Any]] = []
-                    truncated = False
-                    async for item in endpoint.invoke_streaming(service_name, method, request_data, timeout=remaining_timeout()):
-                        if len(items) >= 100:
-                            truncated = True
-                            break
-                        items.append(item)
-                        if stream_callback is not None:
-                            await stream_callback(item)
-                    return {"items": items, "truncated": truncated}
+            async def dispatch() -> Dict[str, Any]:
+                """Run the call through the adapter under the shared deadline."""
+                result = await adapter.invoke_via_endpoint(
+                    operation,
+                    request_data,
+                    timeout=remaining_timeout(),
+                    stream_callback=stream_callback,
+                )
+                dispatched = result.data
+                if capture_call_metadata and isinstance(dispatched, dict):
+                    dispatched = {**dispatched, "_grpc": _masked_call_metadata(endpoint.get_call_metadata())}
+                return dispatched
 
-                response = await asyncio.wait_for(collect_stream(), timeout=remaining_timeout())
-                if capture_call_metadata:
-                    response["_grpc"] = _masked_call_metadata(endpoint.get_call_metadata())
-                grpc_status = "OK"
-                return response
-
-            invoke_timeout = remaining_timeout()
-            response = await asyncio.wait_for(endpoint.invoke(service_name, method, request_data, timeout=invoke_timeout), timeout=invoke_timeout)
-            if capture_call_metadata:
-                response = {**response, "_grpc": _masked_call_metadata(endpoint.get_call_metadata())}
+            response = await asyncio.wait_for(dispatch(), timeout=remaining_timeout())
             grpc_status = "OK"
             return response
 
@@ -1408,12 +1545,19 @@ class GrpcService:
         except (GrpcServiceNotFoundError, GrpcServiceError):
             raise
         except Exception as e:
+            enriched = None
             if GRPC_AVAILABLE and isinstance(e, grpc.RpcError):
                 status = e.code()  # pylint: disable=no-member
                 if status is not None:
                     grpc_status = getattr(status, "name", str(status))
+                # design §55: enrich with google.rpc.Status from grpc-status-details-bin
+                trailing = e.trailing_metadata() if hasattr(e, "trailing_metadata") else None  # pylint: disable=no-member
+                details = parse_grpc_status_details(trailing)
+                if details is not None and details.message:
+                    enriched = details.message
             logger.error("Failed to invoke %s on %s: %s", method_name, service.name, e, exc_info=True)
-            raise GrpcServiceError(f"Method invocation failed: {e}") from e
+            suffix = f": {enriched}" if enriched else ""
+            raise GrpcServiceError(f"Method invocation failed: {e}{suffix}") from e
 
         finally:
             grpc_status_context.set(grpc_status)

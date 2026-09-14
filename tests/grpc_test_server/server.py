@@ -102,6 +102,46 @@ class EchoService(echo_pb2_grpc.EchoServiceServicer):
             result=f"v2: {request.name}={request.value} prio={request.priority}",
         )
 
+    def EchoSlowStream(self, request, context):
+        """Yield 5 chunks one second apart, for cancellation testing."""
+        for index in range(1, 6):
+            if not context.is_active():
+                # The client cancelled (design §54): stop rather than keep the
+                # server busy producing chunks nobody will read.
+                logger.info("EchoSlowStream: cancelled after %d chunks", index - 1)
+                return
+            time.sleep(1)
+            yield echo_pb2.EchoResponse(
+                message=f"slow chunk {index}: {request.message}",
+                value=request.value,
+                server_id=SERVER_ID,
+            )
+
+    def EchoClientStream(self, request_iterator, context):
+        """Concatenate every request chunk into a single response."""
+        messages = []
+        total = 0
+        for request in request_iterator:
+            messages.append(request.message)
+            total += request.value
+        logger.info("EchoClientStream: chunks=%d", len(messages))
+        return echo_pb2.EchoResponse(
+            message="+".join(messages),
+            value=total,
+            server_id=SERVER_ID,
+        )
+
+    def EchoBidiStream(self, request_iterator, context):
+        """Echo each request chunk back as it arrives."""
+        for request in request_iterator:
+            if context.is_active() is False:  # pragma: no cover - client cancelled
+                return
+            yield echo_pb2.EchoResponse(
+                message=request.message,
+                value=request.value,
+                server_id=SERVER_ID,
+            )
+
     def EchoLarge(self, request, context):
         """Echo back large payload with size verification."""
         logger.info("EchoLarge: size=%d marker=%r", request.size, request.marker)
