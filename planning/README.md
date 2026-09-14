@@ -28,17 +28,19 @@ Phase 4  Production    [PR8 Production Hardening]
 | PR5 | [pr5-soap-wsdl.md](pr5-soap-wsdl.md) | [pr5-soap-wsdl-test.md](pr5-soap-wsdl-test.md) | 全量完成 |
 | PR6 | [pr6-grpc-correctness.md](pr6-grpc-correctness.md) | [pr6-grpc-correctness-test.md](pr6-grpc-correctness-test.md) | 全量完成 |
 | PR7 | [pr7-grpc-streaming-aio.md](pr7-grpc-streaming-aio.md) | [pr7-grpc-streaming-aio-test.md](pr7-grpc-streaming-aio-test.md) | 全量完成 |
-| PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | [pr8-production-hardening-test.md](pr8-production-hardening-test.md) | T8.1–8.4/8.6/8.7 完成；T8.5a/b 已由 PR3 覆盖 |
+| PR8 | [pr8-production-hardening.md](pr8-production-hardening.md) | [pr8-production-hardening-test.md](pr8-production-hardening-test.md) | 全量完成（T8.5a/b 已由 PR3 覆盖） |
 
-## 总任务状态（截至 2026-09-10）
+## 总任务状态（截至 2026-09-14）
 
 - **已完成**：T4.1–4.7、T5.1–5.6、T6.1–6.9、T7.1–7.9、T8.1–8.4/8.6/8.7（**规划内任务已全部完成**）
 - **PR3 已实现（不重复做）**：T8.5a/T8.5b（§66 SafeReferenceFetcher/ContractArtifactResolver 在 `services/safe_reference_fetcher.py`）
+- **既有技术债清理（`39062d5`，非规划内）**：ruff 6 → 0；bandit 7（1×B101、2×B105、4×B110）→ 0；pylint 7 项 E-level → 0（评分 9.99 → 10.00/10）；`test_session_registry{,_coverage}.py` 中导致 8 个 ERROR 的死 fixture `stub_services` 已删除。
+- **分支状态**：已 rebase 到 `main@0b9ddd8`（36 个提交，36/36 带 DCO 签名，与 main 齐平）。
 
-## 本地验证基线（2026-09-10）
+## 本地验证基线（2026-09-14）
 
 - **单元**：protocols（codecs/contracts/http/grpc）、services（grpc_*、http_*、operation_tool_compiler、tool_service）全绿
-- **集成**（`--with-integration`，真实本地 upstream，非 mock）：**72 passed**（HTTP 20 含 manual XML manifest 3 例 + XML 8 + SOAP 3 + gRPC 43）
+- **集成**（`--with-integration`，真实本地 upstream，非 mock）：**74 passed**（HTTP 20 含 manual XML manifest 3 例 + XML 8 + SOAP 3 + gRPC 43）
 - **gRPC 集成**覆盖：反射全链、四类 RPC、取消传播、deadline、metadata 鉴权、无反射 proto 导入、schema 迁移、并发、大消息
 - 未走全量 `make test`（遵循「不要全量 pytest」约定）；E2E（双远端 → 镜像 → 容器 → 真实网关）由用户执行
 

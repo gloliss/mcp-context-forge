@@ -68,9 +68,9 @@
 
 **测试**
 - 单元 `tests/unit/mcpgateway/protocols/http/test_xsd_binding.py`（16 例）
-- 集成 `tests/integration/test_xml_http_full_chain.py`（5 例，真实本地 HTTP 端点）：conforming 往返、**请求体按 XSD 校验（不合规不发车）**、**响应按 XSD 校验（不合规不静默解码）**、conforming 响应带类型解码（`total` → int 7）、无绑定工具仍走 loose 路径（`total` → str "7"，对照说明绑定的价值）
+- 集成 `tests/integration/test_xml_http_full_chain.py`（8 例，真实本地 HTTP 端点）：conforming 往返、**请求体按 XSD 校验（不合规不发车）**、**响应按 XSD 校验（不合规不静默解码）**、conforming 响应带类型解码（`total` → int 7）、无绑定工具仍走 loose 路径（`total` → str "7"，对照说明绑定的价值）；`TestOpenApiXmlBinding` 另 3 例覆盖「OpenAPI 文档声明的 XML 操作同样携带 XSD 并端到端生效」
 
-**范围边界**：本次交付「XSD 绑定 → 运行时生效」这一实质链路。YAML manifest 中**显式声明** manual XML 操作（`spec.operations` 扩展 + 扫描建工具）尚未实现——现有 manifest 仅支持 `operations.include` 过滤 OpenAPI 发现的操作，属于独立的一段工作。
+**范围边界（本段）**：本次交付「XSD 绑定 → 运行时生效」这一实质链路。YAML manifest 中**显式声明** manual XML 操作（`spec.operations` 扩展 + 扫描建工具）在本段结束时尚未实现——现有 manifest 仅支持 `operations.include` 过滤 OpenAPI 发现的操作，属于独立的一段工作。**该缺口已在下一段（方案 B）关闭**，详见下文。
 
 ## T4.4 实施结果（第二段：manifest 声明 manual XML 操作，方案 B）
 
