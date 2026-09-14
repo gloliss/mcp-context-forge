@@ -55,6 +55,7 @@
 | 类型契约 | 结果用 `orjson.dumps(default=str)` 序列化（`:1055` 起） | DECIMAL/大整数按字符串保精度、日期 ISO 8601、NULL 保留、截断显式标注、未支持类型 `UNSUPPORTED_RESULT_TYPE` | 需专用结果序列化层 |
 | 连接池预算 | 池参数全局（`settings.mcpgateway_sql_pool_*`） | **每数据源**每进程独立池与总预算 | 需按源配置 |
 | 租户模式 | 无 `compat_mode` 概念 | `engine=oceanbase` + `compat_mode ∈ {mysql, oracle}` 必填 | 需新增建模 |
+| TLS 策略 | MySQL TLS **代码强制**：`_engine` 硬编码 `ssl={"check_hostname": True, "verify_mode": CERT_REQUIRED}`，且拒绝调用方通过 URL 传 `ssl_*`（`:193-194`） | `tls_config` 按环境配置、支持证书引用、**失败不自动降级** | 内网 OB 若未启用 TLS，现有路径**直接不可用** → 须改为按源可配 |
 | 查询模板 | 无 | `template_id` + 参数绑定 + 版本/启用状态 | 需新增建模与执行路径 |
 | 发布绑定 | `APISQLTableBinding`（工具↔表血缘，`binding_type=auto/manual`） | 数据源↔上游注册项↔工具↔虚拟服务关联 + 同步状态 | 需新增发布绑定模型 |
 
@@ -101,11 +102,32 @@ MySQL 模式考虑用独立连接对被取消查询执行 `KILL QUERY`；Oracle 
 **D9 — 与现有 SQL Data API 的关系：并存、互不复用执行路径。**
 OB 数据源不出现在 `/api/v1/data/*` 端点，也不使用 `sql.*` 工具命名空间，避免写路径与命名冲突。
 
+**D10 — TLS 按数据源可配，且不允许静默降级。**
+现有子系统对 MySQL 的 TLS 是**代码强制**的：`_engine` 硬编码 `ssl={"check_hostname": True, "verify_mode": ssl.CERT_REQUIRED}`，且 `validate_connection_url` 明确拒绝调用方通过 URL 传 `ssl_*`（`sql_data_service.py:193-194`，"MySQL TLS options must be configured by the gateway"）。内网 OB 若未启用 TLS，该路径直接不可用。OB 数据源因此把 TLS **降为按源配置**（需求 §4 `tls_config`）：可显式选择启用与否并配置证书引用；**探测可以报告 TLS 可用性，但连接失败不得自动回落明文**（需求 §4「连接失败不自动降级」），也不得静默更换端口或用户名格式重试。
+
+**D11 — 兼容模式采用「探测 → 声明 → 验证」三段式，探测不得冒充验证。**
+需求 §1 要求模式**必须显式配置**、§4 要求**必填**，而 OB02 又允许「自动读取」版本与模式。三者合起来的正确形态是：
+
+1. **探测**：测试连接从**适配服务所在环境**发起，完成 可达 → 认证 → 读取版本与兼容模式。
+2. **声明**：探测结果**回填**前端 `compat_mode` 字段，由管理员确认后保存，形成显式、带版本的配置记录（仍是「必填」，只是不用人工瞎猜）。
+3. **验证**：两道门同时成立才允许连接与发布——探测值 == 声明值（不符返回明确错误，OB02）；且声明值 ∈ `validated_compat_modes`（不在则界面标「不可用」、服务端拒绝连接与发布，§1）。
+4. **降级**：探测失败显示「未验证」并要求补充验证证据，**不得伪造检测成功**（OB02）。
+
+关键边界：探测只能回答「这个实例是什么」，**不能**回答「我们的驱动、超时与取消路径在该模式上是否可用」——后者是**代码能力**，必须实测。因此不得因探测到某模式就放行；需求 §9「仅凭『兼容 Oracle』不能认定原 Oracle 驱动和 SQL 可直接复用」正是这条。
+
+**D12 — 连接入口由前端录入，不做固定常量。**
+`host`/`port`/`connect_mode`/`username`/`database`/`schema` 与密码均由管理员在前端录入并按源保存（需求 OB01、§4），支持多个互相独立的数据源。两条实现约束：
+
+- **用户名原样保存**，不追加租户或集群名（需求 §4：「不能盲目追加租户或集群名」）；
+- **测试连接由适配服务发起，不是浏览器**（需求 OB02：「必须从适配服务所在运行环境发起」）——浏览器可达前端不等于适配服务可连通 OB，中间隔着网络放行。
+
 ## 4. 数据模型与迁移
 
 新增表（逻辑字段映射需求 §4「数据源最小字段」）：
 
-**`ob_data_sources`** — `source_id`（稳定唯一，`name` 变更不改编号）、`name`、`engine`（固定 `oceanbase`）、`compat_mode`（`mysql`|`oracle`，必填）、`host`/`port`（不写死默认端口）、`connect_mode`（`direct`|`obproxy`）、`username`、`database`、`schema`、`credential_ref`、`tls_config`、`allowed_objects`、`enabled_tools`、`query_mode`（`template_only`|`readonly_sql_and_template`）、`pool`/`timeouts`/`limits`、`session_settings`、`enabled`、`config_version`、`last_verified_at`/`last_verification_result`。
+**`ob_data_sources`** — `source_id`（稳定唯一，`name` 变更不改编号）、`name`、`engine`（固定 `oceanbase`）、`compat_mode`（`mysql`|`oracle`，必填；由探测回填 + 管理员确认，见 D11）、`host`/`port`（前端录入，不写死默认端口）、`connect_mode`（`direct`|`obproxy`）、`username`（**原样保存，不追加租户/集群名**）、`database`、`schema`、`credential_ref`（凭据引用，不存明文）、`tls_config`（**按源可配**，含是否启用与证书引用，见 D10）、`allowed_objects`、`enabled_tools`、`query_mode`（`template_only`|`readonly_sql_and_template`）、`pool`/`timeouts`/`limits`、`session_settings`、`enabled`、`config_version`、`last_verified_at`/`last_verification_result`（含探测到的版本与模式）。
+
+**部署级（非源级）配置 `validated_compat_modes`** — 本构建**已实测通过**的兼容模式集合。与源级 `compat_mode`（这个实例是什么）是两回事：前者是「我们行不行」，后者是「实例是什么」。放行为二者的交集（D11 第 3 步）。
 
 **`ob_query_templates`** — `template_id`、`name`、`description`、`compat_mode`、`sql`、参数类型与必填规则、结果字段说明、`version`、`enabled`。首版用受控配置文件或配置表维护即可，模板编辑器列入 P1。
 
@@ -183,17 +205,21 @@ OB 数据源不出现在 `/api/v1/data/*` 端点，也不使用 `sql.*` 工具�
 | R4 | 现有子系统客户端取消不终止 DB 查询（`tool_service.py:7273-7284`） | 资源泄漏与超额负载 | OB 适配器不复用该路径，独立实现取消通道 |
 | R5 | OB 系统库/同义词/跨 Schema 语义不明 | 元数据越界或误报 | 首版不开放无法解析的对象；访问语义需明确后再放开 |
 | R6 | 复用时误用 `APISQLTableBinding` 作发布授权 | 授权语义错误 | 明确其仅为血缘语义（`sql_data_service.py:1149-1158`），发布授权用新模型 |
+| R7 | 目标 OB 在内网，当前开发环境（隔离容器）不可达 | 无法自行验证；部署与测试位置受限 | 适配服务部署在内网可达侧；版本/模式由内网只读探针取得；L2/L3 测试落在内网（见 §11 补充说明） |
+| R8 | 把「探测到某模式」当成「我们已支持该模式」 | 未验证能力被开放给 Agent | 坚持 D11 三段式：声明值必须 ∈ `validated_compat_modes` 才放行 |
 
 ## 11. 待补输入（需求 §8，不阻塞先开发配置模型与工具契约）
 
 | 待补充信息 | 需要明确的内容 |
 |---|---|
-| OB 环境 | 版本及补丁、部署形态、租户模式，首版实际验收哪一种模式 |
-| 连接入口 | 直连或 OBProxy、地址端口、完整用户名格式、TLS 要求、网络放行路径 |
+| OB 环境 | 版本及补丁、部署形态、租户模式；首版实际验收哪一种模式（可由探针读取版本与模式，见下） |
+| 连接入口 | **连接参数本身由前端录入，不是待补的固定值**（D12）。这里真正需要的是三件代码替代不了的事：① 适配服务到 OB 的**网络放行路径**（环境准备）；② **一个经验证的连接样例**（A01 验收口径，含直连或 OBProxy、地址端口、完整用户名格式、TLS 要求）；③ **用户名格式语义**确认（OBProxy 与直连格式不同，代码原样保存不加工） |
 | 数据权限 | 专用查询账号、首批数据库/Schema、表视图范围、必要注释读取权限 |
-| 查询样例 | 至少 3 条已验证 SQL 与结果，覆盖普通查询、参数查询、一次关联或聚合 |
+| 查询样例 | 至少 3 条已验证 SQL 与结果，覆盖普通查询、参数查询、一次关联或聚合（最小样例可由探针在测试 schema 上产出） |
 | 发布环境 | 当前 ContextForge 分支及版本、扩展代码位置、部署方式、目标 Agent 与协议配置 |
 | 运行约束 | 并发量、数据库连接预算、结果上限、超时、日志保留要求 |
+
+补充说明（针对「OB 在内网、当前环境不可达」的情形）：版本与兼容模式可在**能访问该 OB 的机器**上以只读探针取得（连通性与 MySQL 协议握手是否成功本身就是最可靠的初级模式信号；具体读取语句需在目标实例上确认），随后据实测结果收敛首版验收模式。注意由此产生的部署约束：**适配服务必须部署在能访问 OB 的那一侧网络**，L2/L3 测试环境也随之落在内网。
 
 ## 12. 验证方式
 
