@@ -87,7 +87,7 @@ class _HealthChannel:
             try:
                 self.channel.close()
             except Exception:  # pylint: disable=broad-except
-                pass
+                logger.debug("Pooled gRPC channel close failed", exc_info=True)
             self.channel = None
 
 
@@ -407,7 +407,7 @@ class GrpcMonitoringService:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
         row = db.execute(
             select(
-                func.count().label("total"),
+                func.count().label("total"),  # pylint: disable=not-callable
                 func.sum(case((GrpcHealthSample.healthy.is_(True), 1), else_=0)).label("success"),
             ).where(
                 GrpcHealthSample.grpc_service_id == service_id,

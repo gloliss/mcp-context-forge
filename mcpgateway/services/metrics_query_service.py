@@ -646,12 +646,16 @@ def get_top_entities_combined(
 
     # Last execution time (most recent from any source) using GREATEST-like logic
     # SQLAlchemy doesn't have a portable GREATEST, so we use COALESCE with preference order
-    # pylint: disable-next=assignment-from-no-return
+    # The SQLAlchemy ``func`` / ``.c`` proxies are opaque to pylint's inference, so it reads
+    # ``func.coalesce(...)`` as a call with no return value — a false positive for every
+    # assignment in this block, hence the scoped disable rather than a per-line one.
+    # pylint: disable=assignment-from-no-return
     daily_last_term = daily_subq.c.last_time if daily_subq is not None else None
     if daily_last_term is not None:
         last_time_expr = func.coalesce(current_subq.c.last_time, raw_subq.c.last_time, rollup_subq.c.last_time, daily_last_term)
     else:
         last_time_expr = func.coalesce(current_subq.c.last_time, raw_subq.c.last_time, rollup_subq.c.last_time)
+    # pylint: enable=assignment-from-no-return
 
     # Query: Existing entities with combined metrics from all sources
     existing_entities_query = (

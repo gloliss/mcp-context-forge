@@ -199,7 +199,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_portability_service import ToolBundleConflictError, ToolBundleValidationError, tool_portability_service
-from mcpgateway.services.tool_service import tool_service as shared_tool_service
+from mcpgateway.services.tool_service import tool_service as shared_tool_service  # pylint: disable=no-name-in-module
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService, ToolVersionConflictError
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log

@@ -31,7 +31,7 @@ from mcpgateway.services.grpc_registry_service import GrpcRegistryService
 from mcpgateway.services.grpc_schema_service import GrpcSchemaService
 from mcpgateway.services.mcp_apps import optional_extension_metadata, validate_extension_metadata
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.tool_service import ToolNameConflictError, ToolNotFoundError, ToolVersionConflictError, tool_service
+from mcpgateway.services.tool_service import ToolNameConflictError, ToolNotFoundError, ToolVersionConflictError, tool_service  # pylint: disable=no-name-in-module
 from mcpgateway.utils.grpc_validation import _validate_grpc_target, GrpcServiceError
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 

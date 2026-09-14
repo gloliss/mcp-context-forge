@@ -329,7 +329,11 @@ class SQLDataService:
             if discard_candidate:
                 candidate.dispose()
 
-        assert entry is not None
+        if entry is None:  # pragma: no cover - internal invariant: every path above assigns or reuses an entry
+            # An assert would be stripped under ``python -O``, leaving the
+            # ``entry.engine`` dereference below to fail with an opaque
+            # AttributeError instead of naming the broken invariant.
+            raise RuntimeError("SQL engine cache entry missing after acquisition")
         try:
             yield entry.engine
         finally:
