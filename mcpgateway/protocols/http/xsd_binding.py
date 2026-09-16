@@ -32,7 +32,7 @@ from functools import lru_cache
 from typing import Any, Dict, Optional
 
 # First-Party
-from mcpgateway.protocols.contracts.xsd_types import XsdTypeSystem
+from mcpgateway.protocols.contracts.xsd_types import XMLSCHEMA_AVAILABLE, XsdTypeSystem
 
 # Cache size: schemas are per-tool and bounded by the number of XML tools a
 # gateway exposes; the LRU keeps a hot schema from re-parsing on every call.
@@ -102,6 +102,8 @@ def build_xsd_type_system(protocol_config: Optional[Dict[str, Any]], *, side: st
         schema-less behaviour, so non-XML and schemaless XML tools are
         unaffected.
     """
+    if not XMLSCHEMA_AVAILABLE:
+        return None
     binding = xsd_binding(protocol_config, side=side)
     if binding is None:
         return None

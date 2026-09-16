@@ -26,7 +26,13 @@ contracts* only.
 from typing import Any, Dict, Optional
 
 # Third-Party
-from xmlschema.validators import XsdAtomicBuiltin, XsdComplexType, XsdElement
+try:
+    from xmlschema.validators import XsdAtomicBuiltin, XsdComplexType, XsdElement
+
+    _XMLSCHEMA_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional "xml" extra
+    XsdAtomicBuiltin = XsdComplexType = XsdElement = None  # type: ignore[assignment]
+    _XMLSCHEMA_AVAILABLE = False
 
 # xs: builtin local name → JSON Schema primitive.
 _BUILTIN_MAP: Dict[str, dict] = {
@@ -90,7 +96,13 @@ class XsdJsonSchemaMapper:
 
         Args:
             schema: An ``xmlschema.XMLSchema`` instance.
+
+        Raises:
+            ImportError: When the optional ``xmlschema`` package is not
+                installed (pyproject ``xml`` extra).
         """
+        if not _XMLSCHEMA_AVAILABLE:
+            raise ImportError("XSD support requires the optional 'xml' extra (xmlschema); install it with `pip install '.[xml]'`")
         self._schema = schema
 
     def map_element(self, element_name: str) -> dict:

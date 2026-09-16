@@ -27,11 +27,18 @@ from typing import Any, Optional
 from xml.etree import ElementTree as ET  # nosec B405 - every parse path runs XmlSecurityLimits.check_bytes() first, which rejects DTD/entity declarations (design §28)
 
 # Third-Party
-import xmlschema
+# ``xmlschema`` is an optional dependency (pyproject ``xml`` extra, design §35).
+# Everything in this module except ``XsdTypeSystem``/``build_xml_converter`` is
+# stdlib-only so the schema-less XmlCodec path keeps working without it.
+try:
+    import xmlschema
+    from xmlschema.converters import UnorderedConverter
 
-# The XML ``py.typed`` markers this project uses for converter options are
-# passed through ``xmlschema.converters.XMLSchemaConverter`` instances.
-from xmlschema.converters import UnorderedConverter
+    XMLSCHEMA_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional "xml" extra
+    xmlschema = None  # type: ignore[assignment]
+    UnorderedConverter = None  # type: ignore[assignment]
+    XMLSCHEMA_AVAILABLE = False
 
 _DTD_ENTITY_RE = re.compile(rb"<!DOCTYPE|<!ENTITY", re.IGNORECASE)
 
@@ -43,6 +50,10 @@ DEFAULT_MAX_XML_NODES = 100_000
 
 class XmlSecurityError(ValueError):
     """Raised when an XML payload violates the security posture (§28)."""
+
+
+class XmlSchemaUnavailableError(ImportError):
+    """XSD support requested but the optional ``xmlschema`` package is absent."""
 
 
 @dataclass(frozen=True)
@@ -127,7 +138,13 @@ def build_xml_converter() -> UnorderedConverter:
     Returns:
         An ``UnorderedConverter`` configured with ``attribute_prefix="@"``,
         ``text_key="#text"`` and ``preserve_root=True``.
+
+    Raises:
+        XmlSchemaUnavailableError: When the optional ``xmlschema`` package is
+            not installed (pyproject ``xml`` extra).
     """
+    if not XMLSCHEMA_AVAILABLE:
+        raise XmlSchemaUnavailableError("XSD support requires the optional 'xml' extra (xmlschema); install it with `pip install '.[xml]'`")
     return UnorderedConverter(attribute_prefix="@", text_key="#text", preserve_root=True)
 
 
@@ -152,6 +169,8 @@ class XsdTypeSystem:
             security: Optional security limits; defaults to the registry
                 defaults.
         """
+        if not XMLSCHEMA_AVAILABLE:
+            raise XmlSchemaUnavailableError("XSD support requires the optional 'xml' extra (xmlschema); install it with `pip install '.[xml]'`")
         self._converter = converter or build_xml_converter()
         self._security = security or XmlSecurityLimits()
         self._schema11 = schema11

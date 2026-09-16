@@ -26,8 +26,17 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 # Third-Party
-from zeep import Client, Transport
-from zeep.exceptions import Error as ZeepError
+# ``zeep`` is an optional dependency (pyproject ``soap`` extra, design §35).
+try:
+    from zeep import Client, Transport
+    from zeep.exceptions import Error as ZeepError
+
+    ZEEP_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional "soap" extra
+    Client = None  # type: ignore[assignment]
+    Transport = None  # type: ignore[assignment]
+    ZeepError = None  # type: ignore[assignment]
+    ZEEP_AVAILABLE = False
 
 # First-Party
 from mcpgateway.protocols.http.models import (
@@ -46,28 +55,33 @@ from mcpgateway.protocols.contracts.models import (
 )
 
 
-class _LocalOnlyTransport(Transport):
-    """zeep transport that refuses remote (http/https) fetches."""
+if ZEEP_AVAILABLE:
 
-    def load(self, url: str) -> bytes:
-        """Refuse network loads; allow local files only.
+    class _LocalOnlyTransport(Transport):
+        """zeep transport that refuses remote (http/https) fetches."""
 
-        Args:
-            url: The URL zeep asks to load.
+        def load(self, url: str) -> bytes:
+            """Refuse network loads; allow local files only.
 
-        Returns:
-            Local file bytes.
+            Args:
+                url: The URL zeep asks to load.
 
-        Raises:
-            ZeepError: When the URL is remote.
-        """
-        scheme = urlparse(url).scheme.lower()
-        if scheme in ("http", "https"):
-            raise ZeepError(f"Remote WSDL/XSD fetch refused: {url}")
-        if scheme == "file":
-            return Path(urlparse(url).path).read_bytes()
-        # Bare paths are treated as local files.
-        return Path(url).read_bytes()
+            Returns:
+                Local file bytes.
+
+            Raises:
+                ZeepError: When the URL is remote.
+            """
+            scheme = urlparse(url).scheme.lower()
+            if scheme in ("http", "https"):
+                raise ZeepError(f"Remote WSDL/XSD fetch refused: {url}")
+            if scheme == "file":
+                return Path(urlparse(url).path).read_bytes()
+            # Bare paths are treated as local files.
+            return Path(url).read_bytes()
+
+else:  # pragma: no cover - optional "soap" extra
+    _LocalOnlyTransport = None  # type: ignore[assignment]
 
 
 def _input_schema(input_type: Any, operation: Any) -> Optional[dict[str, Any]]:
@@ -110,7 +124,7 @@ class WsdlContractProvider:
 
     def __init__(self, transport: Optional[Transport] = None) -> None:
         """Initialise with an optional transport override (tests)."""
-        self._transport = transport or _LocalOnlyTransport()
+        self._transport = transport or (_LocalOnlyTransport() if ZEEP_AVAILABLE else None)
 
     async def discover(self, artifact: ContractArtifact, context: DiscoveryContext) -> OperationCatalog:
         """Discover operations from a WSDL artifact.
@@ -127,6 +141,8 @@ class WsdlContractProvider:
             ContractProviderError: When the artifact cannot be parsed.
         """
         del context  # PR5 does not need discovery context
+        if not ZEEP_AVAILABLE:
+            raise ContractProviderError("WSDL support requires the optional 'soap' extra (zeep); install it with `pip install '.[soap]'`")
         if artifact.artifact_format not in ("wsdl",):
             raise ContractProviderError(f"Unsupported WSDL artifact format: {artifact.artifact_format}")
 

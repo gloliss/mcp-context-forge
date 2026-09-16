@@ -33,6 +33,7 @@ from xml.etree import ElementTree as ET  # nosec B405 - every parse path runs Xm
 # First-Party
 from mcpgateway.protocols.codecs.base import CodecContext, EncodedBody, MessageCodec
 from mcpgateway.protocols.contracts.xsd_types import (
+    XMLSCHEMA_AVAILABLE,
     XmlSecurityLimits,
     XsdTypeSystem,
     build_xml_converter,
@@ -62,7 +63,7 @@ class XmlCodec(MessageCodec):
                 context does not carry one.
         """
         self._security = security or XmlSecurityLimits()
-        self._converter = build_xml_converter()
+        self._converter = build_xml_converter() if XMLSCHEMA_AVAILABLE else None
         self._xsd_type_system = xsd_type_system
 
     def encode(self, value: Any, context: CodecContext) -> EncodedBody:
