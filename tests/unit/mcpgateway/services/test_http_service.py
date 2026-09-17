@@ -12,6 +12,7 @@ synchronization that turns compiled operations into MCP tools.
 from datetime import datetime, timezone
 import itertools
 import json
+import textwrap
 
 # Third-Party
 import pytest
@@ -51,6 +52,54 @@ _OPENAPI_DOC = {
         }
     },
 }
+
+
+_WSDL = textwrap.dedent(
+    """\
+    <?xml version="1.0" encoding="UTF-8"?>
+    <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+      xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+      xmlns:tns="urn:report" xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+      targetNamespace="urn:report">
+      <types>
+        <xsd:schema targetNamespace="urn:report">
+          <xsd:element name="QueryRequest">
+            <xsd:complexType><xsd:sequence>
+              <xsd:element name="factory" type="xsd:string"/>
+              <xsd:element name="date" type="xsd:string"/>
+            </xsd:sequence></xsd:complexType>
+          </xsd:element>
+          <xsd:element name="QueryResponse">
+            <xsd:complexType><xsd:sequence>
+              <xsd:element name="status" type="xsd:string"/>
+            </xsd:sequence></xsd:complexType>
+          </xsd:element>
+        </xsd:schema>
+      </types>
+      <message name="QueryRequestMsg"><part name="parameters" element="tns:QueryRequest"/></message>
+      <message name="QueryResponseMsg"><part name="parameters" element="tns:QueryResponse"/></message>
+      <portType name="ReportPort">
+        <operation name="QueryReport">
+          <input message="tns:QueryRequestMsg"/>
+          <output message="tns:QueryResponseMsg"/>
+        </operation>
+      </portType>
+      <binding name="ReportBinding" type="tns:ReportPort">
+        <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+        <operation name="QueryReport">
+          <soap:operation soapAction="urn:report#QueryReport"/>
+          <input><soap:body use="literal"/></input>
+          <output><soap:body use="literal"/></output>
+        </operation>
+      </binding>
+      <service name="ReportService">
+        <port name="ReportPort" binding="tns:ReportBinding">
+          <soap:address location="http://report.internal/soap"/>
+        </port>
+      </service>
+    </definitions>
+    """
+)
 
 
 def _payload(document=None) -> bytes:
@@ -367,6 +416,25 @@ class TestImportAndActivate:
 
         schemas = await HttpService().list_schemas(test_db, service.id)
         assert [schema.id for schema in schemas] == [artifact.id]
+
+    async def test_import_wsdl_creates_soap_tool(self, test_db):
+        """A .wsdl upload compiles into a tool carrying the SOAP runtime config."""
+        service = await _register(test_db, "soap-api")
+
+        artifact = await HttpService().import_schema(test_db, service.id, _WSDL.encode(), "report.wsdl", "admin@example.com", activate=True)
+
+        assert artifact.source_type == "wsdl"
+        assert artifact.is_active is True
+        test_db.refresh(service)
+        assert service.operation_count == 1
+
+        tool = test_db.execute(select(DbTool).where(DbTool.http_service_id == service.id)).scalar_one()
+        assert tool.request_type == "POST"
+        assert tool.protocol_config["operationRef"] == "ReportService:ReportPort:{urn:report}ReportBinding:QueryReport"
+        assert tool.protocol_config["request"]["body"]["codec"] == "soap"
+        assert tool.protocol_config["request"]["soap"]["version"] == "1.1"
+        assert tool.protocol_config["request"]["soap"]["soapAction"] == "urn:report#QueryReport"
+        assert tool.protocol_config["response"]["codec"] == "soap"
 
     async def test_activate_schema_rejects_foreign_artifact(self, test_db):
         """Activating another service's artifact raises."""

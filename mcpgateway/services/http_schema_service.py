@@ -35,6 +35,7 @@ from mcpgateway.protocols.contracts.models import (
     OperationDefinition,
 )
 from mcpgateway.protocols.contracts.openapi import OpenAPIContractProvider
+from mcpgateway.protocols.contracts.wsdl import WsdlContractProvider
 from mcpgateway.protocols.http.models import (
     HttpBodyVariant,
     HttpParameter,
@@ -46,9 +47,37 @@ from mcpgateway.schemas import HttpSchemaDiff
 from mcpgateway.services.contract_artifact_service import ContractArtifactService
 from mcpgateway.utils.http_validation import HttpServiceError
 
-# Source type recorded on every imported artifact (PR3 ships OpenAPI only;
-# wsdl/xsd/manual are rejected by the router with an explicit 400).
-_SOURCE_TYPE = "openapi"
+
+def _source_type_for_format(artifact_format: str) -> str:
+    """Map a prepared artifact format to the stable source-type string.
+
+    ``ContractArtifactService`` reports ``artifact_format`` as the upload
+    suffix (``json``/``yaml``/``yml``/``zip``/``wsdl``).  ``zip``/JSON/YAML
+    are all OpenAPI; ``wsdl`` is a SOAP contract (PR5).
+    """
+    if artifact_format == "wsdl":
+        return "wsdl"
+    return "openapi"
+
+
+def _provider_for_format(artifact_format: str) -> Any:
+    """Return the contract provider for a prepared artifact format.
+
+    Args:
+        artifact_format: The prepared artifact format (upload suffix).
+
+    Returns:
+        A :class:`ContractProvider`-shaped object exposing
+        ``async discover(artifact, context) -> OperationCatalog``.
+
+    Raises:
+        HttpServiceError: For an unsupported artifact format.
+    """
+    if artifact_format == "wsdl":
+        return WsdlContractProvider()
+    if artifact_format in ("json", "yaml", "yml", "zip"):
+        return OpenAPIContractProvider()
+    raise HttpServiceError(f"Unsupported HTTP contract artifact format: {artifact_format!r}")
 
 
 def _operation_to_dict(operation: OperationDefinition) -> dict[str, Any]:
@@ -108,6 +137,11 @@ def _operation_to_dict(operation: OperationDefinition) -> dict[str, Any]:
         ]
         if response is not None and hasattr(response, "variants")
         else [],
+        # Runtime-required SOAP facets must survive the source_info round-trip
+        # (§18: never leave runtime-required data behind in extensions).
+        "response_codec": getattr(response, "codec", None),
+        "soap_binding": operation.soap_binding,
+        "extensions": dict(operation.extensions or {}),
     }
 
 
@@ -165,8 +199,11 @@ def _operation_from_dict(data: dict[str, Any]) -> OperationDefinition:
                     xsd=variant.get("xsd"),
                 )
                 for variant in data.get("responses", [])
-            )
+            ),
+            codec=data.get("response_codec"),
         ),
+        soap_binding=data.get("soap_binding"),
+        extensions=dict(data.get("extensions") or {}),
     )
 
 
@@ -182,6 +219,7 @@ def _catalog_to_source_info(catalog: OperationCatalog) -> dict[str, Any]:
         ``http_services.discovered_operations``.
     """
     return {
+        "source_type": catalog.source_type,
         "operations": [_operation_to_dict(operation) for operation in catalog.operations],
         "diagnostics": [
             {
@@ -211,7 +249,7 @@ def _catalog_from_source_info(source_info: Optional[dict[str, Any]]) -> Operatio
     """
     stored = (source_info or {}).get("catalog") or {}
     return OperationCatalog(
-        source_type=_SOURCE_TYPE,
+        source_type=stored.get("source_type", "openapi"),
         source_hash="",
         operations=tuple(_operation_from_dict(item) for item in stored.get("operations", [])),
         diagnostics=(),
@@ -291,13 +329,14 @@ class HttpSchemaService:
                 failure (the provider raises ``ContractProviderError``).
         """
         prepared = await ContractArtifactService().prepare_artifact(payload, filename, allow_remote=allow_remote)
-        provider = OpenAPIContractProvider()
+        provider = _provider_for_format(prepared.artifact_format)
+        source_type = _source_type_for_format(prepared.artifact_format)
         try:
             catalog = await provider.discover(
                 ContractArtifact(
                     payload=prepared.bundle,
                     artifact_format=prepared.artifact_format,
-                    source_type=_SOURCE_TYPE,
+                    source_type=source_type,
                     source_info=prepared.source_info,
                 ),
                 DiscoveryContext(),
@@ -319,7 +358,7 @@ class HttpSchemaService:
             existing = HttpSchemaArtifact(
                 http_service_id=service.id,
                 version=next_version,
-                source_type=_SOURCE_TYPE,
+                source_type=catalog.source_type,
                 artifact_format=prepared.artifact_format,
                 content_hash=content_hash,
                 artifact_blob=prepared.bundle,

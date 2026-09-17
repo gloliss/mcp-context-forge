@@ -13,6 +13,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import itertools
 import json
+import textwrap
 
 # Third-Party
 import pytest
@@ -28,6 +29,8 @@ from mcpgateway.services.http_schema_service import (
     _catalog_to_source_info,
     _operation_from_dict,
     _operation_to_dict,
+    _provider_for_format,
+    _source_type_for_format,
     operation_request_fingerprint,
 )
 from mcpgateway.utils.http_validation import HttpServiceError
@@ -55,6 +58,54 @@ _OPENAPI_DOC = {
 def _payload(document=None) -> bytes:
     """Serialize a test OpenAPI document to JSON bytes."""
     return json.dumps(document if document is not None else _OPENAPI_DOC).encode()
+
+
+_WSDL = textwrap.dedent(
+    """\
+    <?xml version="1.0" encoding="UTF-8"?>
+    <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+      xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+      xmlns:tns="urn:report" xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+      targetNamespace="urn:report">
+      <types>
+        <xsd:schema targetNamespace="urn:report">
+          <xsd:element name="QueryRequest">
+            <xsd:complexType><xsd:sequence>
+              <xsd:element name="factory" type="xsd:string"/>
+              <xsd:element name="date" type="xsd:string"/>
+            </xsd:sequence></xsd:complexType>
+          </xsd:element>
+          <xsd:element name="QueryResponse">
+            <xsd:complexType><xsd:sequence>
+              <xsd:element name="status" type="xsd:string"/>
+            </xsd:sequence></xsd:complexType>
+          </xsd:element>
+        </xsd:schema>
+      </types>
+      <message name="QueryRequestMsg"><part name="parameters" element="tns:QueryRequest"/></message>
+      <message name="QueryResponseMsg"><part name="parameters" element="tns:QueryResponse"/></message>
+      <portType name="ReportPort">
+        <operation name="QueryReport">
+          <input message="tns:QueryRequestMsg"/>
+          <output message="tns:QueryResponseMsg"/>
+        </operation>
+      </portType>
+      <binding name="ReportBinding" type="tns:ReportPort">
+        <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+        <operation name="QueryReport">
+          <soap:operation soapAction="urn:report#QueryReport"/>
+          <input><soap:body use="literal"/></input>
+          <output><soap:body use="literal"/></output>
+        </operation>
+      </binding>
+      <service name="ReportService">
+        <port name="ReportPort" binding="tns:ReportBinding">
+          <soap:address location="http://report.internal/soap"/>
+        </port>
+      </service>
+    </definitions>
+    """
+)
 
 
 def _service(**overrides):
@@ -153,6 +204,39 @@ class TestSerialization:
     def test_catalog_from_empty_payload(self):
         """None payloads yield an empty catalog."""
         assert _catalog_from_source_info(None).operations == ()
+
+    def test_soap_binding_and_response_codec_survive_round_trip(self):
+        """SOAP runtime facets (soap_binding + response codec) round-trip."""
+        operation = OperationDefinition(
+            key="ReportService:ReportPort:ReportBinding:QueryReport",
+            protocol="http",
+            request=HttpRequestContract(method="POST", path_template="/soap", parameters=(), bodies=()),
+            response=HttpResponseContract(codec="soap"),
+            soap_binding={
+                "version": "1.1",
+                "operation": "QueryReport",
+                "namespace": "urn:report",
+                "soapAction": "urn:report#QueryReport",
+            },
+            extensions={"service": "ReportService"},
+        )
+
+        rebuilt = _operation_from_dict(_operation_to_dict(operation))
+
+        assert rebuilt.soap_binding == operation.soap_binding
+        assert getattr(rebuilt.response, "codec", None) == "soap"
+        assert rebuilt.extensions == {"service": "ReportService"}
+
+    def test_provider_and_source_type_dispatch(self):
+        """OpenAPI suffixes map to the OpenAPI provider; wsdl to WSDL."""
+        assert _source_type_for_format("wsdl") == "wsdl"
+        assert _source_type_for_format("json") == "openapi"
+        assert _source_type_for_format("yaml") == "openapi"
+        assert _source_type_for_format("zip") == "openapi"
+        assert type(_provider_for_format("wsdl")).__name__ == "WsdlContractProvider"
+        assert type(_provider_for_format("json")).__name__ == "OpenAPIContractProvider"
+        with pytest.raises(HttpServiceError):
+            _provider_for_format("xml")
 
 
 class TestFingerprintsAndDiff:
@@ -267,6 +351,27 @@ class TestImportArtifact:
         broken["paths"]["/ping"]["get"]["responses"]["200"].pop("description")
         with pytest.raises(HttpServiceError):
             await HttpSchemaService.import_artifact(test_db, service, _payload(broken), "broken.json", "admin@example.com", activate=False)
+
+    async def test_import_wsdl_dispatches_to_soap_provider(self, test_db):
+        """A .wsdl upload compiles via WsdlContractProvider with source_type wsdl."""
+        service = _service()
+        test_db.add(service)
+        test_db.commit()
+
+        artifact = await HttpSchemaService.import_artifact(
+            test_db, service, _WSDL.encode(), "report.wsdl", "admin@example.com", activate=False
+        )
+        test_db.commit()
+
+        assert artifact.source_type == "wsdl"
+        assert artifact.artifact_format == "wsdl"
+        catalog = artifact.source_info["catalog"]
+        assert catalog["source_type"] == "wsdl"
+        assert len(catalog["operations"]) == 1
+        operation = catalog["operations"][0]
+        assert operation["soap_binding"]["version"] == "1.1"
+        assert operation["response_codec"] == "soap"
+        assert service.operation_count == 1
 
 
 class TestActivateArtifact:

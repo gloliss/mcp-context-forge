@@ -37,8 +37,8 @@ from mcpgateway.services.http_service import HttpService, HttpServiceError, Http
 router = APIRouter(prefix="/http", tags=["HTTP Registry"])
 http_service = HttpService()
 
-# Accepted upload filename suffixes for schema artifacts.
-_ALLOWED_SUFFIXES = (".json", ".yaml", ".yml", ".zip")
+# Accepted upload filename suffixes for schema artifacts (SOAP/WSDL, PR5).
+_ALLOWED_SUFFIXES = (".json", ".yaml", ".yml", ".zip", ".wsdl")
 
 
 def _require_http_enabled() -> None:
@@ -97,7 +97,7 @@ async def import_schema(
         raise HTTPException(status_code=413, detail="OpenAPI artifact exceeds the upload limit")
     filename = artifact.filename or "openapi.json"
     if not filename.lower().endswith(_ALLOWED_SUFFIXES):
-        raise HTTPException(status_code=415, detail="Expected .json, .yaml, .yml or .zip artifact")
+        raise HTTPException(status_code=415, detail="Expected .json, .yaml, .yml, .zip or .wsdl artifact")
     try:
         return await http_service.import_schema(db, service_id, payload, filename, get_user_email(user), activate=activate)
     except HttpServiceError as exc:

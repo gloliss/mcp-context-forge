@@ -146,6 +146,22 @@ class TestContractArtifactService:
         assert orjson.loads(prepared.bundle)["openapi"] == "3.0.0"
 
     @pytest.mark.asyncio
+    async def test_wsdl_stored_verbatim(self):
+        """A .wsdl upload is stored verbatim with artifact_format wsdl."""
+        raw = b'<?xml version="1.0"?><definitions xmlns="http://schemas.xmlsoap.org/wsdl/"/>'
+        prepared = await ContractArtifactService().prepare_artifact(raw, "report.wsdl")
+
+        assert prepared.artifact_format == "wsdl"
+        assert prepared.bundle == raw
+        assert prepared.content_hash == hashlib.sha256(raw).hexdigest()
+
+    @pytest.mark.asyncio
+    async def test_wsdl_non_xml_rejected(self):
+        """A .wsdl upload that is not XML is rejected."""
+        with pytest.raises(HttpServiceError, match="not a WSDL/XML document"):
+            await ContractArtifactService().prepare_artifact(b'{"openapi": "3.0.0"}', "report.wsdl")
+
+    @pytest.mark.asyncio
     async def test_zip_path_traversal_rejected(self):
         """Traversal entries are rejected by the shared ZIP safety rules."""
         with pytest.raises(HttpServiceError, match="Unsafe HTTP artifact ZIP entry"):

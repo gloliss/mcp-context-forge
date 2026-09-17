@@ -17786,8 +17786,8 @@ async def admin_import_http_schema(
     if len(payload) > settings.mcpgateway_http_max_upload_bytes:
         raise HTTPException(status_code=413, detail="OpenAPI artifact exceeds the upload limit")
     filename = artifact.filename or "openapi.json"
-    if not filename.lower().endswith((".json", ".yaml", ".yml", ".zip")):
-        raise HTTPException(status_code=415, detail="Expected .json, .yaml, .yml or .zip artifact")
+    if not filename.lower().endswith((".json", ".yaml", ".yml", ".zip", ".wsdl")):
+        raise HTTPException(status_code=415, detail="Expected .json, .yaml, .yml, .zip or .wsdl artifact")
     try:
         return await http_service_mgr.import_schema(db, service_id, payload, filename, user_email, activate=activate)
     except HttpServiceNotFoundError as e:

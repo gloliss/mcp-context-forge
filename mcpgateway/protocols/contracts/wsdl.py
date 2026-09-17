@@ -156,7 +156,12 @@ class WsdlContractProvider:
                 for service_name, service in client.wsdl.services.items():
                     for port_name, port in service.ports.items():
                         binding = port.binding
-                        binding_name = getattr(binding, "name", None) or port_name
+                        # zeep exposes ``binding.name`` as an lxml QName; normalise
+                        # it to its text form (e.g. ``{urn:report}ReportBinding``) so
+                        # the value stays JSON-serialisable when it travels through
+                        # ``extensions["binding"]`` and keeps the operation key stable
+                        # (``str`` is the identity for a plain-string fallback).
+                        binding_name = str(getattr(binding, "name", None) or port_name)
                         address = (port.binding_options or {}).get("address")
                         soap_version = "1.2" if "Soap12" in type(binding).__name__ else "1.1"
                         for operation_name, operation in binding._operations.items():

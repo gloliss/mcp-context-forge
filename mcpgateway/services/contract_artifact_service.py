@@ -42,8 +42,9 @@ from mcpgateway.services.safe_reference_fetcher import ContractArtifactResolver
 from mcpgateway.utils.artifact_security import ArtifactSecurityError, safe_zip_members
 from mcpgateway.utils.http_validation import HttpServiceError
 
-# Accepted upload filename suffixes (case-insensitive).
-_ALLOWED_SUFFIXES = frozenset({".json", ".yaml", ".yml", ".zip"})
+# Accepted upload filename suffixes (case-insensitive).  ``.wsdl`` is the
+# SOAP/WSDL contract (PR5); it is stored verbatim rather than JSON-canonicalised.
+_ALLOWED_SUFFIXES = frozenset({".json", ".yaml", ".yml", ".zip", ".wsdl"})
 
 # Preferred spec entry names inside an artifact ZIP, in precedence order.
 _PREFERRED_ZIP_ENTRIES = ("openapi.json", "openapi.yaml", "openapi.yml")
@@ -107,7 +108,13 @@ class ContractArtifactService:
             raise HttpServiceError(f"HTTP artifact upload too large ({len(content)} bytes, max {max_upload})")
         suffix = self._validate_filename(filename)
 
-        # 2. Unwrap ZIP uploads into their spec entry.
+        # 2. WSDL artifacts (SOAP, PR5) are stored verbatim: XML text, no
+        #    JSON canonicalisation and no external $ref materialisation.  The
+        #    WSDL provider parses and validates them with zeep later.
+        if suffix == ".wsdl":
+            return self._prepare_wsdl(content, filename)
+
+        # 3. Unwrap ZIP uploads into their spec entry.
         if suffix == ".zip":
             raw_document = self._extract_zip_spec(content)
         else:
@@ -120,13 +127,13 @@ class ContractArtifactService:
                 "HTTP artifact is not an OpenAPI document (missing or invalid 'openapi' version field)"
             )
 
-        # 3. Materialise external $ref values (design §66).
+        # 4. Materialise external $ref values (design §66).
         try:
             bundle = await self._resolver.resolve_and_bundle(raw_document, allow_remote=allow_remote)
         except ValueError as exc:
             raise HttpServiceError(str(exc)) from exc
 
-        # 4. Canonical serialisation + content addressing.  The stored
+        # 5. Canonical serialisation + content addressing.  The stored
         #    blob is always JSON: the provider parses one format and YAML
         #    round-trips are lossy for some schemas.  ``artifact_format``
         #    keeps the original upload format for provenance.
@@ -149,6 +156,26 @@ class ContractArtifactService:
         )
 
     @staticmethod
+    def _prepare_wsdl(content: bytes, filename: str) -> PreparedContractArtifact:
+        """Prepare a single-file WSDL artifact (SOAP, PR5).
+
+        A WSDL document is XML text; it is stored verbatim as the artifact
+        blob (no JSON canonicalisation, no external-reference materialisation).
+        Parsing and operation compilation happen later in
+        ``WsdlContractProvider``, whose local-only transport refuses remote
+        imports/includes (SSRF-safe).
+        """
+        if not content.lstrip().startswith(b"<"):
+            raise HttpServiceError("HTTP artifact is not a WSDL/XML document")
+        return PreparedContractArtifact(
+            artifact_format="wsdl",
+            content_hash=hashlib.sha256(content).hexdigest(),
+            bundle=content,
+            document={},
+            source_info={"filename": filename},
+        )
+
+    @staticmethod
     def _validate_filename(filename: str) -> str:
         """Validate the upload filename and return its lower-case suffix.
 
@@ -160,14 +187,14 @@ class ContractArtifactService:
 
         Raises:
             HttpServiceError: If the filename contains path separators or
-                has a non-OpenAPI suffix.
+                has a non-contract suffix.
         """
         if not filename or "\\" in filename or PurePosixPath(filename).name != filename:
             raise HttpServiceError(f"Invalid HTTP artifact filename: {filename!r}")
         suffix = f".{filename.lower().rsplit('.', 1)[-1]}"
         if suffix not in _ALLOWED_SUFFIXES:
             raise HttpServiceError(
-                f"Unsupported HTTP artifact file type: {filename!r} (expected .json, .yaml, .yml or .zip)"
+                f"Unsupported HTTP artifact file type: {filename!r} (expected .json, .yaml, .yml, .zip or .wsdl)"
             )
         return suffix
 
