@@ -16,28 +16,25 @@ OceanBase and no client libraries.
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 # Values a bound parameter must come back as, unchanged. The point is not that the
 # query succeeds -- it is that the value is carried by the protocol rather than by
 # string interpolation. Anything that has meaning to a SQL parser belongs here.
-BIND_CASES: tuple[tuple[str, Any], ...] = (
-    ("plain", "hello"),
-    ("single-quote", "O'Brien"),
-    ("double-quote", 'he said "hi"'),
-    ("semicolon", "a; DROP TABLE users"),
-    ("comment-marker", "a -- b /* c */"),
-    ("unicode", "中文🙂"),
-    ("percent", "100%"),
-    ("backslash", "a\\b"),
-    ("newline", "a\nb"),
-    ("numeric", 42),
-    ("none", None),
+#
+# Loaded from a JSON file rather than declared inline because the TypeScript
+# evaluation binds the same set: two hand-maintained lists in two languages drift,
+# and a case that exists on only one side would make the two runtimes' results
+# silently incomparable.
+BIND_CASES: tuple[tuple[str, Any], ...] = tuple(
+    (label, value) for label, value in json.loads(Path(__file__).with_name("bind_cases.json").read_text(encoding="utf-8"))
 )
 
 # Multiplied into the configured connect timeout to decide how late is too late.

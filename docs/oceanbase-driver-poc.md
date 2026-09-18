@@ -186,8 +186,10 @@ O1–O9 同样已实现、同样零次真实执行。**并且 Oracle 侧比 MySQ
    ob_query_timeout` 若被服务端拒绝，M1 与 M6 会把该失败记入 `evidence.session_setup_errors`，
    其余检查照常执行。这是刻意的取舍（一个与它们无关的设置不应让七项检查一起报错），但
    意味着**排查时须先看 M1/M6 的这条证据**。
-6. **`runtimes/` 为空。** TypeScript / .NET 的横向评估（需求点名 TS 能否稳定支持 OB Oracle
-   Mode）尚未开始，属 L3。
+6. **TypeScript 侧只做到「驱动可用性」这一层，未能回答那个决定性问题。** `runtimes/typescript/`
+   已可运行并给出两条真实结论（`node-oracledb` thin 可加载、thick 缺客户端库），但
+   **「TS 能否稳定支持 OB Oracle Mode」仍无答案**——它需要真实实例，与 Python 侧 O1–O9 同一阻塞。
+   .NET **未开始**（本环境无 `dotnet`；需求原文为「如需要」，待采用意向）。详见 §13。
 7. **POC 依赖不进主锁是刻意的。** `requirements-poc.txt` 独立存在，因为 `cx_Oracle` 在
    Python 3.12 上装不上，一旦进入 `pyproject.toml` / `uv.lock` 会让 `uv lock` 与 CI 直接
    失败。
@@ -213,7 +215,11 @@ O1–O9 同样已实现、同样零次真实执行。**并且 Oracle 侧比 MySQ
 - **Python 应作为主评估对象**，两种模式的全矩阵都在 Python 侧（需求亦将其列为首位）；
 - **TypeScript 的取舍已被需求预先约束**——「如果 TypeScript 方案不能稳定支持 OceanBase
   Oracle Mode，不允许为了统一语言强行采用 TypeScript」。因此 TS 的结论**只能由 OB Oracle
-  Mode 的实测决定**，不得以 MySQL 侧可用或生态成熟为理由放行；
+  Mode 的实测决定**，不得以 MySQL 侧可用或生态成熟为理由放行。TS 侧目前只确证了**驱动可用性**
+  （§13）：`node-oracledb` thin 模式无需客户端库即可加载，thick 模式需要 Oracle Instant Client；
+  那个决定性问题仍然没有答案；
+- **TS 侧存在一条 Python 侧没有的能力**：mysql2 的 `execute()` 走服务端预编译，而 PyMySQL 只有
+  客户端转义（§7）。这是选型的一个加分项，但同样需在 OB 上验证后才能计入；
 - **`cx_Oracle` 路径的代价已经明确**（§1/§8.2），不构成默认选择；
 - **MySQL 模式的池需要自建**，Oracle 模式则由驱动提供（§5）——这是两种模式部署成本差异的
   一部分；
@@ -296,7 +302,56 @@ python run_poc.py --mode all --md-out /tmp/poc-sections.md
 **Oracle 模式没有对应的自检后端**（MariaDB 说的是 MySQL 协议），O1–O9 因此只经过 L1 纯
 函数测试，没有任何真实服务器验证过。
 
-## 13. 如何读结果
+## 13. TypeScript 侧评估
+
+代码在 `experiments/oceanbase_driver_poc/runtimes/typescript/`，范围按设计 D5 收敛：只回答需求
+点名的那一个问题，外加 MySQL 侧基本连通与查询。结果 JSON 与 Python 侧**同一 schema、同一套
+六态词表**，两边可直接并排读。
+
+```bash
+cd experiments/oceanbase_driver_poc/runtimes/typescript
+npm install
+node run.mjs --mode all --out ../../results/ts
+```
+
+### 已确定（不需要 OceanBase）
+
+| 检查 | 状态 | 结论 |
+|---|---|---|
+| `TS-PRE-THIN` | **通过** | `node-oracledb` **7.0.1** 可加载，默认 thin 模式，**不需要客户端库** |
+| `TS-PRE-THICK` | 驱动不支持 | thick 模式需要 Oracle Instant Client：`DPI-1047: Cannot locate a 64-bit Oracle Client library: "libclntsh.so"` |
+
+这条与 Python 侧对 `python-oracledb` thin/thick 的区分是同一个问题，部署含义也一样：**选 thin
+不往镜像里拖原生库，选 thick 就必须带**——TS 侧在这一点上不比 Python 侧更差。
+
+### 仍未确定（决定性）
+
+**「TypeScript 能否稳定支持 OceanBase Oracle Mode」没有答案。** 上面两条只说明驱动装得上、
+加载得起来，不说明它能连上 OceanBase 的 Oracle 兼容模式。那需要真实实例，与 Python 侧 O1–O9
+是同一个阻塞。在该问题得到实测之前，TS 既不能被判定可用、也不能被判定不可用。
+
+### 与 Python 侧的一处实质差异
+
+MySQL 模式下 mysql2 提供**两条**绑定路径，而 PyMySQL 只有一条：
+
+| 路径 | 绑定方式 |
+|---|---|
+| `mysql2.execute()` | **服务端预编译**（`node_modules/mysql2/lib/commands/prepare.js` + `execute.js`，含连接级语句缓存） |
+| `mysql2.query()` | 客户端转义后拼接，与 PyMySQL 的 `cursor.execute(sql, args)` 同性质 |
+
+因此 TS-M3 两条都跑，结果分别记入 `evidence.modes`。服务端预编译是更强的绑定模式，它在
+OceanBase 上是否可用是一个**兼容性问题**，不是可以假定的前提——这也是把它单独测出来的原因。
+
+### 自检
+
+`scripts/mariadb_smoke.sh` 会同时跑 Python 与 TypeScript 两侧（同一个 MariaDB 后端、同一套环境
+变量）。最近一次 TS 侧结果：MySQL **3/3 通过**（含服务端预编译与客户端转义两条路径），
+Oracle 侧 1 项通过（thin）、1 项驱动不支持（thick）、3 项未执行。
+
+与 Python 侧同样的边界：**这验证的是 TS harness 代码，不是 OceanBase 兼容性**，结果不入本文档
+§3–§7。
+
+## 14. 如何读结果
 
 每次运行写入 `results/<mode>-<runtime>-<timestamp>.json`，其中 `aggregate.verdict` 是唯一
 的汇总结论来源。状态词表的核心是**未执行不等于通过**：

@@ -111,6 +111,19 @@
 
 **边界断言**：把「MySQL 侧可用」记为「Oracle 侧可用」的推导必须被显式拒绝——测试与文档中两者分开陈述（落实设计 §5.2）。
 
+> **实施期落定（2026-09-18）**：`runtimes/typescript/` 已可运行，用与 Python 侧**同一套环境变量、
+> 同一套结果 schema、同一套六态词表**，因此两边结果可直接并排读。范围仍按设计 D5 收敛。
+>
+> - 新增两项**不需要 OceanBase** 的前置检查，它们回答「驱动可不可用」这一层：
+>   `TS-PRE-THIN`（node-oracledb 能否以 thin 模式加载，无需客户端库）与
+>   `TS-PRE-THICK`（thick 模式能否启用，需要 Oracle Instant Client）。
+>   顺序上 thick 探测放在最后——`initOracleClient()` 会切换整个进程且不可撤销。
+> - `ts_oracle_decisive` 那个**决定性问题仍无答案**：驱动可用 ≠ 能连上 OB Oracle Mode，
+>   后者仍需真实实例。在实测之前，「TS 能否稳定支持」既不能判可用也不能判不可用。
+> - TS-M3 同时跑 `execute()`（服务端预编译）与 `query()`（客户端转义）两条路径——这是
+>   mysql2 相对 PyMySQL 多出的一条能力，其可用性在 OB 上属兼容性问题，不可假定。
+> - `.NET` 未开始：本环境无 `dotnet`，且需求原文为「如需要」，待采用意向确认。
+
 ## 3. 验证矩阵覆盖检查
 
 需求 18 项与用例一一对应，无遗漏：
@@ -168,7 +181,7 @@
 |---|---|
 | POC 无 DB 自检（L0+L1） | `uv run --frozen pytest experiments/oceanbase_driver_poc/tests` |
 | POC 真实验证（L2） | `python experiments/oceanbase_driver_poc/run_poc.py --mode mysql\|oracle --runtime python --out results/` |
-| Runtime 评估（L3） | `node experiments/oceanbase_driver_poc/runtimes/typescript/run.mjs`（按需） |
+| Runtime 评估（L3） | `node experiments/oceanbase_driver_poc/runtimes/typescript/run.mjs --mode all`（先在 `runtimes/typescript` 下 `npm install`） |
 | POC 代码质量 | `make ruff TARGET=experiments/oceanbase_driver_poc` |
 | 提交前 | `make detect-secrets-scan`；`make ruff bandit interrogate pylint verify`（对改动文件） |
 | 主仓库回归 | **有界**冒烟，见下方警告；**不要**直接跑 `make test` |

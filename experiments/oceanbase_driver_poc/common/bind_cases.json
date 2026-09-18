@@ -1,0 +1,13 @@
+[
+  ["plain", "hello"],
+  ["single-quote", "O'Brien"],
+  ["double-quote", "he said \"hi\""],
+  ["semicolon", "a; DROP TABLE users"],
+  ["comment-marker", "a -- b /* c */"],
+  ["unicode", "中文🙂"],
+  ["percent", "100%"],
+  ["backslash", "a\\b"],
+  ["newline", "a\nb"],
+  ["numeric", 42],
+  ["none", null]
+]

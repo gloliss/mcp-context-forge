@@ -24,7 +24,7 @@ oceanbase_driver_poc/
 ├── common/                 配置读取、脱敏、结果契约、错误码、判定规则、编排、报告
 ├── mysql_mode/             MySQL 兼容模式驱动适配
 ├── oracle_mode/            Oracle 兼容模式驱动适配
-├── runtimes/               跨运行时评估（TS/.NET），归属 L3，当前为空
+├── runtimes/               跨运行时评估：typescript/ 已可运行（限定范围），.NET 未开始
 ├── scripts/                开发用辅助脚本（MariaDB 自检后端）
 ├── tests/                  L0 无 DB 自检 + L1 stub 单元
 └── results/                每次运行的机器可读结果（不提交）
@@ -118,8 +118,9 @@ python run_poc.py --mode all --md-out /tmp/poc-sections.md
 | 判定规则（含 Query Timeout 证据规则） | 已完成并为 harness 强制执行，L1 覆盖 |
 | 两种模式的连接参数映射与超时单位换算 | 已完成，L1 覆盖 |
 | `M1`–`M9` / `O1`–`O9`（18 项） | **已实现**，等待真实 OceanBase 实测 |
-| MariaDB 自检后端（仅验证 harness 代码本身） | 已完成，见 `scripts/mariadb_smoke.sh` |
-| `runtimes/`（TS/.NET） | 未开始（L3） |
+| MariaDB 自检后端（仅验证 harness 代码本身） | 已完成，见 `scripts/mariadb_smoke.sh`，同时跑 Python 与 TS 两侧 |
+| TypeScript 侧（限定范围，见 `runtimes/README.md`） | **已可运行**；Oracle 决定性结论待环境 |
+| .NET 侧 | 未开始（本环境无 `dotnet`；需求为「如需要」） |
 
 **实现完整不等于结论成立。** 18 项检查的代码都已写好并经过 L1 与 MariaDB 自检，
 但**没有任何一项在 OceanBase 上跑过**，因此结论文档中的实测结论仍然为空。
@@ -151,6 +152,11 @@ make detect-secrets-scan                                         # 提交前
 210 条全部是 Low —— 199 条 `B101`（测试里的 `assert`）与 11 条 `B105`/`B106`（`tests/` 中
 为验证脱敏而写的合成口令，如 `sup3r-s3cret`、`pw`、`p`，不是真实凭据）。本目录不在仓库默认
 bandit 目标（`DEFAULT_TARGETS := mcpgateway`）内，因此不影响既有门禁。
+
+**JS 侧同理**：仓库的 `make eslint` 只扫 `mcpgateway/static/**/*.js`，`runtimes/typescript/`
+不在其内，因此不会因本目录失败，也不会被自动检查。代码按仓库风格手写（2 空格缩进、分号、
+JSDoc），如需本地校验可自行 `npx prettier --check`。`runtimes/typescript/node_modules/` 由
+仓库既有的 `node_modules/` 规则忽略。
 
 主仓库回归 `make test` 不会收集本目录，但建议在提交前跑一次确认未受影响。
 

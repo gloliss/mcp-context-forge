@@ -71,6 +71,10 @@ SQL
 echo "==> 运行 MySQL 模式全部检查（runtime=mariadb-smoke）"
 # Query Timeout 在这里**预期失败**：MariaDB 没有 ob_query_timeout，客户端超时后服务端
 # 仍会继续跑完 SLEEP。那正是这个检查应该报告的结果，不是脚本的问题。
+#
+# 因此这一步会以非零码结束，而脚本开了 `set -e` —— 必须显式接住它，否则脚本会在跑到
+# TypeScript 侧之前就退出（这个坑踩过一次）。
+PY_EXIT=0
 OB_MYSQL_HOST=127.0.0.1 \
 OB_MYSQL_PORT=3306 \
 OB_MYSQL_USER="${RUN_USER}" \
@@ -82,7 +86,26 @@ OB_MYSQL_OBSERVER_PASSWORD="${OBS_PASS}" \
 OB_MYSQL_CONNECT_TIMEOUT_S=2 \
 OB_MYSQL_QUERY_TIMEOUT_S=3 \
 OB_MYSQL_POOL_MAX=2 \
-	"${PYTHON}" "${POC_ROOT}/run_poc.py" --mode mysql --runtime mariadb-smoke --out "${POC_ROOT}/results/smoke" "$@"
+	"${PYTHON}" "${POC_ROOT}/run_poc.py" --mode mysql --runtime mariadb-smoke --out "${POC_ROOT}/results/smoke" "$@" || PY_EXIT=$?
+echo "run_poc.py 退出码：${PY_EXIT}（2 = 有检查未通过；M6 在此后端上预期如此）"
+
+TS_DIR="${POC_ROOT}/runtimes/typescript"
+if command -v node >/dev/null 2>&1 && [[ -d "${TS_DIR}/node_modules" ]]; then
+	echo
+	echo "==> 运行 TypeScript 侧 MySQL 检查（同一后端，同一套环境变量）"
+	OB_MYSQL_HOST=127.0.0.1 \
+	OB_MYSQL_PORT=3306 \
+	OB_MYSQL_USER="${RUN_USER}" \
+	OB_MYSQL_PASSWORD="${RUN_PASS}" \
+	OB_MYSQL_DATABASE="${DB}" \
+	OB_MYSQL_SCHEMA="${DB}" \
+	OB_MYSQL_CONNECT_TIMEOUT_S=2 \
+	OB_MYSQL_QUERY_TIMEOUT_S=3 \
+		node "${TS_DIR}/run.mjs" --mode all --runtime mariadb-smoke --out "${POC_ROOT}/results/smoke" || true
+else
+	echo
+	echo "==> 跳过 TypeScript 侧：未找到 node，或 ${TS_DIR}/node_modules 不存在（先在 runtimes/typescript 下 npm install）"
+fi
 
 echo
 echo "提示：M6 在此后端上失败是预期结果（服务端没有可用的语句级超时），"
