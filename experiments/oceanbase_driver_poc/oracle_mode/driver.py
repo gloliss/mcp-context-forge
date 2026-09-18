@@ -482,8 +482,17 @@ class OracleDBDriver:
             return CheckOutcome(status=CheckStatus.FAIL, summary="命名绑定查询未返回结果")
 
         values = tuple(row)
+        # A short projection would make the comparison below stop early and silently
+        # skip the remaining cases, turning a driver that dropped binds into a pass.
+        if len(values) != len(BIND_CASES):
+            return CheckOutcome(
+                status=CheckStatus.FAIL,
+                summary=f"返回列数与绑定参数数不符：期望 {len(BIND_CASES)}，得到 {len(values)}",
+                evidence={"expected_columns": len(BIND_CASES), "actual_columns": len(values)},
+            )
+
         mismatches: list[str] = []
-        for (label, expected), got in zip(BIND_CASES, values, strict=False):
+        for (label, expected), got in zip(BIND_CASES, values, strict=True):
             if got != expected:
                 mismatches.append(f"{label}: 期望 {expected!r}，得到 {got!r}")
 

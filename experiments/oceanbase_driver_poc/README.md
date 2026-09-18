@@ -142,7 +142,7 @@ Oracle 模式**没有**对应的自检后端（MariaDB 说的是 MySQL 协议）
 ## 门禁
 
 ```bash
-python -m pytest -q                                              # POC 自检（150 项）
+python -m pytest -q                                              # POC 自检（161 项）
 make ruff TARGET=experiments/oceanbase_driver_poc                # 默认 TARGET 是 mcpgateway，必须显式传
 make detect-secrets-scan                                         # 提交前
 ```

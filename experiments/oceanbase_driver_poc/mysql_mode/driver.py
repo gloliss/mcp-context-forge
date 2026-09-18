@@ -450,7 +450,12 @@ class PyMySQLDriver:
                 for label, value in BIND_CASES:
                     cursor.execute("SELECT %s", (value,))
                     row = cursor.fetchone()
-                    got = tuple(row)[0] if row else None
+                    # A missing row must not read as "the driver returned None" for the
+                    # NULL case, which would turn a silent no-result into a pass.
+                    if row is None or len(tuple(row)) != 1:
+                        mismatches.append(f"{label}: 未返回单列结果（{row!r}）")
+                        continue
+                    got = tuple(row)[0]
                     if got != value:
                         mismatches.append(f"{label}: 期望 {value!r}，得到 {got!r}")
         finally:

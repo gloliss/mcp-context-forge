@@ -3,7 +3,7 @@
 - 关联设计：`specs/designs/issue-6-ob-mysql-oracle-driver-poc.md`
 - 关联需求：requirement `d8395176-2691-4ca5-b67f-bc2ec335306e`（GitLab issue #6）
 - work_branch：`feature/issue-6-ob-mysql-oracle-driver-poc`
-- 状态：L0/L1 已实现并通过（2026-09-18，150 项全绿）；18 项 L2 检查代码已实现并经 MariaDB 自检验证 harness，真实 OceanBase 验证待环境（见 §9）
+- 状态：L0/L1 已实现并通过（2026-09-18，161 项全绿）；18 项 L2 检查代码已实现并经 MariaDB 自检验证 harness，真实 OceanBase 验证待环境（见 §9）
 - 上游依据：`specs/tests/issue-5-oceanbase-data-source.md`
 
 ## 1. 验收标准映射（需求 §验收标准）
