@@ -24,7 +24,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from common.checks import CheckSpec
 from common.config import ConnectionConfig
@@ -201,7 +201,7 @@ def describe_connect_kwargs(config: ConnectionConfig, redactor: Redactor) -> dic
     Returns:
         The same mapping with the password masked and the username scope stripped.
     """
-    return redactor.redact_deep(build_connect_kwargs(config))
+    return cast(dict[str, Any], redactor.redact_deep(build_connect_kwargs(config)))
 
 
 def call_timeout_ms(config: ConnectionConfig) -> int:
@@ -365,7 +365,7 @@ class OracleDBDriver:
         """Open a raw connection with the per-call and session timeouts applied."""
         kwargs = build_connect_kwargs(config)
         kwargs.update(overrides)
-        connection = self._module.connect(**kwargs)
+        connection = self._driver.connect(**kwargs)
         connection.call_timeout = call_timeout_ms(config)
         with connection.cursor() as cursor:
             for statement in build_session_timeout_statements(config):
@@ -386,15 +386,13 @@ class OracleDBDriver:
     def _probe_instance(self, cursor: Any) -> dict[str, Any]:
         """Read the instance version and compatibility mode over a live cursor."""
         version: str | None = None
+        version_error: str | None = None
         try:
             cursor.execute(INSTANCE_VERSION_SQL)
             row = cursor.fetchone()
             version = str(row[0]) if row and row[0] is not None else None
         except Exception as exc:  # v$version may not be readable by a narrow account
-            version = None
             version_error = str(exc)
-        else:
-            version_error = None
 
         compat_mode: str | None = None
         source: str | None = None
@@ -416,6 +414,18 @@ class OracleDBDriver:
         if compat_mode is None and not attempts:
             attempts.append("no-candidate-answered")
         return build_instance_evidence(version=version, compat_mode=compat_mode, compat_mode_source=source or "unavailable", probe_attempts=attempts)
+
+    @property
+    def _driver(self) -> Any:
+        """The driver module, which the installed gate guarantees is present.
+
+        Handlers are only reachable through :meth:`run_check`, which returns early
+        when the package is missing. Routing module access through this property
+        states that invariant where a type checker can see it, so a handler added
+        later cannot quietly reach a ``None`` module.
+        """
+        assert self._module is not None, "check handlers are only reachable through run_check"
+        return self._module
 
     # --------------------------------------------------------------------- checks
 
@@ -456,8 +466,16 @@ class OracleDBDriver:
 
         if scalar is None or row is None:
             return CheckOutcome(status=CheckStatus.FAIL, summary="简单 SELECT 未返回结果")
-        if tuple(scalar)[0] != 1 or tuple(row)[0] != 1:
-            return CheckOutcome(status=CheckStatus.FAIL, summary=f"简单 SELECT 返回了非预期结果：{scalar!r} / {row!r}")
+        # Compare the whole projection, not just its first column: the check claims a
+        # multi-type query, so a string that came back as bytes and a NULL that came
+        # back as an empty string are exactly the failures it is here to catch.
+        expected_row = (1, "text", None)
+        got_row = tuple(row)
+        if tuple(scalar)[:1] != (1,) or got_row[: len(expected_row)] != expected_row:
+            return CheckOutcome(
+                status=CheckStatus.FAIL,
+                summary=f"简单 SELECT 返回了非预期结果：{scalar!r} / {row!r}（期望 {expected_row!r}）",
+            )
         return CheckOutcome(
             status=CheckStatus.PASS,
             summary="简单 SELECT 返回预期结果",
@@ -569,7 +587,7 @@ class OracleDBDriver:
 
     def _create_pool(self, config: ConnectionConfig) -> Any:
         """Create the driver's pool for the configured target."""
-        return self._module.create_pool(
+        return self._driver.create_pool(
             user=config.user,
             password=config.password,
             dsn=build_dsn(config),
@@ -648,6 +666,7 @@ class OracleDBDriver:
 
         client_timed_out = False
         client_error: str | None = None
+        client_code: ErrorCode | None = None
         connection = self._connect(config)
         try:
             with connection.cursor() as cursor:
@@ -655,20 +674,38 @@ class OracleDBDriver:
                 cursor.fetchone()
         except Exception as exc:
             client_error = str(exc)
-            client_timed_out = not deadline.overran
+            client_code, _native = classify_oracle_error(client_error)
+            # Only a timeout-shaped failure means the deadline was exercised. Any other
+            # error means the probe never ran, and the observation below would then be
+            # answering a question nobody asked -- with the marker absent, which reads
+            # as "the server stopped".
+            client_timed_out = client_code is ErrorCode.DB_TIMEOUT
         finally:
             self._close(connection)
 
-        server, observation = self._observe_server_stop(config, marker)
-        status, reason = judge_query_timeout(client_timed_out=client_timed_out, server=server)
-        evidence = {
+        evidence: dict[str, Any] = {
             "probe_level": TIMEOUT_PROBE_LEVEL,
             "client_elapsed_s": round(deadline.elapsed_s, 3),
             "client_allowed_s": deadline.allowed_s,
             "client_error": client_error,
-            SERVER_STOP_EVIDENCE_KEY: server.value,
-            "observation": observation,
+            "client_error_code": client_code.value if client_code else None,
         }
+
+        # Guard on the code rather than on the message: the two are set together,
+        # and this form lets the type checker see that the value below is present.
+        if client_code is not None and not client_timed_out:
+            evidence[SERVER_STOP_EVIDENCE_KEY] = ServerStopEvidence.UNDETERMINED.value
+            return CheckOutcome(
+                status=CheckStatus.INDETERMINATE,
+                summary=f"客户端错误不是超时（{client_code.value}），超时路径未被触发，无法据此判定",
+                error_code=client_code,
+                evidence=evidence,
+            )
+
+        server, observation = self._observe_server_stop(config, marker)
+        status, reason = judge_query_timeout(client_timed_out=client_timed_out, server=server)
+        evidence[SERVER_STOP_EVIDENCE_KEY] = server.value
+        evidence["observation"] = observation
         return CheckOutcome(status=status, summary=reason, evidence=evidence)
 
     def _observe_server_stop(self, config: ConnectionConfig, marker: str) -> tuple[ServerStopEvidence, dict[str, Any]]:
@@ -691,7 +728,7 @@ class OracleDBDriver:
         deadline = Deadline.start(budget_s)
         observations: list[dict[str, Any]] = []
         try:
-            observer = self._module.connect(
+            observer = self._driver.connect(
                 user=config.observer_user,
                 password=config.observer_password,
                 dsn=build_dsn(config),
@@ -730,7 +767,12 @@ class OracleDBDriver:
                 if not tables:
                     return CheckOutcome(status=CheckStatus.FAIL, summary=f"schema {owner} 下未读到任何表", evidence={"owner": owner})
 
-                target = (config.metadata_table or tables[0]).upper()
+                # Oracle folds an unquoted identifier to upper case, so a configured
+                # name is accepted either as typed or as it would be folded -- but a
+                # name that is genuinely mixed-case (created with quotes) is matched
+                # as stored rather than forced into a case it never had.
+                configured = config.metadata_table
+                target = tables[0] if not configured else (configured if configured in tables else configured.upper())
                 if target not in tables:
                     return CheckOutcome(
                         status=CheckStatus.FAIL,
@@ -827,7 +869,7 @@ class OracleDBDriver:
                     finally:
                         self._close(connection)
                 else:
-                    connection = self._module.connect(**build_probe_connect_kwargs(config, probe))
+                    connection = self._driver.connect(**build_probe_connect_kwargs(config, probe))
                     self._close(connection)
             except Exception as exc:
                 code, native = classify_oracle_error(str(exc))

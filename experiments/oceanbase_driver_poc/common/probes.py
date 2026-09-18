@@ -191,6 +191,10 @@ class BoundedPool:
         self._is_healthy = is_healthy or (lambda _conn: True)
         self._closer = closer
         self._idle: list[Any] = []
+        # Handed out and not yet returned. A list compared by identity rather than a
+        # set: a driver's connection object is not guaranteed to be hashable, and the
+        # pool only ever needs identity here anyway.
+        self._busy: list[Any] = []
         self._live = 0
         self._lock = threading.Lock()
         self._available = threading.Condition(self._lock)
@@ -225,6 +229,7 @@ class BoundedPool:
                 while self._idle:
                     conn = self._idle.pop()
                     if self._is_healthy(conn):
+                        self._busy.append(conn)
                         return conn
                     self._live -= 1
                     self._discard(conn)
@@ -240,12 +245,15 @@ class BoundedPool:
 
         # Created outside the lock so a slow connect does not block other callers.
         try:
-            return self._factory()
+            conn = self._factory()
         except Exception:
             with self._available:
                 self._live -= 1
                 self._available.notify()
             raise
+        with self._available:
+            self._busy.append(conn)
+        return conn
 
     def release(self, conn: Any, *, healthy: bool = True) -> None:
         """Return a connection to the pool, or discard it.
@@ -257,6 +265,7 @@ class BoundedPool:
                 caller.
         """
         with self._available:
+            self._forget(conn)
             if healthy and self._is_healthy(conn):
                 self._idle.append(conn)
             else:
@@ -265,12 +274,28 @@ class BoundedPool:
             self._available.notify()
 
     def close_all(self) -> None:
-        """Discard every idle connection and drop the live count to zero."""
+        """Close every connection the pool owns, handed out or idle.
+
+        A caller that borrowed connections and never returned them still expects a
+        torn-down pool to leave nothing open. Closing only the idle ones would leak
+        the rest silently, which is the sort of thing that only shows up as a
+        connection-count problem much later.
+        """
         with self._available:
             while self._idle:
                 self._discard(self._idle.pop())
+            for conn in list(self._busy):
+                self._discard(conn)
+            self._busy.clear()
             self._live = 0
             self._available.notify_all()
+
+    def _forget(self, conn: Any) -> None:
+        """Drop a connection from the handed-out list, comparing by identity."""
+        for index, held in enumerate(self._busy):
+            if held is conn:
+                del self._busy[index]
+                return
 
     def _discard(self, conn: Any) -> None:
         """Close a connection, swallowing a close failure on an already-dead one."""

@@ -21,77 +21,12 @@ from common.config import ConnectionConfig
 from common.probes import BIND_CASES
 from common.redaction import Redactor
 from common.results import CheckStatus
+from scripted_driver import ScriptedModule
 from mysql_mode import driver as mysql_driver
 from oracle_mode import driver as oracle_driver
 
 MYSQL_CONFIG = ConnectionConfig(mode="mysql", host="h", port=2883, user="u", password="sup3r-s3cret", database="d")
 ORACLE_CONFIG = ConnectionConfig(mode="oracle", host="h", port=2883, user="u", password="sup3r-s3cret", service_name="svc")
-
-
-class ScriptedCursor:
-    """A cursor that answers from a callable instead of a server."""
-
-    def __init__(self, resolver) -> None:
-        """Record the resolver that decides each statement's result."""
-        self._resolver = resolver
-        self._row = None
-        self.executed: list[tuple[str, object]] = []
-
-    def __enter__(self) -> ScriptedCursor:
-        """Enter the context manager."""
-        return self
-
-    def __exit__(self, *exc: object) -> bool:
-        """Leave the context manager without suppressing anything."""
-        return False
-
-    def execute(self, sql: str, params: object = None) -> None:
-        """Record the statement and take its scripted result."""
-        self.executed.append((sql, params))
-        self._row = self._resolver(sql, params)
-
-    def fetchone(self):
-        """Return the scripted row."""
-        return self._row
-
-    def fetchall(self):
-        """Return the scripted row as a one-row result set."""
-        return [] if self._row is None else [self._row]
-
-    def close(self) -> None:
-        """Close the cursor."""
-
-
-class ScriptedConnection:
-    """A connection handing out scripted cursors."""
-
-    def __init__(self, resolver) -> None:
-        """Record the resolver passed to every cursor."""
-        self._resolver = resolver
-        self.closed = False
-
-    def cursor(self) -> ScriptedCursor:
-        """Return a new scripted cursor."""
-        return ScriptedCursor(self._resolver)
-
-    def close(self) -> None:
-        """Mark the connection closed."""
-        self.closed = True
-
-    def ping(self, reconnect: bool = False) -> None:
-        """Report the connection as alive."""
-
-
-class ScriptedModule:
-    """A stand-in for a database driver module."""
-
-    def __init__(self, resolver) -> None:
-        """Record the resolver used for every connection."""
-        self._resolver = resolver
-
-    def connect(self, **kwargs: object) -> ScriptedConnection:
-        """Return a scripted connection."""
-        return ScriptedConnection(self._resolver)
 
 
 def _mysql_driver_for(resolver) -> mysql_driver.PyMySQLDriver:

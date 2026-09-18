@@ -23,7 +23,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from common.checks import CheckSpec
 from common.config import ConnectionConfig
@@ -176,7 +176,7 @@ def describe_connect_kwargs(config: ConnectionConfig, redactor: Redactor) -> dic
     Returns:
         The same mapping with the password masked and the username scope stripped.
     """
-    return redactor.redact_deep(build_connect_kwargs(config))
+    return cast(dict[str, Any], redactor.redact_deep(build_connect_kwargs(config)))
 
 
 def build_session_timeout_statements(config: ConnectionConfig) -> list[str]:
@@ -341,7 +341,7 @@ class PyMySQLDriver:
         """
         kwargs = build_connect_kwargs(config)
         kwargs.update(overrides)
-        connection = self._module.connect(**kwargs)
+        connection = self._driver.connect(**kwargs)
         notes: list[str] = []
         with connection.cursor() as cursor:
             for statement in build_session_timeout_statements(config):
@@ -395,6 +395,18 @@ class PyMySQLDriver:
             attempts.append("no-candidate-answered")
         return build_instance_evidence(version=version, compat_mode=compat_mode, compat_mode_source=source or "unavailable", probe_attempts=attempts)
 
+    @property
+    def _driver(self) -> Any:
+        """The driver module, which the installed gate guarantees is present.
+
+        Handlers are only reachable through :meth:`run_check`, which returns early
+        when the package is missing. Routing module access through this property
+        states that invariant where a type checker can see it, so a handler added
+        later cannot quietly reach a ``None`` module.
+        """
+        assert self._module is not None, "check handlers are only reachable through run_check"
+        return self._module
+
     # --------------------------------------------------------------------- checks
 
     def _check_connect(self, check: CheckSpec, config: ConnectionConfig) -> CheckOutcome:
@@ -433,8 +445,16 @@ class PyMySQLDriver:
 
         if scalar is None or row is None:
             return CheckOutcome(status=CheckStatus.FAIL, summary="简单查询未返回结果")
-        if tuple(scalar)[0] != 1 or tuple(row)[0] != 1:
-            return CheckOutcome(status=CheckStatus.FAIL, summary=f"简单查询返回了非预期结果：{scalar!r} / {row!r}")
+        # Compare the whole projection, not just its first column: the check claims a
+        # multi-type query, so a string that came back as bytes and a NULL that came
+        # back as an empty string are exactly the failures it is here to catch.
+        expected_row = (1, "text", None)
+        got_row = tuple(row)
+        if tuple(scalar)[:1] != (1,) or got_row[: len(expected_row)] != expected_row:
+            return CheckOutcome(
+                status=CheckStatus.FAIL,
+                summary=f"简单查询返回了非预期结果：{scalar!r} / {row!r}（期望 {expected_row!r}）",
+            )
         return CheckOutcome(
             status=CheckStatus.PASS,
             summary="简单查询返回预期结果",
@@ -605,6 +625,7 @@ class PyMySQLDriver:
 
         client_timed_out = False
         client_error: str | None = None
+        client_code: ErrorCode | None = None
         connection, session_notes = self._connect(config)
         try:
             with connection.cursor() as cursor:
@@ -612,21 +633,41 @@ class PyMySQLDriver:
                 cursor.fetchone()
         except Exception as exc:
             client_error = str(exc)
-            client_timed_out = not deadline.overran
+            client_code, _native = classify_mysql_error(client_error)
+            # Only a timeout-shaped failure means the deadline was exercised. Any other
+            # error -- a denied privilege on SLEEP, a dropped connection, a syntax
+            # error -- means the probe never ran, and the observation below would then
+            # be answering a question nobody asked. Worse, the marker would be absent,
+            # which reads as "the server stopped", so treating every fast failure as a
+            # timeout turns a probe that never started into a pass.
+            client_timed_out = client_code is ErrorCode.DB_TIMEOUT
         finally:
             self._close(connection)
 
-        server, observation = self._observe_server_stop(config, marker)
-        status, reason = judge_query_timeout(client_timed_out=client_timed_out, server=server)
-        evidence = {
+        evidence: dict[str, Any] = {
             "probe_seconds": sleep_s,
             "session_setup_errors": session_notes,
             "client_elapsed_s": round(deadline.elapsed_s, 3),
             "client_allowed_s": deadline.allowed_s,
             "client_error": client_error,
-            SERVER_STOP_EVIDENCE_KEY: server.value,
-            "observation": observation,
+            "client_error_code": client_code.value if client_code else None,
         }
+
+        # Guard on the code rather than on the message: the two are set together,
+        # and this form lets the type checker see that the value below is present.
+        if client_code is not None and not client_timed_out:
+            evidence[SERVER_STOP_EVIDENCE_KEY] = ServerStopEvidence.UNDETERMINED.value
+            return CheckOutcome(
+                status=CheckStatus.INDETERMINATE,
+                summary=f"客户端错误不是超时（{client_code.value}），超时路径未被触发，无法据此判定",
+                error_code=client_code,
+                evidence=evidence,
+            )
+
+        server, observation = self._observe_server_stop(config, marker)
+        status, reason = judge_query_timeout(client_timed_out=client_timed_out, server=server)
+        evidence[SERVER_STOP_EVIDENCE_KEY] = server.value
+        evidence["observation"] = observation
         return CheckOutcome(status=status, summary=reason, evidence=evidence)
 
     def _observe_server_stop(self, config: ConnectionConfig, marker: str) -> tuple[ServerStopEvidence, dict[str, Any]]:
@@ -649,7 +690,7 @@ class PyMySQLDriver:
         deadline = Deadline.start(budget_s)
         observations: list[dict[str, Any]] = []
         try:
-            observer = self._module.connect(
+            observer = self._driver.connect(
                 host=config.host,
                 port=config.port,
                 user=config.observer_user,
@@ -793,7 +834,7 @@ class PyMySQLDriver:
                     finally:
                         self._close(connection)
                 else:
-                    connection = self._module.connect(**build_probe_connect_kwargs(config, probe))
+                    connection = self._driver.connect(**build_probe_connect_kwargs(config, probe))
                     self._close(connection)
             except Exception as exc:
                 code, native = classify_mysql_error(str(exc))

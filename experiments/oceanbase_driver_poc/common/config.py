@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from common.probes import DEFAULT_UNREACHABLE_HOST
 from common.redaction import Redactor
@@ -78,7 +78,7 @@ class ConnectionConfig:
             A JSON-safe mapping. The password appears masked, and the username keeps
             only its account part so tenant and cluster names do not travel.
         """
-        return redactor.redact_deep(
+        return cast(dict[str, Any], redactor.redact_deep(
             {
                 "host": self.host,
                 "port": self.port,
@@ -97,7 +97,7 @@ class ConnectionConfig:
                 "observer_password": self.observer_password,
                 "metadata_table": self.metadata_table,
             }
-        )
+        ))
 
 
 def env_var_names(mode: str) -> dict[str, str]:

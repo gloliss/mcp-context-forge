@@ -148,6 +148,24 @@ class TestBoundPool:
         assert pool.idle == 0
         assert pool.live == 0
 
+    def test_close_all_also_closes_connections_that_were_never_returned(self) -> None:
+        """Tearing down a pool must not leak what it handed out.
+
+        A check that borrows up to the ceiling and returns only some of the
+        connections would otherwise leak the rest: closing only the idle ones is
+        silent, and only shows up much later as a connection-count problem.
+        """
+        pool, made = self._pool(max_size=3)
+        borrowed = [pool.acquire() for _ in range(3)]
+        assert len(made) == 3
+        assert all(conn["open"] for conn in made)
+
+        pool.close_all()
+
+        assert borrowed, "keep the references alive so the assertion is about them"
+        assert [conn["open"] for conn in made] == [False, False, False], "a borrowed connection was left open"
+        assert pool.live == 0
+
     def test_a_concurrent_caller_gets_a_slot_when_one_is_released(self) -> None:
         """Release must wake a waiter rather than making it time out."""
         pool, _ = self._pool(max_size=1, timeout=2.0)

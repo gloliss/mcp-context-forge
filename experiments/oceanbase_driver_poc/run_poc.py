@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,10 +26,12 @@ if str(POC_ROOT) not in sys.path:
     sys.path.insert(0, str(POC_ROOT))
 
 from common.config import ConnectionConfig, load_config, missing_required  # noqa: E402
-from common.harness import run_mode  # noqa: E402
+from common.harness import Driver, run_mode  # noqa: E402
 from common.redaction import Redactor  # noqa: E402
 from common.report import render_markdown, render_summary, render_table  # noqa: E402
 from common.results import ABSTAINED_STATUSES, UNCLEAN_STATUSES, RunReport  # noqa: E402
+from mysql_mode import driver as mysql_driver  # noqa: E402
+from oracle_mode import driver as oracle_driver  # noqa: E402
 
 MODES = ("mysql", "oracle")
 
@@ -73,7 +76,7 @@ def build_redactor() -> Redactor:
     return Redactor(secrets)
 
 
-def build_driver(mode: str, redactor: Redactor):
+def build_driver(mode: str, redactor: Redactor) -> Driver:
     """Build the driver adapter for one mode.
 
     Args:
@@ -84,9 +87,9 @@ def build_driver(mode: str, redactor: Redactor):
         The mode's driver adapter, wrapping whatever package is installed.
     """
     if mode == "mysql":
-        from mysql_mode.driver import driver as build  # noqa: PLC0415 - mode-specific import
+        build: Callable[[Redactor], Driver] = mysql_driver.driver  # noqa: PLC0415 - mode-specific import
     else:
-        from oracle_mode.driver import driver as build  # noqa: PLC0415 - mode-specific import
+        build = oracle_driver.driver  # noqa: PLC0415 - mode-specific import
     return build(redactor)
 
 

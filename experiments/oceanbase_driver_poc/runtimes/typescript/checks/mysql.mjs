@@ -216,8 +216,19 @@ async function checkSimpleQuery(connection) {
   if (scalar === null || mixed === null) {
     return checkResult({ checkId: 'M2', mode: 'mysql', name: 'SELECT 1 / 简单查询', status: CheckStatus.FAIL, summary: '简单查询未返回结果' });
   }
-  if (scalar !== 1 || mixed[0] !== 1) {
-    return checkResult({ checkId: 'M2', mode: 'mysql', name: 'SELECT 1 / 简单查询', status: CheckStatus.FAIL, summary: `简单查询返回了非预期结果：${JSON.stringify([scalar, mixed])}` });
+  // Compare the whole projection, not just its first column: the check claims a
+  // multi-type query, so a string returned as bytes and a NULL returned as an empty
+  // string are exactly the failures it exists to catch.
+  const expected = [1, 'text', null];
+  const matches = scalar === 1 && expected.every((want, index) => mixed[index] === want);
+  if (!matches) {
+    return checkResult({
+      checkId: 'M2',
+      mode: 'mysql',
+      name: 'SELECT 1 / 简单查询',
+      status: CheckStatus.FAIL,
+      summary: `简单查询返回了非预期结果：${JSON.stringify([scalar, mixed])}（期望 [1, ${JSON.stringify(expected)}]）`,
+    });
   }
   return checkResult({
     checkId: 'M2',
