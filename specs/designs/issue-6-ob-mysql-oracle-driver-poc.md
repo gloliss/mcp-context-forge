@@ -2,7 +2,7 @@
 
 - 关联需求：requirement `d8395176-2691-4ca5-b67f-bc2ec335306e`（GitLab issue #6）《[OB-00] OceanBase MySQL / Oracle 双模式 Driver POC》
 - work_branch：`feature/issue-6-ob-mysql-oracle-driver-poc`
-- 状态：规划（尚未进入实现）
+- 状态：骨架与 L0/L1 已实现（2026-09-17）；L2 真实验证待环境（见测试计划 §9）
 - 上游依据：`specs/designs/issue-5-oceanbase-data-source.md` §10 R9/R10、§11.1、§11.2
 - 下游去向：结论回填 issue-5 的驱动候选表与 `validated_compat_modes`，作为 Database Runtime 选型依据
 
@@ -103,7 +103,11 @@ experiments/oceanbase_driver_poc/
 `mysql_mode/`、`oracle_mode/`、`README.md`、可执行测试脚本是需求逐字要求的四项，目录名不做改写。
 
 **D3 — 每项验证的结果状态必须能区分「未执行」与「通过」，禁止把 skip 记成 pass。**
-状态取值固定为五种：`PASS` / `FAIL` / `SKIP_NO_ENV`（无环境，未执行）/ `UNSUPPORTED`（驱动本身不支持该能力）/ `ERROR`（执行异常）。每次运行落盘 `results/<mode>-<runtime>-<timestamp>.json`，内含脱敏后的连接目标、驱动名与版本、OB 版本（由连接读出）、每项检查的证据（命令、耗时、错误码）。
+状态取值固定为六种：`PASS` / `FAIL` / `SKIP_NO_ENV`（无环境，未执行）/ `UNSUPPORTED`（驱动无法提供该能力：未安装，或 POC 尚未接通）/ `INDETERMINATE`（已执行但无法判定，如服务端行为观测不到）/ `ERROR`（执行异常）。每次运行落盘 `results/<mode>-<runtime>-<timestamp>.json`，内含脱敏后的连接目标、驱动名与版本、OB 版本（由连接读出）、每项检查的证据（命令、耗时、错误码）。
+
+> 实施期修正（2026-09-17）：本条规划时写作「五种」，未含 `INDETERMINATE`。落地时发现缺它会迫使「已执行但服务端是否停止观测不到」挤进 `FAIL`，而 `FAIL` 读作「服务端仍在运行」——两者是不同结论，且后者会误导选型。故增列为第六种。`UNSUPPORTED` 另以 `evidence.unimplemented` 区分「驱动未安装」与「POC 尚未接通」两种成因。
+
+**退出码策略（随 D3 一并固定）**：`FAIL`/`ERROR`/`INDETERMINATE` 默认使退出码非零；`SKIP_NO_ENV`/`UNSUPPORTED` 默认不使其非零（它们表示「没验证出结论」，不表示「能力不达标」），加 `--fail-on-skip` 后一并视为非零。两类状态互斥且并集加 `PASS` 覆盖全部状态，由测试锁定。
 
 **`docs/oceanbase-driver-poc.md` 的每条结论都必须由这些 JSON 支撑。** 这是需求「不允许伪造成功结果」的机制化落实——不是靠自觉，而是靠「结论可溯源到一次真实运行」。
 
@@ -254,14 +258,20 @@ Oracle 模式需额外交付原生 `ORA-xxxxx` → 上述错误码的映射表�
 
 ## 8. 实施拆分
 
-| # | 任务 | 交付 | 退出条件 |
-|---|---|---|---|
-| 1 | 目录骨架 + 配置/脱敏/结果 schema + 无 DB 自检 | D2 结构、`common/`、`tests/` | 无 DB 自检全绿；脱敏用例通过 |
-| 2 | MySQL 模式驱动与 M1–M9 | `mysql_mode/` | 有真实环境时出状态；无环境时全部 `SKIP_NO_ENV` 且可辨识 |
-| 3 | Oracle 模式驱动候选与 O1–O9 | `oracle_mode/` | 同上；D6 候选逐条出「可安装 / 可连接 / 能力」结论 |
-| 4 | Query Timeout 二级证据（D8） | 服务端终止验证脚本 | 能给出「已停止 / 未停止 / 无法判定」的明确结论 |
-| 5 | 限定范围 TS 评估 | `runtimes/typescript/` | 明确回答「TS 能否稳定支持 OB Oracle Mode」 |
-| 6 | 结论文档 + 结果归档 + 回填 issue-5 | `docs/oceanbase-driver-poc.md` | 每条结论可指回结果 JSON；R9/R10 有结论 |
+| # | 任务 | 交付 | 退出条件 | 实施状态（2026-09-17） |
+|---|---|---|---|---|
+| 1 | 目录骨架 + 配置/脱敏/结果 schema + 无 DB 自检 | D2 结构、`common/`、`tests/` | 无 DB 自检全绿；脱敏用例通过 | **已完成**：99 项 L0/L1 全绿，ruff 干净 |
+| 2 | MySQL 模式驱动与 M1–M9 | `mysql_mode/` | 有真实环境时出状态；无环境时全部 `SKIP_NO_ENV` 且可辨识 | **部分**：M1/M2 已实现并走通真实错误分类路径（`DB_UNREACHABLE`/2003）；M3–M9 报告 `UNSUPPORTED(l2-pending)` |
+| 3 | Oracle 模式驱动候选与 O1–O9 | `oracle_mode/` | 同上；D6 候选逐条出「可安装 / 可连接 / 能力」结论 | **部分**：O1/O2 已实现，thin/thick 识别与 DSN 构造就位；O3–O9 报告 `UNSUPPORTED(l2-pending)`；可安装性已核（`cx_Oracle` 在 3.12 不可装） |
+| 4 | Query Timeout 二级证据（D8） | 服务端终止验证脚本 | 能给出「已停止 / 未停止 / 无法判定」的明确结论 | 判定规则与三态已实现并测试；服务端观测脚本待环境与观测账号 |
+| 5 | 限定范围 TS 评估 | `runtimes/typescript/` | 明确回答「TS 能否稳定支持 OB Oracle Mode」 | 未开始（L3，依赖运行时意向） |
+| 6 | 结论文档 + 结果归档 + 回填 issue-5 | `docs/oceanbase-driver-poc.md` | 每条结论可指回结果 JSON；R9/R10 有结论 | 未开始；文档段落生成器（`--md-out`）已就位 |
+
+**已落地的实施修正（相对本规划）**：
+
+- D3 的状态由五种增为六种（见 §3 D3 的实施期修正），并据此固定退出码策略；
+- 驱动版本改用发行包元数据读取，而非模块 `__version__`——PyMySQL 的 `__version__`（`2.2.8`）与其发行版本（`1.2.0`）不一致，直接读取会往结论文档写一个不可安装的版本号；
+- 骨架阶段的 `experiments/` 测试夹具统一改用合成标识（`appuser@tenant1#cluster1`、`ob-proxy.example.internal`），真实环境标识只留在 `specs/` 的环境事实记录中。
 
 ## 9. 门禁与命令
 
@@ -271,9 +281,11 @@ Oracle 模式需额外交付原生 `ORA-xxxxx` → 上述错误码的映射表�
 | POC 真实验证 | `python experiments/oceanbase_driver_poc/run_poc.py --mode mysql\|oracle --runtime python --out results/` |
 | POC 代码质量 | `make ruff TARGET=experiments/oceanbase_driver_poc` |
 | 提交前 | `make detect-secrets-scan`；`make ruff bandit interrogate pylint verify`（对改动文件） |
-| 主仓库回归 | `make test`（确认 POC 未影响既有套件） |
+| 主仓库回归 | **有界**冒烟 `pytest -n 4 ...`；**不要**直接跑 `make test`，原因见测试计划 §7 警告（`-n auto` 在本容器会派生 256 个 worker 并触发 OOM） |
 
 > `make ruff` 默认 `TARGET=mcpgateway`（`Makefile:3393`），POC 必须**显式传 TARGET** 才会被检查（§2.1）。
+
+> 命令修正（2026-09-17）：本表原先写的 `uv run --frozen --no-project pytest ...` 在本环境跑不起来（`--no-project` 下环境里没有 pytest）。实测可用的是 `uv run --frozen pytest experiments/oceanbase_driver_poc/tests`，已按此执行。
 
 ## 10. 非目标与边界
 

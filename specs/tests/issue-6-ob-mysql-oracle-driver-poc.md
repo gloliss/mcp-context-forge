@@ -3,7 +3,7 @@
 - 关联设计：`specs/designs/issue-6-ob-mysql-oracle-driver-poc.md`
 - 关联需求：requirement `d8395176-2691-4ca5-b67f-bc2ec335306e`（GitLab issue #6）
 - work_branch：`feature/issue-6-ob-mysql-oracle-driver-poc`
-- 状态：规划（尚未进入实现）
+- 状态：L0/L1 已实现并通过（2026-09-17，99 项全绿）；L2/L3 待环境（见 §9）
 - 上游依据：`specs/tests/issue-5-oceanbase-data-source.md`
 
 ## 1. 验收标准映射（需求 §验收标准）
@@ -153,12 +153,38 @@
 
 | 阶段 | 命令 |
 |---|---|
-| POC 无 DB 自检（L0+L1） | `uv run --frozen --no-project pytest experiments/oceanbase_driver_poc/tests -q` |
+| POC 无 DB 自检（L0+L1） | `uv run --frozen pytest experiments/oceanbase_driver_poc/tests` |
 | POC 真实验证（L2） | `python experiments/oceanbase_driver_poc/run_poc.py --mode mysql\|oracle --runtime python --out results/` |
 | Runtime 评估（L3） | `node experiments/oceanbase_driver_poc/runtimes/typescript/run.mjs`（按需） |
 | POC 代码质量 | `make ruff TARGET=experiments/oceanbase_driver_poc` |
 | 提交前 | `make detect-secrets-scan`；`make ruff bandit interrogate pylint verify`（对改动文件） |
-| 主仓库回归 | `make test`（确认 POC 未影响既有套件） |
+| 主仓库回归 | **有界**冒烟，见下方警告；**不要**直接跑 `make test` |
+
+> ⚠️ **实施期修正（2026-09-17）：不要在本容器里直接跑 `make test`。**
+>
+> `make test`（`Makefile:1045`）用 `pytest -n auto`，而 `-n auto` 取的是 `os.cpu_count()`。
+> 容器实际资源与这个数不是一回事：实测 cgroup 只给 **1 CPU / 4 GiB**，但
+> `os.cpu_count()` 与 `sched_getaffinity()` 都返回宿主机的 **256**，于是 xdist 派生了
+> 256 个 worker，每个都加载完整 FastAPI 应用与 SQLAlchemy。结果内存耗尽触发 OOM
+> （`oom_kill 13`），**连正在轮询的 agent 进程一起被杀**，已完成的实现未提交即丢失。
+>
+> 有界回归请显式压住并发。实测 **`-n 4` 全程未触发 OOM**（24543 项跑完），但内存峰值
+> 达到 **约 4068 MiB / 4096 MiB**——贴近上限，属可用但吃紧。要留余量请用 `-n 2`。
+>
+> ```bash
+> uv run --frozen --extra plugins pytest -n 4 --maxfail=0 -q \
+>   --ignore=tests/playwright --ignore=tests/migration \
+>   --ignore=tests/performance --ignore=tests/compliance --ignore=tests/live_gateway
+> ```
+>
+> 另注：该次冒烟有 **41 项失败**，全部位于本次改动**未触及**的文件（如
+> `charts/mcp-stack/values.yaml` 缺 `SSRF_ALLOW_LOCALHOST` 键、缺 `xmlschema` 可选依赖的
+> 4 个收集错误）。改动只涉及 `experiments/`、`docs/`、`.gitignore` 与 `specs/`，`mcpgateway/`
+> 与 `tests/` 零改动，故上述失败为**既有问题**，非本次引入。
+>
+> 另：`make test` 会经 `uv run` 重新同步依赖，内网 PyPI 镜像限流（HTTP 429）时会直接
+> 以 `Failed to unzip wheel` + `Error 2` 失败；`--frozen` 可绕过。该问题与 POC 无关，
+> 但会让「跑个回归确认没影响」这件事本身变得不可靠，故一并记录。
 
 ## 8. 退出标准
 
@@ -173,17 +199,37 @@
 
 以下用例在环境补齐前**无法真正运行**，届时先补环境再判定，**不得以替身结果或推测值宣称通过**（需求测试要求原文）：
 
-| 项 | 阻塞原因 | 影响的 AC |
-|---|---|---|
-| L2 全部（M1–M9） | **无 MySQL 模式目标实例**；且本 run 环境不可达 OB | A1 A3 |
-| L2 全部（O1–O9） | 本 run 环境不可达 OB（`10.88.8.29:2883` 实测超时）；无 OBCI 客户端库 | A2 A3 |
-| D8 二级证据 | 缺服务端观测账号（测试 DBA） | A2 A4 |
-| L3 Runtime 评估 | 缺运行时与采用意向 | A4 |
-| 结论文档 §3–§7 实测结论 | 依赖上述全部 | A6 |
+| 项 | 阻塞原因 | 影响的 AC | 实施状态（2026-09-17） |
+|---|---|---|---|
+| L2 全部（M1–M9） | **无 MySQL 模式目标实例**；且本 run 环境不可达 OB | A1 A3 | M1/M2 代码就位，待环境；M3–M9 未实现 |
+| L2 全部（O1–O9） | 本 run 环境不可达 OB（`10.88.8.29:2883` 实测超时）；无 OBCI 客户端库 | A2 A3 | O1/O2 代码就位，待环境；O3–O9 未实现 |
+| D8 二级证据 | 缺服务端观测账号（测试 DBA） | A2 A4 | 判定规则与三态已实现并测试；观测脚本待环境 |
+| L3 Runtime 评估 | 缺运行时与采用意向 | A4 | 未开始 |
+| 结论文档 §3–§7 实测结论 | 依赖上述全部 | A6 | 未开始；段落生成器已就位 |
 
 **执行方式**：在能访问 OB 的机器上取出本分支、按 `README.md` 注入环境变量后运行 `run_poc.py`，把 `results/*.json` 带回填入结论文档。在此之前，文档对应项只能写「未验证（缺环境）」。
 
-> **可先行部分**：L0、L1 与全部代码骨架不依赖外部环境，可在待补输入补齐前先落地，用于锁定脱敏、结果契约、skip 语义与判定归类等确定性语义。
+> **可先行部分（已完成）**：L0、L1 与代码骨架不依赖外部环境，已落地并通过 99 项测试，用于锁定脱敏、结果契约、skip 语义与判定归类等确定性语义。
+
+### 9.1 已执行的实施期修正
+
+| 项 | 原规划 | 实际 | 原因 |
+|---|---|---|---|
+| 结果状态数 | 五种 | **六种**（增 `INDETERMINATE`） | 缺它会让「已执行但服务端是否停止观测不到」挤进 `FAIL`，而 `FAIL` 读作「服务端仍在运行」——后者会误导选型 |
+| `--fail-on-skip` 语义 | 仅覆盖 `SKIP_NO_ENV` | 一并覆盖 `UNSUPPORTED` | 两者同属「未验证出结论」，与 `FAIL` 语义不同；退出码策略已由 `common/results.py` 单点定义并测试锁定 |
+| 服务端观测要求 | 未标注 | `CheckSpec.requires_server_observation` 显式标记 M6/O6 | 让「需观测通道」成为可查询的属性，而非文档里的一句话 |
+| POC 测试夹具 | 使用真实环境标识 | 改用合成标识 | 真实环境事实只留在 `specs/` 的环境事实记录中，不再扩散到测试夹具 |
+
+### 9.2 门禁执行情况
+
+| 门禁 | 结果 |
+|---|---|
+| POC L0/L1（99 项） | **通过** |
+| `make ruff TARGET=experiments/oceanbase_driver_poc` | **通过**（`All checks passed!`） |
+| `ruff format` / `make black CHECK=1` | **通过**（23 个文件无需改动） |
+| `make detect-secrets-scan` | **未能执行**：该目标需 `--with git+https://github.com/ibm/detect-secrets.git@<sha>`，本 run 的平台 git 包装器拒绝该 fetch（`repo_arg_invalid`）。替代核查：以 PyPI 版 detect-secrets 对 POC 目录做独立扫描，**0 命中**；`.secrets.baseline` 未被改动。⚠️ 扫描器与仓库锁定的 IBM fork 并非同一实现，此替代不等价，正式提交前应在网络不受限的环境补跑该目标 |
+| 主仓库回归 | 见下方说明 |
+
 
 ## 10. 与需求正文的对应关系
 

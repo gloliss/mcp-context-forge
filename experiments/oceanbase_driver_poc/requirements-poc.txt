@@ -1,0 +1,17 @@
+# OceanBase Driver POC 专用依赖。
+#
+# 刻意不写入主 pyproject.toml / uv.lock：Oracle 模式的候选驱动存在硬冲突
+# （cx_Oracle 末版不支持 Python 3.12+），一旦进主锁会让 `uv lock` 与 CI 直接失败。
+# 本文件只服务 experiments/ 下的 POC，不参与产品构建。
+
+# MySQL 兼容模式：纯 Python，走 MySQL 线协议，无需客户端库。
+PyMySQL==1.2.0
+
+# Oracle 兼容模式：python-oracledb。
+#   - thin 模式：纯 Python，无需客户端库（与 OB Oracle 模式的兼容性待 POC 证实）
+#   - thick 模式：需要 libobclient / OBCI 客户端库，并设置 LD_LIBRARY_PATH
+oracledb==26.0.0
+
+# POC 自检与 L1 单元测试的运行器。
+# 驱动版本是 POC 的结论之一，所以精确锁定；测试运行器的版本不是结论，不锁。
+pytest>=8.3

@@ -111,6 +111,11 @@ coverage/
 reports/
 corpus/
 tests/fuzz/fuzzers/results/
+# OceanBase driver POC: run artifacts are environment-derived and not source
+experiments/oceanbase_driver_poc/results/*.json
+# ...but its config template is source: placeholder-only, referenced by the POC README.
+# The repo-wide `.env.*` rule above would otherwise exclude it.
+!experiments/oceanbase_driver_poc/.env.example
 snyk-code-results.json
 snyk-container-results.json
 snyk-iac-compose-results.json
