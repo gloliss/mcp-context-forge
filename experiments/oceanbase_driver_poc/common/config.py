@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from common.probes import DEFAULT_UNREACHABLE_HOST
 from common.redaction import Redactor
 
 ENV_PREFIX: dict[str, str] = {"mysql": "OB_MYSQL", "oracle": "OB_ORACLE"}
@@ -44,6 +45,28 @@ class ConnectionConfig:
     query_timeout_s: float = 30.0
     pool_min: int = 0
     pool_max: int = 5
+    # Probe target for the connection-timeout check. Defaults to a reserved,
+    # non-routable address so the check measures a deadline rather than a refusal.
+    unreachable_host: str = DEFAULT_UNREACHABLE_HOST
+    unreachable_port: int = 2883
+    # Optional second account used only to observe the server side of a query. The
+    # Query Timeout check needs it to tell "the server stopped" from "the client
+    # gave up"; without it that check cannot pass, by design.
+    observer_user: str | None = None
+    observer_password: str | None = None
+    # Optional fixed table for the metadata check; when absent the check picks one.
+    metadata_table: str | None = None
+
+    @property
+    def secrets(self) -> tuple[str, ...]:
+        """Every credential value carried by this configuration.
+
+        Returns:
+            The password and, when configured, the observer password. Collected so a
+            caller building a redactor cannot register only the first one and leak
+            the observer credential through a log line.
+        """
+        return tuple(value for value in (self.password, self.observer_password) if value)
 
     def redacted(self, redactor: Redactor) -> dict[str, Any]:
         """Render the target for a result file with credentials removed.
@@ -68,6 +91,11 @@ class ConnectionConfig:
                 "query_timeout_s": self.query_timeout_s,
                 "pool_min": self.pool_min,
                 "pool_max": self.pool_max,
+                "unreachable_host": self.unreachable_host,
+                "unreachable_port": self.unreachable_port,
+                "observer_user": self.observer_user,
+                "observer_password": self.observer_password,
+                "metadata_table": self.metadata_table,
             }
         )
 
@@ -94,6 +122,11 @@ def env_var_names(mode: str) -> dict[str, str]:
         "query_timeout_s": f"{prefix}_QUERY_TIMEOUT_S",
         "pool_min": f"{prefix}_POOL_MIN",
         "pool_max": f"{prefix}_POOL_MAX",
+        "unreachable_host": f"{prefix}_UNREACHABLE_HOST",
+        "unreachable_port": f"{prefix}_UNREACHABLE_PORT",
+        "observer_user": f"{prefix}_OBSERVER_USER",
+        "observer_password": f"{prefix}_OBSERVER_PASSWORD",
+        "metadata_table": f"{prefix}_METADATA_TABLE",
     }
 
 
@@ -150,6 +183,11 @@ def load_config(mode: str, env: Mapping[str, str] | None = None) -> ConnectionCo
         query_timeout_s=_as_float(source.get(names["query_timeout_s"]), 30.0),
         pool_min=_as_int(source.get(names["pool_min"]), 0),
         pool_max=_as_int(source.get(names["pool_max"]), 5),
+        unreachable_host=_clean(source.get(names["unreachable_host"])) or DEFAULT_UNREACHABLE_HOST,
+        unreachable_port=_as_int(source.get(names["unreachable_port"]), 2883),
+        observer_user=_clean(source.get(names["observer_user"])),
+        observer_password=_clean(source.get(names["observer_password"])),
+        metadata_table=_clean(source.get(names["metadata_table"])),
     )
 
 

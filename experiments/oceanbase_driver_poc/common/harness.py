@@ -22,7 +22,12 @@ from typing import Any, Protocol
 from common.checks import CheckSpec, checks_for
 from common.config import ConnectionConfig
 from common.errors import ErrorCode
-from common.evidence import classify_failure
+from common.evidence import (
+    INSTANCE_EVIDENCE_KEY,
+    SERVER_STOP_EVIDENCE_KEY,
+    ServerStopEvidence,
+    classify_failure,
+)
 from common.redaction import Redactor
 from common.results import CheckResult, CheckStatus, RunReport
 
@@ -117,6 +122,66 @@ def run_mode(
         started_at=started_at,
         finished_at=_now(),
         missing_env=list(missing_env),
+        ob_version=_instance_field(results, "version"),
+        compat_mode=_instance_field(results, "compat_mode"),
+    )
+
+
+def _instance_field(checks: Sequence[CheckResult], field: str) -> Any | None:
+    """Lift one field out of whatever instance evidence the sweep collected.
+
+    Args:
+        checks: The check results from a sweep, in declaration order.
+        field: The key to read from the instance evidence payload.
+
+    Returns:
+        The first non-empty value any check recorded for ``field``, or ``None`` when
+        no check reported instance facts.
+    """
+    for check in checks:
+        payload = check.evidence.get(INSTANCE_EVIDENCE_KEY)
+        if isinstance(payload, dict):
+            value = payload.get(field)
+            if value:
+                return value
+    return None
+
+
+def _enforce_server_observation(spec: CheckSpec, result: CheckResult) -> CheckResult:
+    """Refuse a PASS that rests on client-side evidence alone.
+
+    The design makes the server actually stopping its query a gate for the whole
+    runtime selection, not a detail of one check. Stating that in prose is not
+    enough: an implementation that returns PASS without ever looking at the server
+    would sail through. Enforcing it here means the rule holds no matter how the
+    check is written, and an unobservable server-side outcome degrades to
+    ``INDETERMINATE`` rather than to a pass.
+
+    Args:
+        spec: The check specification, carrying the observation requirement.
+        result: The result the driver produced.
+
+    Returns:
+        The result, downgraded to ``INDETERMINATE`` when a PASS lacks a positive
+        server-side observation.
+    """
+    if not spec.requires_server_observation or result.status is not CheckStatus.PASS:
+        return result
+
+    observed = result.evidence.get(SERVER_STOP_EVIDENCE_KEY)
+    if observed == ServerStopEvidence.STOPPED.value:
+        return result
+
+    return CheckResult(
+        check_id=result.check_id,
+        mode=result.mode,
+        name=result.name,
+        status=CheckStatus.INDETERMINATE,
+        summary=f"{result.summary}（未提供服务端停止证据，不计为通过）",
+        error_code=result.error_code,
+        native_code=result.native_code,
+        duration_ms=result.duration_ms,
+        evidence={**result.evidence, "server_stop": observed or ServerStopEvidence.UNDETERMINED.value},
     )
 
 
@@ -151,16 +216,19 @@ def _run_one(mode: str, spec: CheckSpec, driver: Driver, config: ConnectionConfi
             evidence={"exception": exc.__class__.__name__},
         )
 
-    return CheckResult(
-        check_id=spec.check_id,
-        mode=mode,
-        name=spec.name,
-        status=outcome.status,
-        summary=redactor.redact(outcome.summary),
-        error_code=outcome.error_code,
-        native_code=outcome.native_code,
-        duration_ms=_elapsed_ms(started),
-        evidence=redactor.redact_deep(outcome.evidence),
+    return _enforce_server_observation(
+        spec,
+        CheckResult(
+            check_id=spec.check_id,
+            mode=mode,
+            name=spec.name,
+            status=outcome.status,
+            summary=redactor.redact(outcome.summary),
+            error_code=outcome.error_code,
+            native_code=outcome.native_code,
+            duration_ms=_elapsed_ms(started),
+            evidence=redactor.redact_deep(outcome.evidence),
+        ),
     )
 
 

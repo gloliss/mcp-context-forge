@@ -10,6 +10,12 @@ from __future__ import annotations
 from common.checks import MYSQL_CHECKS, ORACLE_CHECKS, CheckSpec
 from common.config import ConnectionConfig
 from common.errors import DriverError, ErrorCode
+from common.evidence import (
+    INSTANCE_EVIDENCE_KEY,
+    SERVER_STOP_EVIDENCE_KEY,
+    ServerStopEvidence,
+    build_instance_evidence,
+)
 from common.harness import CheckOutcome, run_mode
 from common.redaction import MASK, Redactor
 from common.results import CheckStatus
@@ -168,3 +174,91 @@ def test_all_checks_are_declared_once_per_mode() -> None:
 
     assert [check.check_id for check in MYSQL_CHECKS if check.requires_server_observation] == ["M6"]
     assert [check.check_id for check in ORACLE_CHECKS if check.requires_server_observation] == ["O6"]
+
+
+class TestInstanceHandoff:
+    """What a check learns about the instance must reach the report.
+
+    The drivers read the version over the connection, and the report is what the
+    result JSON and the generated conclusions sections read. Without an explicit
+    handoff between the two, a successful connection still produces a document that
+    says the instance version was never read.
+    """
+
+    @staticmethod
+    def _driver_with_instance(**instance: object) -> FakeDriver:
+        return FakeDriver(
+            {
+                "M1": CheckOutcome(
+                    status=CheckStatus.PASS,
+                    summary="连接成功",
+                    evidence={INSTANCE_EVIDENCE_KEY: build_instance_evidence(version="4.3.5.6", compat_mode="oracle", compat_mode_source="v$parameter", probe_attempts=[], **instance)},
+                )
+            }
+        )
+
+    def test_version_and_mode_reach_the_report(self) -> None:
+        """The report carries what the connection check read."""
+        report = run_mode("mysql", config=CONFIG, driver=self._driver_with_instance(), redactor=Redactor())
+        assert report.ob_version == "4.3.5.6"
+        assert report.compat_mode == "oracle"
+        assert report.to_dict()["compat_mode"] == "oracle"
+
+    def test_a_missing_instance_payload_is_not_an_error(self) -> None:
+        """A check that reports nothing about the instance leaves the fields unset."""
+        report = run_mode("mysql", config=CONFIG, driver=FakeDriver(), redactor=Redactor())
+        assert report.ob_version is None
+        assert report.compat_mode is None
+
+    def test_an_unreadable_mode_stays_empty_rather_than_guessed(self) -> None:
+        """Failing to read the mode must not be reported as some default mode."""
+        driver = FakeDriver(
+            {
+                "M1": CheckOutcome(
+                    status=CheckStatus.PASS,
+                    summary="连接成功",
+                    evidence={INSTANCE_EVIDENCE_KEY: build_instance_evidence(version="4.3.5.6", compat_mode=None, compat_mode_source="unavailable", probe_attempts=["variable: unknown"])},
+                )
+            }
+        )
+        report = run_mode("mysql", config=CONFIG, driver=driver, redactor=Redactor())
+        assert report.ob_version == "4.3.5.6"
+        assert report.compat_mode is None
+
+
+class TestServerObservationGate:
+    """A Query Timeout PASS must rest on a server-side observation, not on prose."""
+
+    SPEC = CheckSpec("O6", "Query Timeout", "desc", requires_server_observation=True)
+
+    @staticmethod
+    def _run(evidence: dict[str, object], status: CheckStatus = CheckStatus.PASS):
+        driver = FakeDriver({"O6": CheckOutcome(status=status, summary="客户端超时", evidence=evidence)})
+        return run_mode("oracle", config=CONFIG, driver=driver, redactor=Redactor(), checks=(TestServerObservationGate.SPEC,)).checks[0]
+
+    def test_a_pass_without_server_evidence_is_downgraded(self) -> None:
+        """The rule is enforced by the harness, so a check cannot opt out of it."""
+        check = self._run({})
+        assert check.status is CheckStatus.INDETERMINATE
+        assert "未提供服务端停止证据" in check.summary
+
+    def test_a_pass_with_a_confirmed_stop_survives(self) -> None:
+        """A positive observation is what the gate accepts."""
+        check = self._run({SERVER_STOP_EVIDENCE_KEY: ServerStopEvidence.STOPPED.value})
+        assert check.status is CheckStatus.PASS
+
+    def test_a_pass_claiming_the_server_is_still_running_is_downgraded(self) -> None:
+        """A contradictory PASS must not survive on the strength of its own label."""
+        check = self._run({SERVER_STOP_EVIDENCE_KEY: ServerStopEvidence.STILL_RUNNING.value})
+        assert check.status is CheckStatus.INDETERMINATE
+
+    def test_checks_without_the_requirement_are_untouched(self) -> None:
+        """The gate applies only where the design says it applies."""
+        driver = FakeDriver({"M1": CheckOutcome(status=CheckStatus.PASS, summary="连接成功", evidence={})})
+        check = run_mode("mysql", config=CONFIG, driver=driver, redactor=Redactor(), checks=(CheckSpec("M1", "建立连接", "desc"),)).checks[0]
+        assert check.status is CheckStatus.PASS
+
+    def test_the_downgrade_records_why(self) -> None:
+        """The evidence explains the downgrade rather than leaving it opaque."""
+        check = self._run({})
+        assert check.evidence[SERVER_STOP_EVIDENCE_KEY] == ServerStopEvidence.UNDETERMINED.value

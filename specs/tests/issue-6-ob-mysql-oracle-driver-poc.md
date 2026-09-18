@@ -3,7 +3,7 @@
 - 关联设计：`specs/designs/issue-6-ob-mysql-oracle-driver-poc.md`
 - 关联需求：requirement `d8395176-2691-4ca5-b67f-bc2ec335306e`（GitLab issue #6）
 - work_branch：`feature/issue-6-ob-mysql-oracle-driver-poc`
-- 状态：L0/L1 已实现并通过（2026-09-17，99 项全绿）；L2/L3 待环境（见 §9）
+- 状态：L0/L1 已实现并通过（2026-09-18，150 项全绿）；18 项 L2 检查代码已实现并经 MariaDB 自检验证 harness，真实 OceanBase 验证待环境（见 §9）
 - 上游依据：`specs/tests/issue-5-oceanbase-data-source.md`
 
 ## 1. 验收标准映射（需求 §验收标准）
@@ -87,6 +87,19 @@
 | `test_query_timeout_server_side_stops` | 长查询触发超时后，用**观测连接**在约定期限内确认该查询/会话已终止；输出三态结论「已停止 / 未停止 / 无法判定」，**不得**把「无法判定」写成通过 |
 
 > 观测方式：由**测试 DBA 账号**观测服务端会话与运行中查询，不因此给运行账号增加管理权限。
+
+> **实施期落定（2026-09-18）**：上表 18 项**不是 pytest 用例函数**，而是驱动适配器里的
+> 检查方法（`mysql_mode/driver.py` 的 `_check_*` / `oracle_mode/driver.py` 的 `_check_*`），
+> 由 `run_poc.py` 显式调用。相应地：
+>
+> - **无数据库时**它们整体记 `SKIP_NO_ENV`（不是 skip 掉的 pytest 用例）；
+> - `tests/test_driver_params.py::test_every_declared_check_has_a_handler` 断言 9 项检查
+>   各有一个 handler，防止某天悄悄退化成「未实现」；
+> - 纯函数部分（SQL 构造、判定规则、参数映射、错误码）由 L1 覆盖；
+> - MySQL 侧另有一层 **MariaDB 自检**（`scripts/mariadb_smoke.sh`）真跑 M1–M9，用于发现
+>   「SQL 写错、控制流写错、驱动 API 用错」——它验证的是 harness 代码，**不是** OceanBase
+>   兼容性，结果不得写入结论文档（详见结论文档 §12）。
+> - **Oracle 侧没有对应自检后端**，O1–O9 只经过 L1 纯函数测试。
 
 ### 2.4 L3 Runtime 横向评估
 

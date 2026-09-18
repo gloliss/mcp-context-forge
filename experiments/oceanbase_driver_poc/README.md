@@ -25,6 +25,7 @@ oceanbase_driver_poc/
 ├── mysql_mode/             MySQL 兼容模式驱动适配
 ├── oracle_mode/            Oracle 兼容模式驱动适配
 ├── runtimes/               跨运行时评估（TS/.NET），归属 L3，当前为空
+├── scripts/                开发用辅助脚本（MariaDB 自检后端）
 ├── tests/                  L0 无 DB 自检 + L1 stub 单元
 └── results/                每次运行的机器可读结果（不提交）
 ```
@@ -75,6 +76,9 @@ python -m pytest -q
 # 真实验证（需要能访问 OceanBase 的机器 + 已注入环境变量）
 python run_poc.py --mode all
 python run_poc.py --mode oracle --out results/
+
+# 开发用：没有 OceanBase 时，用 MariaDB 验证 harness 代码本身（见「关于 MariaDB 自检」）
+scripts/mariadb_smoke.sh --install
 ```
 
 `run_poc.py` 退出码：`0` 无失败；`2` 有检查失败/异常/无法判定；`1` 用法或配置错误。
@@ -105,25 +109,40 @@ python run_poc.py --mode all --md-out /tmp/poc-sections.md
 
 ## 当前实现状态
 
-骨架与 L0/L1 已完成；L2（真实验证）依赖外部环境，尚未接通。
+18 项检查全部实现；L2（真实验证）依赖外部环境，尚未接通。
 
 | 项 | 状态 |
 |---|---|
 | 目录骨架、入口、依赖隔离 | 已完成 |
-| 配置读取、脱敏、结果契约、错误码映射 | 已完成，L0 覆盖 |
-| 判定规则（含 Query Timeout 证据规则） | 已完成，L1 覆盖 |
+| 配置读取、脱敏、结果契约、错误码映射 | 已完成，L0/L1 覆盖 |
+| 判定规则（含 Query Timeout 证据规则） | 已完成并为 harness 强制执行，L1 覆盖 |
 | 两种模式的连接参数映射与超时单位换算 | 已完成，L1 覆盖 |
-| `M1`/`O1` 建立连接、`M2`/`O2` 简单查询 | 已实现，等待 L2 实测 |
-| `M3`–`M9` / `O3`–`O9` | **未实现**，报告为 `UNSUPPORTED`（`l2-pending`） |
+| `M1`–`M9` / `O1`–`O9`（18 项） | **已实现**，等待真实 OceanBase 实测 |
+| MariaDB 自检后端（仅验证 harness 代码本身） | 已完成，见 `scripts/mariadb_smoke.sh` |
 | `runtimes/`（TS/.NET） | 未开始（L3） |
 
-因此，此刻在任何机器上运行 `run_poc.py`，未接通的检查都会明确报告未实现，
-而不会给出任何形式的通过。
+**实现完整不等于结论成立。** 18 项检查的代码都已写好并经过 L1 与 MariaDB 自检，
+但**没有任何一项在 OceanBase 上跑过**，因此结论文档中的实测结论仍然为空。
+未接通 L2 时运行 `run_poc.py`，全部检查记为 `SKIP_NO_ENV`，不会给出任何形式的通过。
+
+### 关于 MariaDB 自检
+
+`scripts/mariadb_smoke.sh` 用 MariaDB 当后端把 MySQL 模式的检查真跑一遍，用来发现
+「SQL 写错、控制流写错、驱动 API 用错」这类问题——这些问题在只有真实 OceanBase 才能
+跑的前提下，原本要等拿到环境才暴露。它已经抓到过两个真实缺陷（错误码 1698 未映射、
+不存在的库会返回 1044 而非 1049）。
+
+**它验证的是 harness 写对了没有，不是 OceanBase 兼容不兼容。** MariaDB 与 OceanBase 的
+差异（没有 `ob_query_timeout`、没有 `ob_compatibility_mode`、元数据视图不同）恰恰是 POC
+要验证的对象，所以该后端的结果**不得**写入结论文档，运行时也一律标 `--runtime mariadb-smoke`。
+
+Oracle 模式**没有**对应的自检后端（MariaDB 说的是 MySQL 协议），因此 O1–O9 的代码路径
+只经过 L1 的纯函数测试，没有任何真实服务器验证过。
 
 ## 门禁
 
 ```bash
-python -m pytest -q                                              # POC 自检（99 项）
+python -m pytest -q                                              # POC 自检（150 项）
 make ruff TARGET=experiments/oceanbase_driver_poc                # 默认 TARGET 是 mcpgateway，必须显式传
 make detect-secrets-scan                                         # 提交前
 ```

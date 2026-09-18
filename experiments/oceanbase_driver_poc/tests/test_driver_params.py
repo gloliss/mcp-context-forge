@@ -11,8 +11,9 @@ measuring nothing.
 from __future__ import annotations
 
 import pytest
-from common.checks import CheckSpec
+from common.checks import MYSQL_CHECKS, ORACLE_CHECKS, CheckSpec
 from common.config import ConnectionConfig
+from common.errors import ErrorCode
 from common.redaction import MASK, Redactor
 from common.results import CheckStatus
 from mysql_mode import driver as mysql_driver
@@ -74,10 +75,16 @@ class TestMySQLParameters:
         assert outcome.status is CheckStatus.UNSUPPORTED
         assert outcome.evidence["reason"] == "driver-not-installed"
 
-    def test_not_yet_wired_checks_are_marked_unimplemented(self) -> None:
-        """The skeleton's L2 gaps are explicit rather than silently absent."""
+    def test_every_declared_check_has_a_handler(self) -> None:
+        """The suite covers every declared check, so none can regress to skipped."""
         driver = mysql_driver.PyMySQLDriver(object(), "1.2.3", Redactor())
-        outcome = driver.run_check(CheckSpec("M4", "Connection Pool", "desc"), MYSQL_CONFIG)
+        declared = {spec.check_id for spec in MYSQL_CHECKS}
+        assert declared - driver.implemented_checks == set()
+
+    def test_unknown_check_id_reports_unimplemented(self) -> None:
+        """An id with no handler is reported explicitly rather than silently absent."""
+        driver = mysql_driver.PyMySQLDriver(object(), "1.2.3", Redactor())
+        outcome = driver.run_check(CheckSpec("M99", "不存在的检查", "desc"), MYSQL_CONFIG)
         assert outcome.status is CheckStatus.UNSUPPORTED
         assert outcome.evidence == {"unimplemented": True, "reason": "l2-pending"}
 
@@ -88,7 +95,88 @@ class TestMySQLParameters:
         assert isinstance(driver.version, str) and driver.version
 
 
-class TestOracleParameters:
+class TestMySQLProbeHelpers:
+    """Pure pieces the L2 checks depend on, testable without a server."""
+
+    def test_compat_mode_shapes_are_normalised(self) -> None:
+        """The two candidate probes return different row shapes for the same fact."""
+        assert mysql_driver.normalize_compat_mode("variable", ("oracle",)) == "oracle"
+        assert mysql_driver.normalize_compat_mode("show-variables", ("ob_compatibility_mode", "oracle")) == "oracle"
+
+    def test_absent_compat_mode_is_none_not_a_default(self) -> None:
+        """A probe that returned nothing must not be reported as some mode."""
+        assert mysql_driver.normalize_compat_mode("variable", None) is None
+        assert mysql_driver.normalize_compat_mode("variable", (None,)) is None
+        assert mysql_driver.normalize_compat_mode("show-variables", ("only_name",)) is None
+
+    def test_pool_acquire_timeout_is_bounded(self) -> None:
+        """Acquisition must fail promptly rather than inherit an unbounded wait."""
+        assert mysql_driver.pool_acquire_timeout_s(ConnectionConfig(mode="mysql", host="h", port=1, user="u", password="p", connect_timeout_s=0.1)) == 1.0
+        assert mysql_driver.pool_acquire_timeout_s(ConnectionConfig(mode="mysql", host="h", port=1, user="u", password="p", connect_timeout_s=2.0)) == 2.0
+        assert mysql_driver.pool_acquire_timeout_s(ConnectionConfig(mode="mysql", host="h", port=1, user="u", password="p", connect_timeout_s=30.0)) == 5.0
+
+    def test_timeout_probe_carries_a_unique_marker(self) -> None:
+        """The observation query identifies one run's statement on a shared server."""
+        first, second = mysql_driver.new_probe_marker(), mysql_driver.new_probe_marker()
+        assert first != second
+        assert first in mysql_driver.build_timeout_probe(5, first)
+
+    def test_probe_connect_kwargs_apply_the_overrides(self) -> None:
+        """Each error probe varies exactly one connect parameter."""
+        base = ConnectionConfig(mode="mysql", host="h", port=2883, user="u", password="p", database="d")
+        by_db = next(probe for probe in mysql_driver.ERROR_PROBES if probe.override_database)
+        by_user = next(probe for probe in mysql_driver.ERROR_PROBES if probe.override_user)
+        assert mysql_driver.build_probe_connect_kwargs(base, by_db)["database"] == by_db.override_database
+        assert mysql_driver.build_probe_connect_kwargs(base, by_user)["user"] == by_user.override_user
+
+    def test_error_probe_expectations_are_non_empty_code_tuples(self) -> None:
+        """Every probe must declare at least one acceptable classification."""
+        for probe in mysql_driver.ERROR_PROBES:
+            assert probe.expect, probe.key
+            assert all(isinstance(code, ErrorCode) for code in probe.expect)
+            assert probe.statement or probe.override_database or probe.override_user
+
+    def test_probe_keys_are_unique(self) -> None:
+        """Duplicated keys would collapse two findings into one in the report."""
+        keys = [probe.key for probe in mysql_driver.ERROR_PROBES]
+        assert len(keys) == len(set(keys))
+
+
+class TestOracleProbeHelpers:
+    """The Oracle equivalents of the same pure pieces."""
+
+    def test_named_bind_sql_projects_every_case(self) -> None:
+        """The statement is generated from the bind cases, so it cannot drift."""
+        names = oracle_driver.bind_case_names()
+        statement = oracle_driver.build_bind_sql(names)
+        assert statement.startswith("SELECT :p0 AS p0")
+        assert statement.endswith("FROM DUAL")
+        assert len(names) == len(set(names))
+
+    def test_timeout_probe_carries_a_unique_marker(self) -> None:
+        """Same marker requirement as the MySQL mode."""
+        marker = oracle_driver.new_probe_marker()
+        assert marker in oracle_driver.build_timeout_probe(marker)
+
+    def test_probe_connect_kwargs_apply_the_user_override(self) -> None:
+        """The auth probe replaces the account and nothing else."""
+        base = ConnectionConfig(mode="oracle", host="h", port=2883, user="u", password="p", service_name="svc")
+        probe = next(probe for probe in oracle_driver.ERROR_PROBES if probe.override_user)
+        kwargs = oracle_driver.build_probe_connect_kwargs(base, probe)
+        assert kwargs["user"] == probe.override_user
+        assert kwargs["dsn"] == oracle_driver.build_dsn(base)
+
+    def test_error_probe_expectations_are_non_empty_code_tuples(self) -> None:
+        """Every probe must declare at least one acceptable classification."""
+        for probe in oracle_driver.ERROR_PROBES:
+            assert probe.expect, probe.key
+            assert all(isinstance(code, ErrorCode) for code in probe.expect)
+            assert probe.statement or probe.override_user
+
+    def test_probe_keys_are_unique(self) -> None:
+        """Duplicated keys would collapse two findings into one in the report."""
+        keys = [probe.key for probe in oracle_driver.ERROR_PROBES]
+        assert len(keys) == len(set(keys))
     """python-oracledb mixes seconds and milliseconds across two settings."""
 
     def test_dsn_uses_the_service_name(self) -> None:
@@ -172,9 +260,15 @@ class TestOracleParameters:
         assert outcome.status is CheckStatus.UNSUPPORTED
         assert outcome.evidence["reason"] == "driver-not-installed"
 
-    def test_not_yet_wired_checks_are_marked_unimplemented(self) -> None:
-        """The skeleton's L2 gaps are explicit rather than silently absent."""
+    def test_every_declared_check_has_a_handler(self) -> None:
+        """The suite covers every declared check, so none can regress to skipped."""
         driver = oracle_driver.OracleDBDriver(object(), "3.0.0", Redactor())
-        outcome = driver.run_check(CheckSpec("O6", "Query Timeout", "desc"), ORACLE_CONFIG)
+        declared = {spec.check_id for spec in ORACLE_CHECKS}
+        assert declared - driver.implemented_checks == set()
+
+    def test_unknown_check_id_reports_unimplemented(self) -> None:
+        """An id with no handler is reported explicitly rather than silently absent."""
+        driver = oracle_driver.OracleDBDriver(object(), "3.0.0", Redactor())
+        outcome = driver.run_check(CheckSpec("O99", "不存在的检查", "desc"), ORACLE_CONFIG)
         assert outcome.status is CheckStatus.UNSUPPORTED
         assert outcome.evidence == {"unimplemented": True, "reason": "l2-pending"}

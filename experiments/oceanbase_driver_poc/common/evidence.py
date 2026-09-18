@@ -16,9 +16,17 @@ capability it does not have.
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from common.errors import DriverError, ErrorCode, classify_mysql_error, classify_oracle_error
 from common.results import CheckStatus
+
+# A check records what it learned about the instance under the key ``instance`` in its
+# evidence. The harness lifts that into the report's top-level ``ob_version`` /
+# ``compat_mode``, which is what the result JSON and the generated conclusions
+# sections read. Without this handoff the drivers read the version and nothing ever
+# surfaces it, so the document reports "未读取" even after a successful connection.
+INSTANCE_EVIDENCE_KEY = "instance"
 
 
 class ServerStopEvidence(str, Enum):
@@ -27,6 +35,39 @@ class ServerStopEvidence(str, Enum):
     STOPPED = "server_stopped"
     STILL_RUNNING = "server_still_running"
     UNDETERMINED = "server_undetermined"
+
+
+# The evidence key a Query Timeout check must carry for its PASS to survive the
+# harness. Only a positive server-side observation counts.
+SERVER_STOP_EVIDENCE_KEY = "server_stop"
+
+
+def build_instance_evidence(
+    *,
+    version: str | None,
+    compat_mode: str | None,
+    compat_mode_source: str | None,
+    probe_attempts: list[str] | None = None,
+) -> dict[str, Any]:
+    """Assemble the instance facts a connection check learned.
+
+    Args:
+        version: The instance version, when it could be read.
+        compat_mode: The self-reported compatibility mode, when it could be read.
+        compat_mode_source: Which probe produced ``compat_mode``, or the reason it is
+            absent. Recorded so a ``None`` mode is actionable rather than opaque --
+            "we could not ask" and "the instance said nothing" are different.
+        probe_attempts: Rendered attempts, for diagnosing a failed probe.
+
+    Returns:
+        The evidence payload to store under :data:`INSTANCE_EVIDENCE_KEY`.
+    """
+    return {
+        "version": version,
+        "compat_mode": compat_mode,
+        "compat_mode_source": compat_mode_source,
+        "probe_attempts": list(probe_attempts or []),
+    }
 
 
 def judge_query_timeout(*, client_timed_out: bool, server: ServerStopEvidence) -> tuple[CheckStatus, str]:

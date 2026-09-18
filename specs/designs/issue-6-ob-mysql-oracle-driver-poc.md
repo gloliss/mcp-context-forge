@@ -2,7 +2,7 @@
 
 - 关联需求：requirement `d8395176-2691-4ca5-b67f-bc2ec335306e`（GitLab issue #6）《[OB-00] OceanBase MySQL / Oracle 双模式 Driver POC》
 - work_branch：`feature/issue-6-ob-mysql-oracle-driver-poc`
-- 状态：骨架与 L0/L1 已实现（2026-09-17）；L2 真实验证待环境（见测试计划 §9）
+- 状态：18 项检查已实现并通过 L0/L1 与 MariaDB 自检（2026-09-18）；L2 真实验证待环境（见测试计划 §9）
 - 上游依据：`specs/designs/issue-5-oceanbase-data-source.md` §10 R9/R10、§11.1、§11.2
 - 下游去向：结论回填 issue-5 的驱动候选表与 `validated_compat_modes`，作为 Database Runtime 选型依据
 
@@ -147,6 +147,18 @@ MySQL 模式走 MySQL 线协议：`PyMySQL`（已是仓库既有依赖）为主�
 - **二级（追加，选型决定性）**：以另一只观测连接确认**服务端会话/查询确已终止**（Oracle 模式考察 `connection.cancel()`、`ob_query_timeout`、会话终止等手段）。
 
 **二级证据是各 Runtime 候选能否进入稳定版的一票否决项。** 仅让客户端等待结束、后台线程继续执行**不算达标**——这正是 issue-5 记录的现有缺口（`tool_service.py:7273-7284`，客户端取消不终止 DB 查询）。
+
+> **实施期落定（2026-09-18）**：两条落实方式写进了代码，不再是文档承诺。
+>
+> ① **观测需要第二个账号**：`OB_{MYSQL,ORACLE}_OBSERVER_USER/PASSWORD`（只读 + PROCESS
+> 或等同观测权限，**不给运行账号加管理权限**）。未配置时服务端结论只能是「无法判定」，
+> 该项记 `INDETERMINATE`——**不会**记为通过。
+>
+> ② **一票否决由 harness 强制执行**：`common/harness.py::_enforce_server_observation()`
+> 对 `requires_server_observation=True` 的检查要求 outcome 携带
+> `evidence.server_stop == "server_stopped"`，否则把 `PASS` 降级为 `INDETERMINATE`。
+> 这样即便将来某个检查实现直接返回 `PASS`，规则依然成立——由
+> `tests/test_harness_orchestration.py::TestServerObservationGate` 锁定。
 
 **D9 — 元数据验证走「驱动原生字典视图」与「SQLAlchemy inspect 反射」两条路径，并记录差异。**
 下游 issue-5 的元数据能力计划走 SQLAlchemy 通用反射路径，而 SQLAlchemy 的 `mysql` / `oracle` dialect 并非为 OB 编写。Oracle 模式需覆盖 `ALL_TABLES` / `ALL_TAB_COLUMNS` 等字典视图；并记录标识符大小写与引用语义（Oracle 未加引号即大写，`RTD6` 按大写原样处理，对应 issue-5 §10 R11）。

@@ -61,13 +61,15 @@ def build_redactor() -> Redactor:
 
     Returns:
         A redactor holding the passwords of every mode, regardless of which mode is
-        being run, so a value cannot leak through a stray cross-mode message.
+        being run, so a value cannot leak through a stray cross-mode message. The
+        observer account's password is included: it is a second credential, and
+        registering only the first would leave it unredacted.
     """
     secrets: list[str] = []
     for mode in MODES:
         config = load_config(mode)
         if config is not None:
-            secrets.append(config.password)
+            secrets.extend(config.secrets)
     return Redactor(secrets)
 
 

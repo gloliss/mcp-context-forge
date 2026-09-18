@@ -108,6 +108,91 @@ class TestMySQLMapping:
         assert all(isinstance(value, ErrorCode) for value in MYSQL_ERRNO_MAP.values())
 
 
+class TestQueryTimeoutDisambiguation:
+    """CR_SERVER_LOST is overloaded, and misreading it corrupts the timeout contract.
+
+    PyMySQL raises errno 2013 both for a dropped connection and for a socket read
+    timeout -- which is the query timeout this POC itself configured. Reporting a
+    read timeout as "unreachable" would hand the downstream design the wrong error
+    for the one check that exists to detect timeouts.
+    """
+
+    def test_read_timeout_is_a_timeout_not_an_unreachable_endpoint(self) -> None:
+        """The wording PyMySQL embeds is what separates the two meanings."""
+        code, native = classify_mysql_error("Lost connection to MySQL server during query (timed out)", 2013)
+        assert code is ErrorCode.DB_TIMEOUT
+        assert native == "2013"
+
+    def test_a_genuine_drop_keeps_the_unreachable_meaning(self) -> None:
+        """Without timeout wording the same errno still means the connection died."""
+        code, native = classify_mysql_error("Lost connection to MySQL server during query (Connection reset by peer)", 2013)
+        assert code is ErrorCode.DB_UNREACHABLE
+        assert native == "2013"
+
+    def test_unreachable_endpoint_is_not_reported_as_a_timeout(self) -> None:
+        """A connect failure that mentions a timeout is still a reachability failure.
+
+        "Can't connect ... (timed out)" says the endpoint never answered. Grading it
+        DB_TIMEOUT would make the connect-timeout check and the query-timeout check
+        indistinguishable in the result file.
+        """
+        for message in (
+            "Can't connect to MySQL server on 'h' (timed out)",
+            'connection refused',
+        ):
+            assert classify_mysql_error(message)[0] is ErrorCode.DB_UNREACHABLE
+
+
+class TestUnmappedErrnoFallsBackToTheMessage:
+    """The errno table is not exhaustive, and the message still carries signal."""
+
+    def test_an_unmapped_errno_still_uses_its_message(self) -> None:
+        """MariaDB reports access-denied under 1698; the wording must still classify.
+
+        Returning the catch-all the moment an errno is absent from the table would
+        discard a perfectly clear "Access denied for user" message. The native code is
+        kept either way, so no diagnostic information is lost by looking first.
+        """
+        code, native = classify_mysql_error("(1698, \"Access denied for user 'x'@'localhost'\")")
+        assert code is ErrorCode.DB_AUTH_FAILED
+        assert native == "1698"
+
+    def test_a_mapped_errno_still_wins_over_its_message(self) -> None:
+        """The table is authoritative when it has an entry."""
+        code, _ = classify_mysql_error("(1146, \"Table 'x' doesn't exist\")")
+        assert code is ErrorCode.DB_OBJECT_NOT_FOUND
+
+    def test_an_unmapped_errno_with_no_signal_stays_a_driver_error(self) -> None:
+        """Nothing recognisable means nothing is claimed."""
+        code, native = classify_mysql_error("(9999, 'something entirely new')")
+        assert code is ErrorCode.DB_DRIVER_ERROR
+        assert native == "9999"
+
+    def test_1698_is_also_mapped_directly(self) -> None:
+        """The socket-auth access-denied code is worth an explicit entry."""
+        assert MYSQL_ERRNO_MAP[1698] is ErrorCode.DB_AUTH_FAILED
+
+
+class TestOracleClientSideTimeouts:
+    """python-oracledb reports its own failures under DPI-/DPY-, not ORA-."""
+
+    def test_a_client_side_timeout_classifies_as_a_timeout(self) -> None:
+        """A call timeout is a timeout even without an ORA code.
+
+        The specific DPI number is deliberately not pinned: python-oracledb could
+        not be installed here, so the wording is matched rather than a code this POC
+        has never been able to observe.
+        """
+        code, native = classify_oracle_error("DPI-1067: call timeout of 30000 ms exceeded")
+        assert code is ErrorCode.DB_TIMEOUT
+        assert native is None
+
+    def test_a_non_timeout_driver_failure_stays_a_driver_error(self) -> None:
+        """Not every DPI- message is a timeout."""
+        code, _ = classify_oracle_error("DPY-6005: cannot connect to database")
+        assert code is ErrorCode.DB_DRIVER_ERROR
+
+
 class TestDriverError:
     """A driver that classifies its own failure is trusted."""
 
