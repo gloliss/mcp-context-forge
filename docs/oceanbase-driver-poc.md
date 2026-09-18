@@ -147,6 +147,12 @@ O1–O9 同样已实现、同样零次真实执行。**并且 Oracle 侧比 MySQ
 由 `test_harness_orchestration.py::TestServerObservationGate` 锁定）。未配置观测账号时，
 服务端结论为「无法判定」，该项因此记 `INDETERMINATE`——**不会**记为通过。
 
+**客户端那一半只认超时**（复查修正）：只要客户端失败在配置期限内，就当作「客户端超时」是
+错的——SLEEP 无权限、连接被断、语法错误都会快速失败，而探针没跑起来时标记串自然不在服务端，
+观测一步会读作「服务端已停止」，两者合起来足以给出一个**假的通过**。现在按错误码判定：
+只有 `DB_TIMEOUT` 才算客户端超时，其余一律记 `INDETERMINATE` 并附实际错误码，不对没问过的
+问题作答。该路径由 `tests/test_query_timeout_check.py` 覆盖。
+
 另有两个待 L2 确认点：`ob_query_timeout` 在 OB 的两种模式下是否都被接受（在 MariaDB 上
 它不存在，见 §12），以及 `connection.cancel()` 能否真正停下 OB Oracle 模式的服务端查询
 （对应 issue-5 R10）。
