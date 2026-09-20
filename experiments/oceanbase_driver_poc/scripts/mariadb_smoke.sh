@@ -14,6 +14,13 @@
 #   scripts/mariadb_smoke.sh            # 假定 mariadb 已安装
 #   scripts/mariadb_smoke.sh --install  # 先装 mariadb-server 再跑（需 root）
 #
+# ⚠️ 在 rcobot 平台上，mariadb-server 装在容器根文件系统里，**不跨 run 保留**：
+#    只有 /root/workspace 是持久的（仓库、.venv、node_modules 都在里面），
+#    根文件系统、/tmp 与 apt 安装的包每个 run 都是新的。实测过一次：上一个 run
+#    装好的 mariadb，下一个 run 里二进制、dpkg 记录、进程、3306 监听全都消失。
+#    所以每次新 run 想跑本脚本，都要带 --install 重新装一次——这不是环境坏了。
+#    持久的是这个脚本本身（在仓库里），不是它装出来的那个服务。
+#
 set -euo pipefail
 
 POC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

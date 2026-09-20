@@ -78,6 +78,7 @@ python run_poc.py --mode all
 python run_poc.py --mode oracle --out results/
 
 # 开发用：没有 OceanBase 时，用 MariaDB 验证 harness 代码本身（见「关于 MariaDB 自检」）
+# MariaDB 装在容器根文件系统里、不跨 run 保留，新 run 都要带 --install 重装一次
 scripts/mariadb_smoke.sh --install
 ```
 
