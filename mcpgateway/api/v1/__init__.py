@@ -394,6 +394,12 @@ def build_v1_router(
 
     v1_router.include_router(plugins_router)
     logger.info("Plugin discovery router included - v1 only")
+
+    # First-Party
+    from mcpgateway.routers.database_sources import router as database_sources_router  # pylint: disable=import-outside-toplevel
+
+    v1_router.include_router(database_sources_router)
+    logger.info("Database sources router included - v1 only")
     return v1_router
 
 

@@ -1388,6 +1388,7 @@ class Permissions:
     ADMIN_GRPC = "admin.grpc"
     ADMIN_HTTP = "admin.http"
     ADMIN_SQL_SOURCES = "admin.sql_sources"
+    ADMIN_DATABASE_SOURCES = "admin.database_sources"
     ADMIN_PLUGINS = "admin.plugins"
     ADMIN_METRICS = "admin.metrics"
     ADMIN_EXPORT = "admin.export"
@@ -5734,6 +5735,80 @@ class HttpService(Base):
             str: A formatted string containing the service's ID, name, and base URL.
         """
         return f"<HttpService(id='{self.id}', name='{self.name}', base_url='{self.base_url}')>"
+
+
+class DatabaseSource(Base):
+    """Unified database data source (OB-01).
+
+    A single domain model underpinning the OceanBase, Oracle, MySQL, and
+    PostgreSQL adapters.  OceanBase is modeled as ``engine="oceanbase"`` with
+    a ``compatibility_mode`` of ``mysql`` or ``oracle`` — never as a distinct
+    ``oceanbase_mysql``/``oceanbase_oracle`` engine.  The password is stored
+    encrypted at rest via :class:`EncryptedText` and is never returned by the
+    API (``DatabaseSourceRead`` omits ``password``).
+    """
+
+    __tablename__ = "database_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Engine identity.  ``compatibility_mode`` is only meaningful (and
+    # required) when ``engine == "oceanbase"``.
+    engine: Mapped[str] = mapped_column(String(40), nullable=False)
+    compatibility_mode: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    # Connection addressing.
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    cluster_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    tenant_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    database_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    schema_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Credentials.  ``password`` is encrypted at rest; ``credential_encrypted``
+    # tracks whether a credential is present (and therefore encrypted).
+    username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    password: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
+    credential_encrypted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Connection behavior knobs.
+    ssl_mode: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    charset: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    timezone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # Free-form per-source configuration, reserved for the future adapters.
+    connection_config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    pool_config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    policy_config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    tool_config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    # State.
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    reachable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    detected_compatibility_mode: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Audit metadata.
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    # Timestamps.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    def __repr__(self) -> str:
+        """Return a credential-free string representation of the source.
+
+        Returns:
+            str: A formatted string containing the source's ID, name, engine,
+                and compatibility mode (never the password).
+        """
+        return f"<DatabaseSource(id='{self.id}', name='{self.name}', engine='{self.engine}', compatibility_mode='{self.compatibility_mode}')>"
 
 
 class HttpSchemaArtifact(Base):

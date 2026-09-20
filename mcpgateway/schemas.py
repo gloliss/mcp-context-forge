@@ -9022,6 +9022,149 @@ class SQLDataSourceRead(BaseModel):
     updated_at: datetime
 
 
+class DatabaseSourceCreate(BaseModel):
+    """Create a unified database data source (OB-01).
+
+    OceanBase is modeled as ``engine="oceanbase"`` with a ``compatibility_mode``
+    of ``mysql`` or ``oracle``.  ``password`` is accepted only as plaintext; it
+    is encrypted at rest by the service and never returned by any read API.
+    """
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    engine: Literal["oceanbase", "oracle", "mysql", "postgresql"] = Field(...)
+    compatibility_mode: Optional[Literal["mysql", "oracle"]] = None
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(..., ge=1, le=65535)
+    cluster_name: Optional[str] = None
+    tenant_name: Optional[str] = None
+    database_name: Optional[str] = None
+    schema_name: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[SecretStr] = Field(None, repr=False)
+    ssl_mode: Optional[Literal["disabled", "preferred", "required", "verify_ca", "verify_full"]] = None
+    charset: Optional[str] = None
+    timezone: Optional[str] = None
+    connection_config: Dict[str, Any] = Field(default_factory=dict)
+    pool_config: Dict[str, Any] = Field(default_factory=dict)
+    policy_config: Dict[str, Any] = Field(default_factory=dict)
+    tool_config: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate the source display name."""
+        return SecurityValidator.validate_name(v, "Database source name")
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        """Reject empty host strings."""
+        if not v or not v.strip():
+            raise ValueError("host must not be empty")
+        return v.strip()
+
+    @model_validator(mode="after")
+    def validate_compatibility_mode(self) -> "DatabaseSourceCreate":
+        """Enforce the OceanBase engine/compatibility-mode modeling rule."""
+        if self.engine == "oceanbase":
+            if self.compatibility_mode not in ("mysql", "oracle"):
+                raise ValueError("compatibility_mode must be 'mysql' or 'oracle' when engine is 'oceanbase'")
+        elif self.compatibility_mode is not None:
+            raise ValueError("compatibility_mode is only valid when engine is 'oceanbase'")
+        return self
+
+
+class DatabaseSourceUpdate(BaseModel):
+    """Update a unified database data source (OB-01).
+
+    ``password`` accepts plaintext to rotate the credential, or ``None`` /
+    the masked placeholder (``settings.masked_auth_value``) to keep the
+    existing credential.  Cross-field engine/compatibility-mode validation is
+    deferred to the service, which re-checks the merged row state.
+    """
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    engine: Optional[Literal["oceanbase", "oracle", "mysql", "postgresql"]] = None
+    compatibility_mode: Optional[Literal["mysql", "oracle"]] = None
+    host: Optional[str] = Field(None, min_length=1, max_length=255)
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    cluster_name: Optional[str] = None
+    tenant_name: Optional[str] = None
+    database_name: Optional[str] = None
+    schema_name: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[SecretStr] = Field(None, repr=False)
+    ssl_mode: Optional[Literal["disabled", "preferred", "required", "verify_ca", "verify_full"]] = None
+    charset: Optional[str] = None
+    timezone: Optional[str] = None
+    connection_config: Optional[Dict[str, Any]] = None
+    pool_config: Optional[Dict[str, Any]] = None
+    policy_config: Optional[Dict[str, Any]] = None
+    tool_config: Optional[Dict[str, Any]] = None
+    enabled: Optional[bool] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        """Validate an updated source display name."""
+        if v is None:
+            return None
+        return SecurityValidator.validate_name(v, "Database source name")
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: Optional[str]) -> Optional[str]:
+        """Reject empty host strings."""
+        if v is None:
+            return None
+        if not v.strip():
+            raise ValueError("host must not be empty")
+        return v.strip()
+
+
+class DatabaseSourceRead(BaseModel):
+    """Credential-free database source response (OB-01).
+
+    Deliberately omits ``password``: credentials are never returned by the
+    list/get/update APIs, so a client cannot retrieve a stored password.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    slug: str
+    description: Optional[str] = None
+    engine: str
+    compatibility_mode: Optional[str] = None
+    host: str
+    port: int
+    cluster_name: Optional[str] = None
+    tenant_name: Optional[str] = None
+    database_name: Optional[str] = None
+    schema_name: Optional[str] = None
+    username: Optional[str] = None
+    credential_encrypted: bool
+    ssl_mode: Optional[str] = None
+    charset: Optional[str] = None
+    timezone: Optional[str] = None
+    connection_config: Dict[str, Any] = Field(default_factory=dict)
+    pool_config: Dict[str, Any] = Field(default_factory=dict)
+    policy_config: Dict[str, Any] = Field(default_factory=dict)
+    tool_config: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool
+    reachable: bool
+    detected_compatibility_mode: Optional[str] = None
+    last_checked_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class SQLTableUpdate(BaseModel):
     """Update table assignment and per-operation exposure policy."""
 
