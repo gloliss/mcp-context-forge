@@ -1,0 +1,17 @@
+{
+  "name": "ob-driver-poc-typescript",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OceanBase dual-mode driver POC: TypeScript runtime evaluation (L3, bounded scope)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node run.mjs --mode all"
+  },
+  "dependencies": {
+    "mysql2": "3.15.3",
+    "oracledb": "7.0.1"
+  }
+}
