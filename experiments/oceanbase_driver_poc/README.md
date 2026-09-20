@@ -137,8 +137,10 @@ python run_poc.py --mode all --md-out /tmp/poc-sections.md
 差异（没有 `ob_query_timeout`、没有 `ob_compatibility_mode`、元数据视图不同）恰恰是 POC
 要验证的对象，所以该后端的结果**不得**写入结论文档，运行时也一律标 `--runtime mariadb-smoke`。
 
-Oracle 模式**没有**对应的自检后端（MariaDB 说的是 MySQL 协议），因此 O1–O9 的代码路径
-只经过 L1 的纯函数测试，没有任何真实服务器验证过。
+Oracle 模式**没有**对应的自检后端（MariaDB 说的是 MySQL 协议），因此没有任何真实服务器
+验证过 O1–O9。其中 **O3、O6 的代码路径由脚本化游标覆盖**（`tests/test_bind_checks.py`、
+`tests/test_query_timeout_check.py`：在 Python API 层伪造驱动模块，驱动真实的 `_check_*`
+方法），其余七项只有 L1 纯函数测试，**函数体本身从未执行过**。
 
 ## 门禁
 
