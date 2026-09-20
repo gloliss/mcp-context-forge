@@ -51,15 +51,6 @@ class MySQLAdapter(SQLAlchemyDatabaseAdapter):
         return f"EXPLAIN {sql}"
 
 
-class OceanBaseMySQLAdapter(MySQLAdapter):
-    """OceanBase in MySQL compatibility mode."""
-
-    def _infer_mode(self, version: str) -> Optional[str]:
-        # OceanBase reports itself in the version string; without a verified
-        # probe this falls back to the source's configured mode.
-        return getattr(self._source, "compatibility_mode", None) or "mysql"
-
-
 class PostgreSQLAdapter(SQLAlchemyDatabaseAdapter):
     """PostgreSQL engine over the psycopg3 driver."""
 
@@ -143,10 +134,3 @@ class OracleAdapter(SQLAlchemyDatabaseAdapter):
             or getattr(source, "tenant_name", None)
             or getattr(source, "database_name", None)
         )
-
-
-class OceanBaseOracleAdapter(OracleAdapter):
-    """OceanBase in Oracle compatibility mode."""
-
-    def _infer_mode(self, version: str) -> Optional[str]:
-        return getattr(self._source, "compatibility_mode", None) or "oracle"

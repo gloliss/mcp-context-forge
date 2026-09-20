@@ -97,14 +97,18 @@ def _register_builtins(registry: AdapterRegistry) -> None:
     # First-Party (imported lazily to avoid a module cycle with registry)
     from mcpgateway.adapters.database.adapters import (  # pylint: disable=import-outside-toplevel
         MySQLAdapter,
-        OceanBaseMySQLAdapter,
-        OceanBaseOracleAdapter,
         OracleAdapter,
         PostgreSQLAdapter,
     )
+    from mcpgateway.adapters.database.oceanbase import (  # pylint: disable=import-outside-toplevel
+        OceanBaseAdapter,
+    )
 
-    registry.register("oceanbase", "mysql", OceanBaseMySQLAdapter)
-    registry.register("oceanbase", "oracle", OceanBaseOracleAdapter)
+    # OceanBase serves both wire modes through the single unified adapter; the
+    # mode is selected at instantiation time from the source's compatibility
+    # mode rather than by duplicating the adapter class.
+    registry.register("oceanbase", "mysql", OceanBaseAdapter)
+    registry.register("oceanbase", "oracle", OceanBaseAdapter)
     registry.register("oracle", None, OracleAdapter)
     registry.register("mysql", None, MySQLAdapter)
     registry.register("postgresql", None, PostgreSQLAdapter)

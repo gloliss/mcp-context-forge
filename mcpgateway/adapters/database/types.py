@@ -159,3 +159,40 @@ class QueryResult:
             "elapsed_ms": self.elapsed_ms,
             "warnings": self.warnings,
         }
+
+
+#: Metadata object kinds returned by the adapter metadata API.
+METADATA_TYPE_SCHEMA = "schema"
+METADATA_TYPE_TABLE = "table"
+METADATA_TYPE_VIEW = "view"
+METADATA_TYPE_COLUMN = "column"
+METADATA_TYPE_INDEX = "index"
+METADATA_TYPE_PROCEDURE = "procedure"
+METADATA_TYPE_FUNCTION = "function"
+
+
+@dataclass
+class MetadataObject:
+    """A normalized metadata node shared across every engine mode.
+
+    The serialized shape is the boundary the upper tool layer relies on so it
+    never branches on ``INFORMATION_SCHEMA`` vs ``ALL_TABLES``:
+    ``{"schema": ..., "name": ..., "type": ..., "description": null,
+    "columns": []}``.
+    """
+
+    name: str
+    type: str
+    schema: Optional[str] = None
+    description: Optional[str] = None
+    columns: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to the stable metadata-contract mapping."""
+        return {
+            "schema": self.schema,
+            "name": self.name,
+            "type": self.type,
+            "description": self.description,
+            "columns": self.columns,
+        }

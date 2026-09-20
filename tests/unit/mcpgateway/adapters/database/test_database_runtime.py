@@ -31,11 +31,10 @@ from mcpgateway.adapters.database import (
 )
 from mcpgateway.adapters.database.adapters import (
     MySQLAdapter,
-    OceanBaseMySQLAdapter,
-    OceanBaseOracleAdapter,
     OracleAdapter,
     PostgreSQLAdapter,
 )
+from mcpgateway.adapters.database.oceanbase import OceanBaseAdapter
 from mcpgateway.db import DatabaseSource
 
 
@@ -130,16 +129,16 @@ def make_source(**overrides) -> DatabaseSource:
 def test_registry_registration():
     """A registered adapter is returned by lookup for its engine/mode key."""
     registry = AdapterRegistry()
-    registry.register("oceanbase", "mysql", OceanBaseMySQLAdapter)
-    assert registry.lookup("oceanbase", "mysql") is OceanBaseMySQLAdapter
+    registry.register("oceanbase", "mysql", OceanBaseAdapter)
+    assert registry.lookup("oceanbase", "mysql") is OceanBaseAdapter
 
 
 def test_adapter_creation_from_source():
     """Every supported engine/mode resolves to the correct adapter class."""
     registry = get_default_registry()
     cases = [
-        ({"engine": "oceanbase", "compatibility_mode": "mysql"}, OceanBaseMySQLAdapter),
-        ({"engine": "oceanbase", "compatibility_mode": "oracle"}, OceanBaseOracleAdapter),
+        ({"engine": "oceanbase", "compatibility_mode": "mysql"}, OceanBaseAdapter),
+        ({"engine": "oceanbase", "compatibility_mode": "oracle"}, OceanBaseAdapter),
         ({"engine": "oracle", "compatibility_mode": None}, OracleAdapter),
         ({"engine": "mysql", "compatibility_mode": None}, MySQLAdapter),
         ({"engine": "postgresql", "compatibility_mode": None}, PostgreSQLAdapter),

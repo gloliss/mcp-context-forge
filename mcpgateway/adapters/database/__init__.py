@@ -12,6 +12,7 @@ ContextForge tool layer:
 - :mod:`exceptions`     — the error hierarchy.
 - :mod:`base`           — the :class:`DatabaseAdapter` interface.
 - :mod:`adapters`       — built-in engine implementations.
+- :mod:`oceanbase`      — the unified OceanBase adapter (OB-03).
 - :mod:`registry`       — engine/mode -> adapter resolution.
 - :mod:`pool`           — one connection pool per database source.
 - :mod:`runtime_client` — the single entry point for callers.
@@ -21,7 +22,9 @@ from mcpgateway.adapters.database.base import DatabaseAdapter, SQLAlchemyDatabas
 from mcpgateway.adapters.database.exceptions import (
     AdapterNotAvailableError,
     ConnectionFailureError,
+    DB_COMPATIBILITY_MODE_MISMATCH,
     DatabaseAdapterError,
+    DatabaseCompatModeMismatchError,
     PoolClosedError,
     PoolError,
     QueryError,
@@ -29,11 +32,20 @@ from mcpgateway.adapters.database.exceptions import (
     UnknownCompatibilityModeError,
     UnknownEngineError,
 )
+from mcpgateway.adapters.database.oceanbase import OceanBaseAdapter, OceanBaseModeDetector
 from mcpgateway.adapters.database.pool import ConnectionPool, PoolManager
 from mcpgateway.adapters.database.registry import AdapterRegistry, default_registry, get_default_registry
 from mcpgateway.adapters.database.runtime_client import DatabaseRuntimeClient
 from mcpgateway.adapters.database.types import (
     AdapterKey,
+    METADATA_TYPE_COLUMN,
+    METADATA_TYPE_FUNCTION,
+    METADATA_TYPE_INDEX,
+    METADATA_TYPE_PROCEDURE,
+    METADATA_TYPE_SCHEMA,
+    METADATA_TYPE_TABLE,
+    METADATA_TYPE_VIEW,
+    MetadataObject,
     PoolConfig,
     PoolIdentity,
     QueryResult,
@@ -45,9 +57,21 @@ __all__ = [
     "AdapterRegistry",
     "ConnectionFailureError",
     "ConnectionPool",
+    "DB_COMPATIBILITY_MODE_MISMATCH",
     "DatabaseAdapter",
     "DatabaseAdapterError",
+    "DatabaseCompatModeMismatchError",
     "DatabaseRuntimeClient",
+    "METADATA_TYPE_COLUMN",
+    "METADATA_TYPE_FUNCTION",
+    "METADATA_TYPE_INDEX",
+    "METADATA_TYPE_PROCEDURE",
+    "METADATA_TYPE_SCHEMA",
+    "METADATA_TYPE_TABLE",
+    "METADATA_TYPE_VIEW",
+    "MetadataObject",
+    "OceanBaseAdapter",
+    "OceanBaseModeDetector",
     "PoolClosedError",
     "PoolConfig",
     "PoolError",
