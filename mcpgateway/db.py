@@ -5811,6 +5811,43 @@ class DatabaseSource(Base):
         return f"<DatabaseSource(id='{self.id}', name='{self.name}', engine='{self.engine}', compatibility_mode='{self.compatibility_mode}')>"
 
 
+class DatabaseQueryTemplate(Base):
+    """Reusable, parameter-bound query template for a database source (OB-05).
+
+    ``db_execute_template`` executes ``statement`` on the bound source with only
+    the arguments supplied by the agent — the statement is immutable at call
+    time.  ``parameter_schema``/``result_schema`` are JSON Schema documents
+    describing the accepted arguments and the returned rows.
+    """
+
+    __tablename__ = "database_query_templates"
+    __table_args__ = (UniqueConstraint("source_id", "slug", name="uq_database_query_template_source_slug"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("database_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    parameter_schema: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    result_schema: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    max_rows: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
+    timeout_seconds: Mapped[float] = mapped_column(Float, default=15.0, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    def __repr__(self) -> str:
+        """Return a credential-free string representation of the template.
+
+        Returns:
+            str: A formatted string containing the template's id, name, and slug.
+        """
+        return f"<DatabaseQueryTemplate(id='{self.id}', name='{self.name}', slug='{self.slug}')>"
+
+
 class HttpSchemaArtifact(Base):
     """Immutable OpenAPI document version for an HTTP service."""
 

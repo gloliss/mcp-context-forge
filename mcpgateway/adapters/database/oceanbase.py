@@ -406,14 +406,28 @@ class OceanBaseAdapter(SQLAlchemyDatabaseAdapter):
         return detected
 
     def search_objects(self, name: Optional[str] = None, kind: Optional[str] = None, limit: int = 100) -> QueryResult:
-        """List tables/views as a raw result, reusing the metadata API."""
+        """List metadata objects as a raw result, reusing the metadata API.
+
+        Supports the five kinds ``db_search_objects`` exposes — table, view,
+        column, index, and procedure.  ``name`` is a substring filter for
+        table/view/procedure, and the parent table name for column/index.
+        """
         objects: list[MetadataObject] = []
-        if kind in (None, METADATA_TYPE_TABLE):
-            objects.extend(self.list_tables())
-        if kind in (None, METADATA_TYPE_VIEW):
-            objects.extend(self.list_views())
-        if name:
-            objects = [obj for obj in objects if name.lower() in obj.name.lower()]
+        if kind == METADATA_TYPE_COLUMN:
+            if name:
+                objects = self.list_columns(None, name)
+        elif kind == METADATA_TYPE_INDEX:
+            if name:
+                objects = self.list_indexes(None, name)
+        elif kind in (METADATA_TYPE_PROCEDURE, METADATA_TYPE_FUNCTION):
+            objects = self.list_procedures()
+        else:
+            if kind in (None, METADATA_TYPE_TABLE):
+                objects.extend(self.list_tables())
+            if kind in (None, METADATA_TYPE_VIEW):
+                objects.extend(self.list_views())
+        if name and kind not in (METADATA_TYPE_COLUMN, METADATA_TYPE_INDEX):
+            objects = [obj for obj in objects if name.lower() in (obj.name or "").lower()]
         objects = objects[: int(limit)]
         columns = ["schema", "name", "type", "description", "columns"]
         rows = [[obj.schema, obj.name, obj.type, obj.description, obj.columns] for obj in objects]

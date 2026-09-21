@@ -1506,6 +1506,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
     await bootstrap_db()
 
+    # Seed the five built-in Database MCP tools (OB-05) so the Tool Registry
+    # exposes them without per-source duplication. Idempotent: re-running is a
+    # no-op once the rows exist, and it never reverts an admin's enabled toggle.
+    # First-Party
+    from mcpgateway.services.database_tool_service import DatabaseToolService  # pylint: disable=import-outside-toplevel
+
+    with SessionLocal() as _seed_db:
+        DatabaseToolService.ensure_registered(_seed_db)
+
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
 

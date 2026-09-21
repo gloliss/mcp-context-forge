@@ -285,3 +285,61 @@ def test_dialect_metadata_sources():
     assert "all_tab_columns" in oracle.columns_sql("APP", "USERS")[0]
     assert "all_indexes" in oracle.indexes_sql("APP", "USERS")[0]
     assert "all_procedures" in oracle.procedures_sql(None)[0]
+
+
+@pytest.mark.parametrize("compat_mode", ["mysql", "oracle"])
+class TestOceanBaseSearchObjects:
+    """The five-kind ``search_objects`` contract, run for both modes (OB-05).
+
+    ``db_search_objects`` exposes table/view/column/index/procedure with an
+    identical tool contract in MySQL and Oracle mode; these tests pin that the
+    aggregated ``search_objects`` result stays consistent across modes.
+    """
+
+    def test_search_tables(self, compat_mode):
+        adapter, _ = _build(compat_mode)
+        result = adapter.search_objects(kind="table")
+        assert result.columns == ["schema", "name", "type", "description", "columns"]
+        assert result.rows == [["APP", "USERS", "table", "用户表", []]]
+
+    def test_search_views(self, compat_mode):
+        adapter, _ = _build(compat_mode)
+        result = adapter.search_objects(kind="view")
+        assert result.rows == [["APP", "V_USERS", "view", None, []]]
+
+    def test_search_columns(self, compat_mode):
+        adapter, _ = _build(compat_mode)
+        result = adapter.search_objects(kind="column", name="USERS")
+        assert [row[1] for row in result.rows] == ["ID", "NAME"]
+        assert all(row[2] == "column" for row in result.rows)
+
+    def test_search_indexes(self, compat_mode):
+        adapter, _ = _build(compat_mode)
+        result = adapter.search_objects(kind="index", name="USERS")
+        assert len(result.rows) == 1
+        assert result.rows[0][1] == "IDX_USERS_NAME"
+        assert result.rows[0][4] == ["NAME", "ID"]
+
+    def test_search_procedures(self, compat_mode):
+        adapter, _ = _build(compat_mode)
+        result = adapter.search_objects(kind="procedure")
+        assert {(row[1], row[2]) for row in result.rows} == {
+            ("SP_GET_USER", "procedure"),
+            ("FN_COUNT", "function"),
+        }
+
+    def test_search_default_is_table_and_view(self, compat_mode):
+        adapter, _ = _build(compat_mode)
+        result = adapter.search_objects()
+        assert {(row[1], row[2]) for row in result.rows} == {("USERS", "table"), ("V_USERS", "view")}
+
+    def test_search_name_filter(self, compat_mode):
+        adapter, _ = _build(compat_mode)
+        result = adapter.search_objects(kind="table", name="user")
+        assert [row[1] for row in result.rows] == ["USERS"]
+
+    def test_search_unknown_kind_is_empty(self, compat_mode):
+        adapter, _ = _build(compat_mode)
+        result = adapter.search_objects(kind="nonsense")
+        assert result.rows == []
+

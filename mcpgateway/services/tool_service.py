@@ -7299,6 +7299,40 @@ class ToolService(BaseService):
                         error_message = "SQL database operation failed"
                         logger.error("SQL tool invocation failed for %s (%s)", tool_name_original, type(sql_err).__name__)
                         tool_result = ToolResult(content=[TextContent(type="text", text="SQL invocation error: database operation failed")], is_error=True)
+                elif tool_integration_type == "DATABASE":
+                    # The five built-in Database tools share this in-process path,
+                    # reusing the same visibility, plugin, audit, and metrics chain.
+                    try:
+                        # First-Party
+                        from mcpgateway.services.database_tool_service import DatabaseToolError, DatabaseToolService  # pylint: disable=import-outside-toplevel
+
+                        def _invoke_database():
+                            """Execute one database tool with an independent worker-thread session."""
+                            with fresh_db_session() as db_db:
+                                return DatabaseToolService.call(db_db, tool_name_original, arguments or {})
+
+                        db_execution_task = asyncio.create_task(asyncio.to_thread(_invoke_database))
+                        try:
+                            response = await asyncio.shield(db_execution_task)
+                        except asyncio.CancelledError:
+                            try:
+                                await asyncio.shield(db_execution_task)
+                            except Exception as db_completion_error:  # pylint: disable=broad-except
+                                logger.debug("Cancelled DATABASE invocation finished with %s", type(db_completion_error).__name__)
+                            raise
+                        serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2, default=str)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
+                        success = True
+                    except asyncio.CancelledError:
+                        raise
+                    except DatabaseToolError as db_err:
+                        error_message = str(db_err)
+                        logger.warning("Database tool invocation rejected for %s: %s", tool_name_original, db_err)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"Database invocation error: {db_err}")], is_error=True)
+                    except Exception as db_err:
+                        error_message = "Database operation failed"
+                        logger.error("Database tool invocation failed for %s (%s)", tool_name_original, type(db_err).__name__)
+                        tool_result = ToolResult(content=[TextContent(type="text", text="Database invocation error: database operation failed")], is_error=True)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
