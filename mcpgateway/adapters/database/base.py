@@ -15,19 +15,25 @@ dialect driver and a handful of dialect-specific SQL fragments.
 from abc import ABC, abstractmethod
 from time import monotonic
 from typing import Any, Optional
+import threading
 
 # Third-Party
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, URL
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError as SQLAlchemyTimeoutError
 
 # First-Party
-from mcpgateway.adapters.database.exceptions import AdapterNotAvailableError, ConnectionFailureError, DatabaseAdapterError, QueryError
+from mcpgateway.adapters.database.exceptions import (
+    AdapterNotAvailableError,
+    ConnectionFailureError,
+    DatabaseAdapterError,
+    DatabaseConnectionTimeoutError,
+    DatabaseQueryTimeoutError,
+    QueryError,
+)
 from mcpgateway.adapters.database.pool import ConnectionPool, PoolConfig, PoolIdentity
+from mcpgateway.adapters.database.sql_policy import SqlPolicy, SqlPolicyGuard, SqlStatementClassifier
 from mcpgateway.adapters.database.types import QueryResult
-
-#: Default maximum rows fetched by a single ``execute`` before truncation.
-DEFAULT_MAX_ROWS = 1000
 
 
 class DatabaseAdapter(ABC):
@@ -170,17 +176,24 @@ class SQLAlchemyDatabaseAdapter(DatabaseAdapter):
         version = " ".join(str(value) for row in result.rows for value in row)
         return self._infer_mode(version)
 
-    def execute(self, sql: str, params: Optional[dict] = None, max_rows: Optional[int] = None) -> QueryResult:
-        """Run ``sql`` and return the unified result contract."""
-        limit = int(max_rows) if max_rows is not None else self._max_rows()
+    def execute(self, sql: str, params: Optional[dict] = None, max_rows: Optional[int] = None, query_timeout: Optional[float] = None) -> QueryResult:
+        """Run ``sql`` through the SQL policy and return the unified result.
+
+        The statement is parsed and classified before any database access, so a
+        write or multi-statement submission is rejected without touching the pool.
+        """
+        policy = self._policy()
+        classification = SqlStatementClassifier().classify(sql)
+        SqlPolicyGuard(policy).check(classification)
+
+        limit = self._effective_max_rows(max_rows, policy)
+        timeout = float(query_timeout) if query_timeout is not None else policy.query_timeout_seconds
         bound = dict(params or {})
-        warnings: list[str] = []
         start = monotonic()
         try:
-            with self._pool.connect() as conn:
-                result = conn.execute(text(sql), bound)
-                columns = [str(column) for column in result.keys()]
-                fetched = [list(row) for row in result.fetchmany(limit + 1)]
+            columns, fetched = self._execute_bound(sql, bound, limit, timeout)
+        except SQLAlchemyTimeoutError as exc:
+            raise DatabaseConnectionTimeoutError(str(exc)) from exc
         except OperationalError as exc:
             raise ConnectionFailureError(str(exc)) from exc
         except SQLAlchemyError as exc:
@@ -189,7 +202,7 @@ class SQLAlchemyDatabaseAdapter(DatabaseAdapter):
         truncated = len(fetched) > limit
         if truncated:
             fetched = fetched[:limit]
-            warnings.append(f"Result truncated to {limit} rows")
+        warnings = [f"Result truncated to {limit} rows"] if truncated else []
 
         return QueryResult(
             columns=columns,
@@ -199,6 +212,34 @@ class SQLAlchemyDatabaseAdapter(DatabaseAdapter):
             elapsed_ms=round((monotonic() - start) * 1000.0, 3),
             warnings=warnings,
         )
+
+    def _execute_bound(self, sql: str, bound: dict, limit: int, timeout: float) -> tuple[list[str], list[list[Any]]]:
+        """Execute a bound statement in a daemon worker bounded by ``timeout``.
+
+        The worker is a daemon so a timed-out query cannot block process
+        shutdown; the abandoned in-flight statement is a documented trade-off
+        whose production mitigation is a driver-side statement timeout.
+        """
+        outcome: dict[str, Any] = {}
+
+        def _run() -> None:
+            try:
+                with self._pool.connect() as conn:
+                    result = conn.execute(text(sql), bound)
+                    outcome["columns"] = [str(column) for column in result.keys()]
+                    outcome["rows"] = [list(row) for row in result.fetchmany(limit + 1)]
+            except Exception as exc:  # transport the DB error to the caller thread
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=_run, daemon=True, name="cf-db-query")
+        worker.start()
+        worker.join(timeout=timeout)
+        if worker.is_alive():
+            raise DatabaseQueryTimeoutError(f"Query exceeded the {timeout}s timeout")
+        error = outcome.get("error")
+        if error is not None:
+            raise error
+        return outcome["columns"], outcome["rows"]
 
     def search_objects(self, name: Optional[str] = None, kind: Optional[str] = None, limit: int = 100) -> QueryResult:
         """List visible schema objects via the dialect's metadata query."""
@@ -225,14 +266,21 @@ class SQLAlchemyDatabaseAdapter(DatabaseAdapter):
     # ------------------------------------------------------------------
     # Dialect hooks (subclasses supply these fragments)
     # ------------------------------------------------------------------
-    def _max_rows(self) -> int:
-        """Resolve the per-source row cap from ``policy_config``."""
-        policy = getattr(self._source, "policy_config", None) or {}
-        raw = policy.get("max_rows", DEFAULT_MAX_ROWS)
+    def _policy(self) -> SqlPolicy:
+        """Resolve the per-source SQL execution policy from ``policy_config``."""
+        return SqlPolicy.from_source(self._source)
+
+    def _effective_max_rows(self, requested: Optional[int], policy: SqlPolicy) -> int:
+        """Return ``min(requested, policy.max_rows)`` with sensible coercion."""
+        cap = policy.max_rows
+        if requested is None:
+            return cap
         try:
-            return max(1, int(raw))
+            requested = int(requested)
         except (TypeError, ValueError):
-            return DEFAULT_MAX_ROWS
+            return cap
+        requested = max(requested, 1)
+        return min(requested, cap)
 
     def _version_sql(self) -> str:
         """Return the SQL that reports the server version."""

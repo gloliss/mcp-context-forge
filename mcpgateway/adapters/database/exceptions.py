@@ -68,3 +68,50 @@ class DatabaseCompatModeMismatchError(DatabaseAdapterError):
         self.configured = configured
         self.detected = detected
         super().__init__(f"Compatibility mode mismatch: configured={configured!r}, detected={detected!r}")
+
+
+#: Stable error code for a connection that cannot be established in time.
+DB_CONNECTION_TIMEOUT = "DB_CONNECTION_TIMEOUT"
+
+#: Stable error code for a statement that exceeds its query deadline.
+DB_QUERY_TIMEOUT = "DB_QUERY_TIMEOUT"
+
+#: Stable error code for a statement rejected by the SQL execution policy.
+DB_STATEMENT_DENIED = "DB_STATEMENT_DENIED"
+
+#: Stable error code for a multi-statement submission while disallowed.
+DB_MULTI_STATEMENT_DENIED = "DB_MULTI_STATEMENT_DENIED"
+
+
+class DatabaseConnectionTimeoutError(ConnectionFailureError):
+    """Raised when a connection cannot be established within its deadline."""
+
+    code = DB_CONNECTION_TIMEOUT
+
+
+class DatabaseQueryTimeoutError(QueryTimeoutError):
+    """Raised when a statement exceeds its query deadline."""
+
+    code = DB_QUERY_TIMEOUT
+
+
+class DatabaseStatementDeniedError(DatabaseAdapterError):
+    """Raised when a statement is rejected by the SQL execution policy."""
+
+    code = DB_STATEMENT_DENIED
+
+    def __init__(self, statement_type: str, message: Optional[str] = None):
+        """Initialize the denial with the offending statement type."""
+        self.statement_type = statement_type
+        super().__init__(message or f"Statement type {statement_type!r} is denied by the SQL policy")
+
+
+class DatabaseMultiStatementError(DatabaseAdapterError):
+    """Raised when multi-statement SQL is submitted while disallowed."""
+
+    code = DB_MULTI_STATEMENT_DENIED
+
+    def __init__(self, statement_count: int):
+        """Initialize the error with the number of submitted statements."""
+        self.statement_count = statement_count
+        super().__init__(f"Multiple SQL statements ({statement_count}) are not allowed")
