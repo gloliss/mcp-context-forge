@@ -126,6 +126,9 @@ from mcpgateway.schemas import (
     CatalogServerRegisterRequest,
     CatalogServerRegisterResponse,
     CatalogServerStatusResponse,
+    DatabaseSourceCreate,
+    DatabaseSourceRead,
+    DatabaseSourceUpdate,
     GatewayCreate,
     GatewayOwnershipTransferRequest,
     GatewayRead,
@@ -166,6 +169,12 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.csrf_service import get_csrf_service
+from mcpgateway.services.database_source_service import (
+    DatabaseSourceError,
+    DatabaseSourceNameConflictError,
+    DatabaseSourceNotFoundError,
+    DatabaseSourceService,
+)
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -302,6 +311,8 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     "grpc-services": "admin.grpc",
     # HTTP services (separate from gRPC - requires admin.http)
     "http-services": "admin.http",
+    # Database sources (OB-06) - requires admin.database_sources
+    "database-sources": "admin.database_sources",
     # Overview and roots
     "overview": "admin.overview",  # Requires admin permission
     "roots": "admin.system_config",  # Roots routes use admin.system_config
@@ -335,6 +346,7 @@ _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
     "overview": "/admin/overview/partial",
     # "roots": "/admin/roots/partial",  # No such route exists on admin_router
     "mcp-registry": "/admin/servers/partial",
+    "database-sources": "/admin/database-sources/partial",
 }
 
 
@@ -21379,3 +21391,416 @@ async def get_performance_history(
     )
 
     return history.model_dump()
+
+
+###############################################################################
+# Database Sources admin UI (OB-06)
+###############################################################################
+
+_DATABASE_SOURCE_CHECK_LABELS: Dict[str, str] = {
+    "connection": "Connection",
+    "authentication": "Authentication",
+    "compatibility_mode": "Compatibility Mode",
+    "database_schema": "Database / Schema",
+    "basic_query": "Basic Query",
+}
+
+
+def _database_source_error_html(message: str) -> str:
+    """Render an inline admin UI error without echoing secrets."""
+    return f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">{html.escape(str(message))}</div>'
+
+
+def _database_source_validation_html(exc: BaseException) -> str:
+    """Render pydantic validation errors as a single inline admin UI error."""
+    messages: List[str] = []
+    for error in getattr(exc, "errors", lambda: [])():
+        msg = error.get("msg", "Invalid value")
+        if msg.startswith("Value error, "):
+            msg = msg[13:]
+        loc = error.get("loc")
+        if loc:
+            messages.append(f"{loc[-1]}: {msg}")
+        else:
+            messages.append(msg)
+    return _database_source_error_html("; ".join(messages) if messages else "Invalid input")
+
+
+def _database_source_opt_text(value: Any) -> Optional[str]:
+    """Return stripped text or None for blank admin form values."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _database_source_opt_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+    """Return an int from a form value, or default for blank input."""
+    if value in (None, ""):
+        return default
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid integer value: {value!r}") from exc
+
+
+def _database_source_opt_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+    """Return a float from a form value, or default for blank input."""
+    if value in (None, ""):
+        return default
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid numeric value: {value!r}") from exc
+
+
+def _database_source_opt_bool(value: Any, default: bool = False) -> bool:
+    """Return a boolean for a form checkbox/value."""
+    if value is None:
+        return default
+    return str(value).lower() in ("on", "true", "1", "yes", "checked")
+
+
+def _database_source_raw_fields(form) -> Dict[str, Any]:
+    """Normalize flat admin form fields into typed DatabaseSource values."""
+    allowed_raw = _database_source_opt_text(form.get("allowed_statement_types"))
+    allowed_types = [part.strip().upper() for part in allowed_raw.split(",") if part.strip()] if allowed_raw else []
+
+    pool_config = {
+        "pool_size": _database_source_opt_int(form.get("pool_size"), 5),
+        "max_overflow": _database_source_opt_int(form.get("max_overflow"), 5),
+        "acquire_timeout_seconds": _database_source_opt_float(form.get("acquire_timeout_seconds"), 5.0),
+        "recycle_seconds": _database_source_opt_int(form.get("recycle_seconds"), 300),
+        # Checkbox semantics: an absent checkbox means "unchecked" (False).
+        "pre_ping": _database_source_opt_bool(form.get("pre_ping"), False),
+    }
+    policy_config = {
+        # Checkbox semantics: an absent checkbox means "unchecked" (False).
+        "readonly": _database_source_opt_bool(form.get("readonly"), False),
+        "allow_multi_statement": _database_source_opt_bool(form.get("allow_multi_statement"), False),
+        "max_rows": _database_source_opt_int(form.get("max_rows"), 1000),
+        "query_timeout_seconds": _database_source_opt_float(form.get("query_timeout_seconds"), 30.0),
+        "allowed_statement_types": allowed_types,
+    }
+    tool_config = {"execute_query": _database_source_opt_bool(form.get("tool_execute_query"), False)}
+
+    return {
+        "name": _database_source_opt_text(form.get("name")),
+        "description": _database_source_opt_text(form.get("description")),
+        "engine": _database_source_opt_text(form.get("engine")),
+        "compatibility_mode": _database_source_opt_text(form.get("compatibility_mode")),
+        "host": _database_source_opt_text(form.get("host")),
+        "port": _database_source_opt_int(form.get("port"), None),
+        "cluster_name": _database_source_opt_text(form.get("cluster_name")),
+        "tenant_name": _database_source_opt_text(form.get("tenant_name")),
+        "database_name": _database_source_opt_text(form.get("database_name")),
+        "schema_name": _database_source_opt_text(form.get("schema_name")),
+        "username": _database_source_opt_text(form.get("username")),
+        "password": _database_source_opt_text(form.get("password")),
+        "ssl_mode": _database_source_opt_text(form.get("ssl_mode")),
+        "charset": _database_source_opt_text(form.get("charset")),
+        "timezone": _database_source_opt_text(form.get("timezone")),
+        "pool_config": pool_config,
+        "policy_config": policy_config,
+        "tool_config": tool_config,
+    }
+
+
+def _database_source_form_context(read: Optional[DatabaseSourceRead] = None) -> Dict[str, Any]:
+    """Build the flat ``f`` dict consumed by ``database_source_form.html``."""
+    if read is None:
+        return {
+            "name": "", "description": "", "engine": "oceanbase", "compatibility_mode": "mysql",
+            "host": "", "port": 2881, "cluster_name": "", "tenant_name": "", "database_name": "",
+            "schema_name": "", "username": "", "ssl_mode": "", "charset": "", "timezone": "",
+            "pool_size": 5, "max_overflow": 5, "acquire_timeout_seconds": 5.0, "recycle_seconds": 300,
+            "pre_ping": True,
+            "max_rows": 1000, "query_timeout_seconds": 30.0, "readonly": True,
+            "allow_multi_statement": False, "allowed_statement_types": "",
+            "tool_execute_query": False,
+        }
+    pool = read.pool_config or {}
+    policy = read.policy_config or {}
+    tool = read.tool_config or {}
+    allowed = policy.get("allowed_statement_types") or []
+    return {
+        "name": read.name or "", "description": read.description or "", "engine": read.engine or "",
+        "compatibility_mode": read.compatibility_mode or "", "host": read.host or "", "port": read.port or 2881,
+        "cluster_name": read.cluster_name or "", "tenant_name": read.tenant_name or "", "database_name": read.database_name or "",
+        "schema_name": read.schema_name or "", "username": read.username or "", "ssl_mode": read.ssl_mode or "",
+        "charset": read.charset or "", "timezone": read.timezone or "",
+        "pool_size": pool.get("pool_size", 5), "max_overflow": pool.get("max_overflow", 5),
+        "acquire_timeout_seconds": pool.get("acquire_timeout_seconds", 5.0), "recycle_seconds": pool.get("recycle_seconds", 300),
+        "pre_ping": pool.get("pre_ping", True),
+        "max_rows": policy.get("max_rows", 1000), "query_timeout_seconds": policy.get("query_timeout_seconds", 30.0),
+        "readonly": policy.get("readonly", True), "allow_multi_statement": policy.get("allow_multi_statement", False),
+        "allowed_statement_types": ", ".join(allowed) if allowed else "",
+        "tool_execute_query": tool.get("execute_query", False),
+    }
+
+
+def _database_source_test_result_html(result: dict) -> str:
+    """Render a connection test result as admin UI HTML."""
+    ok = bool(result.get("ok"))
+    latency_ms = result.get("latency_ms")
+    checks = result.get("checks") or []
+
+    if ok:
+        header = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">Connection successful</span>'
+    else:
+        header = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300">Connection failed</span>'
+
+    rows: List[str] = []
+    for check in checks:
+        name = _DATABASE_SOURCE_CHECK_LABELS.get(check.get("name"), str(check.get("name", "Check")))
+        status = check.get("status", "skipped")
+        detail = check.get("detail") or ""
+        if status == "passed":
+            badge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">Passed</span>'
+        elif status == "failed":
+            badge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300">Failed</span>'
+        else:
+            badge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">Skipped</span>'
+        rows.append(
+            '<div class="flex items-start justify-between gap-4 py-2 border-b border-gray-100 dark:border-gray-700">'
+            f'<div><span class="text-sm font-medium text-gray-900 dark:text-white">{html.escape(name)}</span>'
+            f'<p class="text-xs text-gray-500 dark:text-gray-400 break-words">{html.escape(detail)}</p></div>'
+            f'<div class="shrink-0">{badge}</div></div>'
+        )
+
+    latency_text = f"{latency_ms:.1f} ms" if isinstance(latency_ms, (int, float)) else "—"
+    rows_html = "".join(rows)
+
+    return (
+        '<div class="space-y-3">'
+        '<div class="flex items-center justify-between">'
+        '<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Connection Test</h3>'
+        f"{header}"
+        "</div>"
+        f'<p class="text-sm text-gray-600 dark:text-gray-400">Latency: {html.escape(latency_text)}</p>'
+        f'<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">{rows_html}</div>'
+        '<div class="flex justify-end pt-2">'
+        '<button data-action-click="closeModal" data-arg0="database-source-modal" '
+        'class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">Close</button>'
+        "</div></div>"
+    )
+
+
+@admin_router.get("/database-sources/partial", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_partial_html(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Return the database sources HTML partial for the admin UI."""
+    try:
+        root_path = _resolve_root_path(request)
+        sources = DatabaseSourceService.list_sources(db, include_inactive=True)
+        return request.app.state.templates.TemplateResponse(
+            request,
+            "database_sources_partial.html",
+            {"request": request, "data": sources, "root_path": root_path},
+        )
+    except Exception as e:
+        LOGGER.error(f"Error loading database sources partial for admin {get_user_email(user)}: {e}")
+        return HTMLResponse(content=_database_source_error_html("Error loading database sources"), status_code=500)
+
+
+@admin_router.get("/database-sources/new", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_new_form(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Render the create form for a new database source."""
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "database_source_form.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "mode": "create",
+            "form_id": "database-source-create-form",
+            "hx_attr": "hx-post",
+            "form_action": f"{root_path}/admin/database-sources",
+            "submit_label": "Create Source",
+            "source_id": None,
+            "f": _database_source_form_context(),
+        },
+    )
+
+
+@admin_router.get("/database-sources/{source_id}/edit", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_edit_form(
+    source_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Render the edit form for an existing database source."""
+    try:
+        source = DatabaseSourceService.get_source(db, source_id)
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "database_source_form.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "mode": "edit",
+            "form_id": "database-source-edit-form",
+            "hx_attr": "hx-put",
+            "form_action": f"{root_path}/admin/database-sources/{source_id}",
+            "submit_label": "Save Changes",
+            "source_id": source_id,
+            "f": _database_source_form_context(source),
+        },
+    )
+
+
+@admin_router.get("/database-sources/{source_id}/view", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_view(
+    source_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Render the read-only detail view for a database source."""
+    try:
+        source = DatabaseSourceService.get_source(db, source_id)
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "database_source_view.html",
+        {"request": request, "root_path": root_path, "source": source},
+    )
+
+
+@admin_router.post("/database-sources", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_create(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Create a database source from an admin UI form submission."""
+    form = await request.form()
+    try:
+        fields = _database_source_raw_fields(form)
+        data = DatabaseSourceCreate(**fields)
+        DatabaseSourceService.create_source(db, data, get_user_email(user))
+    except (ValidationError, CoreValidationError) as exc:
+        LOGGER.warning(f"Validation error creating database source: {exc}")
+        return HTMLResponse(content=_database_source_validation_html(exc), status_code=400)
+    except ValueError as exc:
+        LOGGER.warning(f"Validation error creating database source: {exc}")
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=400)
+    except DatabaseSourceNameConflictError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=409)
+    except DatabaseSourceError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=422)
+    except IntegrityError:
+        return HTMLResponse(content=_database_source_error_html("A database source with this name already exists"), status_code=409)
+    return HTMLResponse(content="", status_code=201)
+
+
+@admin_router.put("/database-sources/{source_id}", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_update(
+    source_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Update a database source from an admin UI form submission."""
+    form = await request.form()
+    try:
+        fields = _database_source_raw_fields(form)
+        for required in ("name", "engine", "host", "port"):
+            if fields.get(required) in (None, ""):
+                return HTMLResponse(content=_database_source_error_html(f"{required} is required"), status_code=400)
+        data = DatabaseSourceUpdate(**fields)
+        DatabaseSourceService.update_source(db, source_id, data, get_user_email(user))
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+    except DatabaseSourceNameConflictError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=409)
+    except DatabaseSourceError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=422)
+    except ValueError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=400)
+    return HTMLResponse(content="", status_code=200)
+
+
+@admin_router.delete("/database-sources/{source_id}", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_delete(
+    source_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Delete a database source from the admin UI."""
+    try:
+        DatabaseSourceService.delete_source(db, source_id)
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+    return HTMLResponse(content="", status_code=200)
+
+
+@admin_router.post("/database-sources/{source_id}/state", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_toggle(
+    source_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Toggle the enabled state of a database source from the admin UI."""
+    try:
+        current = DatabaseSourceService.get_source(db, source_id)
+        DatabaseSourceService.update_source(
+            db,
+            source_id,
+            DatabaseSourceUpdate(enabled=not current.enabled),
+            get_user_email(user),
+        )
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+    except DatabaseSourceError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=422)
+    return HTMLResponse(content="", status_code=200)
+
+
+@admin_router.post("/database-sources/test-connection", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_sources_test_connection(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Probe a database source (stored or unsaved form) without persisting it."""
+    form = await request.form()
+    source_id = _database_source_opt_text(form.get("source_id"))
+    fields = None
+    if source_id is None or "engine" in form or "host" in form:
+        fields = _database_source_raw_fields(form)
+
+    try:
+        result = DatabaseSourceService.test_connection(db, source_id=source_id, fields=fields)
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+    except DatabaseSourceError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=422)
+    except ValueError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=400)
+    return HTMLResponse(content=_database_source_test_result_html(result))

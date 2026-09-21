@@ -12,6 +12,7 @@ password-masking guarantees.
 
 # Standard
 import uuid
+from types import SimpleNamespace
 
 # Third-Party
 import pytest
@@ -19,6 +20,10 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 # First-Party
+from mcpgateway.adapters.database.exceptions import (
+    ConnectionFailureError,
+    DatabaseCompatModeMismatchError,
+)
 from mcpgateway.config import settings
 from mcpgateway.schemas import DatabaseSourceCreate, DatabaseSourceUpdate
 from mcpgateway.services.database_source_service import (
@@ -201,3 +206,155 @@ def test_password_masking(test_db):
     assert "password" not in DatabaseSourceService.update_source(
         test_db, created.id, DatabaseSourceUpdate(description="masked")
     ).model_dump()
+
+
+# ---------------------------------------------------------------------------
+# OB-06: engine variants + connection testing
+# ---------------------------------------------------------------------------
+
+
+def test_create_mysql_source(test_db):
+    """A MySQL source is created with no compatibility mode."""
+    read = DatabaseSourceService.create_source(
+        test_db, _payload(engine="mysql", compatibility_mode=None, port=3306), "owner@example.com"
+    )
+
+    assert read.engine == "mysql"
+    assert read.compatibility_mode is None
+    assert read.port == 3306
+
+
+def test_create_oracle_source(test_db):
+    """An Oracle source is created with no compatibility mode."""
+    read = DatabaseSourceService.create_source(
+        test_db, _payload(engine="oracle", compatibility_mode=None, port=1521), "owner@example.com"
+    )
+
+    assert read.engine == "oracle"
+    assert read.compatibility_mode is None
+    assert read.port == 1521
+
+
+def test_toggle_enabled(test_db):
+    """Updating ``enabled`` flips visibility without touching the credential."""
+    created = DatabaseSourceService.create_source(test_db, _payload(password="s3cr3t"))
+
+    disabled = DatabaseSourceService.update_source(test_db, created.id, DatabaseSourceUpdate(enabled=False))
+
+    assert disabled.enabled is False
+    assert created.id not in {s.id for s in DatabaseSourceService.list_sources(test_db)}
+    assert created.id in {s.id for s in DatabaseSourceService.list_sources(test_db, include_inactive=True)}
+    # The credential survives an enable/disable toggle.
+    assert get_encryption_service(settings.auth_encryption_secret).decrypt_secret(_stored_password(test_db, created.id)) == "s3cr3t"
+
+
+class _FakeAdapter:
+    """Minimal DatabaseAdapter double for connection-test coverage."""
+
+    def __init__(self, source, *, probe=None, probe_error=None, mode=None, schemas=None, mode_error=None):
+        self.source = source
+        self._probe = probe if probe is not None else {"ok": True, "latency_ms": 12.3, "error": None}
+        self._probe_error = probe_error
+        self._mode = mode
+        self._schemas = schemas if schemas is not None else []
+        self._mode_error = mode_error
+        self.closed = False
+
+    def test_connection(self):
+        if self._probe_error is not None:
+            raise self._probe_error
+        return self._probe
+
+    def validate_mode(self):
+        if self._mode_error is not None:
+            raise self._mode_error
+        return self._mode
+
+    def list_schemas(self):
+        return [SimpleNamespace(name=name) for name in self._schemas]
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeRegistry:
+    """Adapter registry double that builds a fresh adapter per source."""
+
+    def __init__(self, **adapter_kwargs):
+        self._adapter_kwargs = adapter_kwargs
+        self.adapters = []
+
+    def create_adapter(self, source, pool=None):
+        adapter = _FakeAdapter(source, **self._adapter_kwargs)
+        self.adapters.append(adapter)
+        return adapter
+
+
+def test_test_connection_success(test_db):
+    """A reachable source passes every check and reports latency."""
+    created = DatabaseSourceService.create_source(test_db, _payload(name="Prod", password="s3cr3t"))
+    registry = _FakeRegistry(mode="mysql", schemas=["test"])
+
+    result = DatabaseSourceService.test_connection(test_db, source_id=created.id, registry=registry)
+
+    assert result["ok"] is True
+    assert result["latency_ms"] == 12.3
+    statuses = {check["name"]: check["status"] for check in result["checks"]}
+    assert statuses["connection"] == "passed"
+    assert statuses["authentication"] == "passed"
+    assert statuses["basic_query"] == "passed"
+    assert statuses["compatibility_mode"] == "passed"
+    assert statuses["database_schema"] == "passed"
+    # The transient adapter is always closed, even on success.
+    assert registry.adapters and registry.adapters[0].closed is True
+
+
+def test_test_connection_mode_mismatch(test_db):
+    """A configured/detected compatibility-mode mismatch fails the probe."""
+    created = DatabaseSourceService.create_source(test_db, _payload())
+    registry = _FakeRegistry(
+        mode_error=DatabaseCompatModeMismatchError(configured="mysql", detected="oracle"),
+        schemas=["test"],
+    )
+
+    result = DatabaseSourceService.test_connection(test_db, source_id=created.id, registry=registry)
+
+    assert result["ok"] is False
+    mode_checks = [c for c in result["checks"] if c["name"] == "compatibility_mode"]
+    assert mode_checks and mode_checks[0]["status"] == "failed"
+    assert "mysql" in mode_checks[0]["detail"]
+    assert "oracle" in mode_checks[0]["detail"]
+
+
+def test_test_connection_connection_failure(test_db):
+    """An unreachable source marks connection/authentication as failed."""
+    created = DatabaseSourceService.create_source(test_db, _payload())
+    registry = _FakeRegistry(probe_error=ConnectionFailureError("connection refused"))
+
+    result = DatabaseSourceService.test_connection(test_db, source_id=created.id, registry=registry)
+
+    assert result["ok"] is False
+    statuses = {check["name"]: check["status"] for check in result["checks"]}
+    assert statuses["connection"] == "failed"
+    assert statuses["authentication"] == "failed"
+    assert statuses["basic_query"] == "skipped"
+    assert statuses["compatibility_mode"] == "skipped"
+    assert statuses["database_schema"] == "skipped"
+
+
+def test_test_connection_password_masking(test_db):
+    """Any credential echoed by a driver error is scrubbed from the result."""
+    created = DatabaseSourceService.create_source(test_db, _payload(password="s3cr3t-password"))
+    registry = _FakeRegistry(probe_error=ConnectionFailureError("auth failed with password s3cr3t-password"))
+
+    result = DatabaseSourceService.test_connection(test_db, source_id=created.id, registry=registry)
+
+    assert result["ok"] is False
+    for check in result["checks"]:
+        assert "s3cr3t-password" not in check.get("detail", "")
+
+
+def test_test_connection_missing_source(test_db):
+    """Probing an unknown source id raises a not-found error."""
+    with pytest.raises(DatabaseSourceNotFoundError):
+        DatabaseSourceService.test_connection(test_db, source_id="does-not-exist", registry=_FakeRegistry())

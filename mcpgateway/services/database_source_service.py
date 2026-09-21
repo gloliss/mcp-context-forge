@@ -13,14 +13,21 @@ not supply a new credential.
 """
 
 # Standard
+import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 # Third-Party
 from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.adapters.database import (
+    ConnectionFailureError,
+    DatabaseAdapterError,
+    DatabaseCompatModeMismatchError,
+    default_registry,
+)
 from mcpgateway.config import settings
 from mcpgateway.db import DatabaseSource
 from mcpgateway.schemas import DatabaseSourceCreate, DatabaseSourceRead, DatabaseSourceUpdate
@@ -270,3 +277,235 @@ class DatabaseSourceService:
         db.delete(source)
         db.commit()
         logger.info("Deleted database source %s", source.name)
+
+    # ------------------------------------------------------------------
+    # Connection testing (OB-06)
+    # ------------------------------------------------------------------
+    @classmethod
+    def test_connection(
+        cls,
+        db: Session,
+        *,
+        source_id: Optional[str] = None,
+        fields: Optional[dict[str, Any]] = None,
+        registry: Any = None,
+    ) -> dict[str, Any]:
+        """Probe a database source without persisting anything.
+
+        Builds a transient (detached) :class:`DatabaseSource` from either the
+        stored row (``source_id``) or the supplied form ``fields``, constructs
+        the adapter directly (never reusing a managed pool), and runs a set of
+        ordered checks: connection/authentication, basic query, compatibility
+        mode, and database-schema access.  Nothing is written to the database.
+
+        Args:
+            db: Database session (read-only here).
+            source_id: Optional stored source to test; ``fields`` then supplies
+                any overrides (e.g. the edit form's unsaved values).
+            fields: Optional raw field values from the create/edit form.  When
+                ``source_id`` is also given, omitted fields fall back to the
+                stored row and an empty/masked password reuses the stored one.
+            registry: Optional adapter registry override (test injection).
+
+        Returns:
+            dict[str, Any]: ``{"ok", "latency_ms", "checks": [...]}`` where each
+            check is ``{"name", "status", "detail"}``.  Passwords are never
+            included, and any driver error that happens to echo the credential
+            is scrubbed.
+
+        Raises:
+            DatabaseSourceNotFoundError: If ``source_id`` does not resolve.
+            DatabaseSourceError: If the transient engine/mode state is invalid.
+        """
+        source = cls._build_transient_source(db, source_id, fields)
+        registry = registry if registry is not None else default_registry
+
+        try:
+            adapter = registry.create_adapter(source)
+        except DatabaseAdapterError as exc:
+            detail = cls._safe_db_error(exc, source)
+            return {
+                "ok": False,
+                "latency_ms": None,
+                "checks": [
+                    {"name": "connection", "status": "failed", "detail": detail},
+                    {"name": "authentication", "status": "failed", "detail": detail},
+                    {"name": "compatibility_mode", "status": "skipped", "detail": "Skipped (connection failed)"},
+                    {"name": "database_schema", "status": "skipped", "detail": "Skipped (connection failed)"},
+                    {"name": "basic_query", "status": "skipped", "detail": "Skipped (connection failed)"},
+                ],
+            }
+
+        try:
+            return cls._run_connection_checks(adapter)
+        finally:
+            try:
+                adapter.close()
+            except Exception:  # never mask the real result with a close error
+                logger.debug("Failed to close transient test-connection adapter", exc_info=True)
+
+    @classmethod
+    def _build_transient_source(
+        cls,
+        db: Session,
+        source_id: Optional[str],
+        fields: Optional[dict[str, Any]],
+    ) -> DatabaseSource:
+        """Build a detached source for a one-shot connection test.
+
+        Args:
+            db: Database session.
+            source_id: Optional stored source whose values seed the transient row.
+            fields: Optional field overrides from the form.
+
+        Returns:
+            DatabaseSource: A transient, never-persisted source whose
+            ``password`` holds plaintext (resolved from the form or the stored
+            row) so the adapter can construct a connection URL.
+
+        Raises:
+            DatabaseSourceNotFoundError: If ``source_id`` does not resolve.
+            DatabaseSourceError: If the merged engine/mode state is invalid.
+        """
+        stored: Optional[DatabaseSource] = None
+        if source_id is not None:
+            stored = db.get(DatabaseSource, source_id)
+            if stored is None:
+                raise DatabaseSourceNotFoundError(f"Database source with ID '{source_id}' not found")
+
+        values = dict(fields or {})
+
+        # Resolve the credential: an explicit non-empty plaintext wins; an empty
+        # or masked value falls back to the stored credential (edit-form case).
+        password = values.pop("password", None)
+        if password in (None, "", settings.masked_auth_value):
+            password = stored.password if stored is not None else None
+
+        def resolve(key: str, default: Any = None) -> Any:
+            if key in values and values[key] is not None:
+                return values[key]
+            if stored is not None:
+                return getattr(stored, key, default)
+            return default
+
+        source = DatabaseSource(
+            id=uuid.uuid4().hex,
+            name=resolve("name", "test-connection"),
+            slug=resolve("slug", "test-connection"),
+            engine=resolve("engine"),
+            compatibility_mode=resolve("compatibility_mode"),
+            host=resolve("host"),
+            port=resolve("port"),
+            cluster_name=resolve("cluster_name"),
+            tenant_name=resolve("tenant_name"),
+            database_name=resolve("database_name"),
+            schema_name=resolve("schema_name"),
+            username=resolve("username"),
+            password=password,
+            credential_encrypted=bool(password),
+            ssl_mode=resolve("ssl_mode"),
+            charset=resolve("charset"),
+            timezone=resolve("timezone"),
+            connection_config=resolve("connection_config", {}) or {},
+            pool_config=resolve("pool_config", {}) or {},
+            policy_config=resolve("policy_config", {}) or {},
+            tool_config=resolve("tool_config", {}) or {},
+            enabled=resolve("enabled", True),
+        )
+        _validate_engine_compat(source.engine, source.compatibility_mode)
+        return source
+
+    @classmethod
+    def _run_connection_checks(cls, adapter: Any) -> dict[str, Any]:
+        """Run the ordered connection checks against ``adapter``.
+
+        The connection probe (``test_connection``) authenticates and issues a
+        ``SELECT 1`` in one round-trip; its latency is reported once.  The
+        compatibility-mode check is only run for OceanBase (the only engine with
+        a dual wire mode), and the schema check verifies that the configured
+        ``schema_name``/``database_name`` is visible.
+
+        Args:
+            adapter: A constructed :class:`DatabaseAdapter`.
+
+        Returns:
+            dict[str, Any]: The ``{"ok", "latency_ms", "checks": [...]}`` result.
+        """
+        source = adapter.source
+        checks: list[dict[str, Any]] = []
+        latency_ms: Optional[float] = None
+        connected = False
+
+        # 1. Connection + authentication + basic query (single round-trip).
+        try:
+            probe = adapter.test_connection()
+            connected = True
+            latency_ms = probe.get("latency_ms")
+            checks.append({"name": "connection", "status": "passed", "detail": "Connection established", "latency_ms": latency_ms})
+            checks.append({"name": "authentication", "status": "passed", "detail": "Credentials accepted", "latency_ms": latency_ms})
+            checks.append({"name": "basic_query", "status": "passed", "detail": "SELECT 1 succeeded", "latency_ms": latency_ms})
+        except (ConnectionFailureError, DatabaseAdapterError) as exc:
+            detail = cls._safe_db_error(exc, source)
+            checks.append({"name": "connection", "status": "failed", "detail": detail})
+            checks.append({"name": "authentication", "status": "failed", "detail": detail})
+            checks.append({"name": "basic_query", "status": "skipped", "detail": "Skipped (connection failed)"})
+
+        if not connected:
+            checks.append({"name": "compatibility_mode", "status": "skipped", "detail": "Skipped (connection failed)"})
+            checks.append({"name": "database_schema", "status": "skipped", "detail": "Skipped (connection failed)"})
+        else:
+            # 2. Compatibility mode (OceanBase dual wire mode only).
+            if source.engine == "oceanbase":
+                try:
+                    detected = adapter.validate_mode()
+                    if detected is None:
+                        checks.append({"name": "compatibility_mode", "status": "failed", "detail": "Could not detect tenant compatibility mode"})
+                    else:
+                        checks.append({"name": "compatibility_mode", "status": "passed", "detail": f"Detected mode: {detected}", "detected": detected})
+                except DatabaseCompatModeMismatchError as exc:
+                    checks.append(
+                        {
+                            "name": "compatibility_mode",
+                            "status": "failed",
+                            "detail": f"Configured '{exc.configured}' but detected '{exc.detected}'",
+                            "detected": exc.detected,
+                        }
+                    )
+                except DatabaseAdapterError as exc:
+                    checks.append({"name": "compatibility_mode", "status": "failed", "detail": cls._safe_db_error(exc, source)})
+            else:
+                checks.append({"name": "compatibility_mode", "status": "skipped", "detail": "Not applicable for this engine"})
+
+            # 3. Database-schema access.
+            target = source.schema_name or source.database_name
+            if not target:
+                checks.append({"name": "database_schema", "status": "skipped", "detail": "No schema/database specified"})
+            else:
+                try:
+                    visible = {obj.name for obj in adapter.list_schemas()}
+                    if target in visible:
+                        checks.append({"name": "database_schema", "status": "passed", "detail": f"Schema/database '{target}' is accessible"})
+                    else:
+                        checks.append({"name": "database_schema", "status": "failed", "detail": f"Schema/database '{target}' not found among visible schemas"})
+                except DatabaseAdapterError as exc:
+                    checks.append({"name": "database_schema", "status": "failed", "detail": cls._safe_db_error(exc, source)})
+
+        ok = connected and all(check["status"] != "failed" for check in checks)
+        return {"ok": ok, "latency_ms": latency_ms, "checks": checks}
+
+    @staticmethod
+    def _safe_db_error(exc: BaseException, source: Any) -> str:
+        """Return an error message with any echoed credential redacted.
+
+        Args:
+            exc: The underlying adapter/driver error.
+            source: The transient source, whose password is scrubbed.
+
+        Returns:
+            str: The credential-free error message.
+        """
+        message = str(exc)
+        for secret in (getattr(source, "password", None), settings.masked_auth_value):
+            if secret:
+                message = message.replace(secret, "***")
+        return message

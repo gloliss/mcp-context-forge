@@ -1,0 +1,213 @@
+<!-- htmlhint doctype-first:false -->
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+      {{ 'Add Database Source' if mode == 'create' else 'Edit Database Source' }}
+    </h3>
+  </div>
+  <div id="database-source-form-error"></div>
+  <div id="database-source-test-result"></div>
+  <form id="{{ form_id }}" {{ hx_attr }}="{{ form_action }}" hx-target="#database-source-form-error" hx-swap="innerHTML" class="space-y-4">
+    {% if source_id %}
+    <input type="hidden" name="source_id" value="{{ source_id }}">
+    {% endif %}
+    <!-- General -->
+    <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend class="px-2 text-sm font-semibold text-gray-700 dark:text-gray-300">General</legend>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name *</label>
+          <input type="text" name="name" value="{{ f.name|escape }}" required maxlength="255"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Engine *</label>
+          <select name="engine" required onchange="handleDatabaseSourceEngineChange(this)"
+                  class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+            <option value="oceanbase" {{ 'selected' if f.engine == 'oceanbase' else '' }}>OceanBase</option>
+            <option value="mysql" {{ 'selected' if f.engine == 'mysql' else '' }}>MySQL</option>
+            <option value="oracle" {{ 'selected' if f.engine == 'oracle' else '' }}>Oracle</option>
+            <option value="postgresql" {{ 'selected' if f.engine == 'postgresql' else '' }}>PostgreSQL</option>
+          </select>
+        </div>
+        <div id="compatibility-mode-field">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Compatibility Mode</label>
+          <select name="compatibility_mode"
+                  class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+            <option value="" {{ 'selected' if not f.compatibility_mode else '' }}>—</option>
+            <option value="mysql" {{ 'selected' if f.compatibility_mode == 'mysql' else '' }}>MySQL</option>
+            <option value="oracle" {{ 'selected' if f.compatibility_mode == 'oracle' else '' }}>Oracle</option>
+          </select>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Required for OceanBase; leave blank otherwise.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
+          <textarea name="description" rows="2"
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">{{ f.description|escape }}</textarea>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Connection -->
+    <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend class="px-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Connection</legend>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Host *</label>
+          <input type="text" name="host" value="{{ f.host|escape }}" required maxlength="255"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Port *</label>
+          <input type="number" name="port" value="{{ f.port }}" required min="1" max="65535"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Cluster Name</label>
+          <input type="text" name="cluster_name" value="{{ f.cluster_name|escape }}"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Tenant Name</label>
+          <input type="text" name="tenant_name" value="{{ f.tenant_name|escape }}"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Database Name</label>
+          <input type="text" name="database_name" value="{{ f.database_name|escape }}"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Schema Name</label>
+          <input type="text" name="schema_name" value="{{ f.schema_name|escape }}"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Username</label>
+          <input type="text" name="username" value="{{ f.username|escape }}" autocomplete="off"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
+          <input type="password" name="password" value="" autocomplete="new-password"
+                 placeholder="{{ 'Leave blank to keep the current password' if mode == 'edit' else 'Password' }}"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">SSL Mode</label>
+          <select name="ssl_mode"
+                  class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+            <option value="" {{ 'selected' if not f.ssl_mode else '' }}>—</option>
+            <option value="disabled" {{ 'selected' if f.ssl_mode == 'disabled' else '' }}>Disabled</option>
+            <option value="preferred" {{ 'selected' if f.ssl_mode == 'preferred' else '' }}>Preferred</option>
+            <option value="required" {{ 'selected' if f.ssl_mode == 'required' else '' }}>Required</option>
+            <option value="verify_ca" {{ 'selected' if f.ssl_mode == 'verify_ca' else '' }}>Verify CA</option>
+            <option value="verify_full" {{ 'selected' if f.ssl_mode == 'verify_full' else '' }}>Verify Full</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Charset</label>
+          <input type="text" name="charset" value="{{ f.charset|escape }}" placeholder="utf8mb4"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Timezone</label>
+          <input type="text" name="timezone" value="{{ f.timezone|escape }}" placeholder="UTC"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Pool -->
+    <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend class="px-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Pool</legend>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Pool Size</label>
+          <input type="number" name="pool_size" value="{{ f.pool_size }}" min="1"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Max Overflow</label>
+          <input type="number" name="max_overflow" value="{{ f.max_overflow }}" min="0"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Acquire Timeout (s)</label>
+          <input type="number" name="acquire_timeout_seconds" value="{{ f.acquire_timeout_seconds }}" min="0" step="0.1"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Recycle (s)</label>
+          <input type="number" name="recycle_seconds" value="{{ f.recycle_seconds }}" min="0"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div class="flex items-center">
+          <input type="checkbox" name="pre_ping" id="pre-ping" {{ 'checked' if f.pre_ping else '' }}
+                 class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+          <label for="pre-ping" class="ml-2 text-sm text-gray-700 dark:text-gray-300">Pre-ping connections before use</label>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Security -->
+    <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend class="px-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Security</legend>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Max Rows</label>
+          <input type="number" name="max_rows" value="{{ f.max_rows }}" min="1"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Query Timeout (s)</label>
+          <input type="number" name="query_timeout_seconds" value="{{ f.query_timeout_seconds }}" min="0" step="0.1"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Allowed Statement Types</label>
+          <input type="text" name="allowed_statement_types" value="{{ f.allowed_statement_types|escape }}" placeholder="SELECT, SHOW (comma separated)"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div class="space-y-2">
+          <div class="flex items-center">
+            <input type="checkbox" name="readonly" id="readonly" {{ 'checked' if f.readonly else '' }}
+                   class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+            <label for="readonly" class="ml-2 text-sm text-gray-700 dark:text-gray-300">Read-only (reject writes)</label>
+          </div>
+          <div class="flex items-center">
+            <input type="checkbox" name="allow_multi_statement" id="allow-multi-statement" {{ 'checked' if f.allow_multi_statement else '' }}
+                   class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+            <label for="allow-multi-statement" class="ml-2 text-sm text-gray-700 dark:text-gray-300">Allow multi-statement</label>
+          </div>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Tools -->
+    <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend class="px-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Tools</legend>
+      <div class="flex items-center">
+        <input type="checkbox" name="tool_execute_query" id="tool-execute-query" {{ 'checked' if f.tool_execute_query else '' }}
+               class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+        <label for="tool-execute-query" class="ml-2 text-sm text-gray-700 dark:text-gray-300">Enable <strong>Execute Query</strong> tool for this source</label>
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400">The Execute Query tool is disabled by default.</p>
+    </fieldset>
+
+    <div class="flex justify-end space-x-3 pt-2">
+      <button type="button" onclick="closeDatabaseSourceForm()"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+        Cancel
+      </button>
+      <button type="button" onclick="testDatabaseSourceForm('{{ form_id }}')"
+              class="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-600 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20">
+        Test Connection
+      </button>
+      <button type="submit"
+              class="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+        {{ submit_label }}
+      </button>
+    </div>
+  </form>
+</div>

@@ -511,6 +511,22 @@
           </div>
           {% endif %}
 
+          <!-- Database Sources Section -->
+          {% if 'database-sources' not in hidden_sections %}
+          <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Database</span>
+          </div>
+          <div class="space-y-1 px-2">
+            <a href="#database-sources" id="tab-database-sources" data-testid="database-sources-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               data-action-click="showTab" data-arg0="database-sources">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🗃️</span>
+              <span x-show="!sidebarCollapsed">Database Sources</span>
+            </a>
+          </div>
+          {% endif %}
+
           <!-- Organization Section -->
           {% if email_auth_enabled and ('teams' not in hidden_sections or 'users' not in hidden_sections or 'tokens' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
@@ -6015,6 +6031,34 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
 
       {% endif %}
+
+      <!-- Database Sources Panel -->
+      {% if 'database-sources' not in hidden_sections %}
+      <div id="database-sources-panel" class="tab-panel hidden">
+        <div class="flex justify-between items-center mb-8">
+          <div>
+            <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-200">🗃️ Database Sources</h2>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Register and manage database connections for MCP tools
+            </p>
+          </div>
+          <button
+            id="add-database-source-btn"
+            data-action-click="openDatabaseSourceForm"
+            class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          >
+            <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Add Source
+          </button>
+        </div>
+
+        <div id="database-sources-loading" class="htmx-indicator text-sm text-gray-500 dark:text-gray-400">Loading…</div>
+        <div id="database-sources-list"></div>
+      </div>
+      {% endif %}
+
       <!-- Teams Panel -->
       {% if email_auth_enabled and 'teams' not in hidden_sections %}
       <div id="teams-panel" class="tab-panel hidden">
@@ -14754,6 +14798,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
     </div>
 
+    <!-- Database Source Modal -->
+    <div id="database-source-modal" class="fixed inset-0 z-40 hidden">
+      <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div
+          class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+          aria-hidden="true"
+          data-action-click="closeDatabaseSourceForm"
+        ></div>
+        <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+        <div
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+        >
+          <div id="database-source-modal-content">
+            <!-- Content will be loaded here -->
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Create Team Modal -->
     <div id="create-team-modal" class="fixed inset-0 z-40 hidden">
       <div
@@ -15667,6 +15730,189 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       if (typeof loadTeamMembersView !== 'undefined') window.Admin.loadTeamMembersView = loadTeamMembersView;
       if (typeof approveJoinRequest !== 'undefined') window.Admin.approveJoinRequest = approveJoinRequest;
       if (typeof rejectJoinRequest !== 'undefined') window.Admin.rejectJoinRequest = rejectJoinRequest;
+    </script>
+
+    <script nonce="{{ csp_nonce(request) }}">
+      // Database Sources admin UI (OB-06)
+      function dsEscapeHtml(str) {
+        return String(str == null ? '' : str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function openDatabaseSourceModal() {
+        document.getElementById('database-source-modal').classList.remove('hidden');
+      }
+
+      function loadDatabaseSourceList() {
+        htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/partial', {
+          target: '#database-sources-list',
+          swap: 'innerHTML',
+          indicator: '#database-sources-loading'
+        });
+      }
+
+      function openDatabaseSourceForm() {
+        const content = document.getElementById('database-source-modal-content');
+        if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Loading…</div>';
+        openDatabaseSourceModal();
+        htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/new', {
+          target: '#database-source-modal-content',
+          swap: 'innerHTML'
+        });
+      }
+
+      function closeDatabaseSourceForm() {
+        document.getElementById('database-source-modal').classList.add('hidden');
+        const content = document.getElementById('database-source-modal-content');
+        if (content) content.innerHTML = '';
+      }
+
+      function openDatabaseSourceView(id) {
+        const content = document.getElementById('database-source-modal-content');
+        if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Loading…</div>';
+        openDatabaseSourceModal();
+        htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/' + id + '/view', {
+          target: '#database-source-modal-content',
+          swap: 'innerHTML'
+        });
+      }
+
+      function openDatabaseSourceEdit(id) {
+        const content = document.getElementById('database-source-modal-content');
+        if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Loading…</div>';
+        openDatabaseSourceModal();
+        htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/' + id + '/edit', {
+          target: '#database-source-modal-content',
+          swap: 'innerHTML'
+        });
+      }
+
+      function viewDatabaseSource(button) {
+        openDatabaseSourceView(button.getAttribute('data-source-id'));
+      }
+
+      function editDatabaseSource(button) {
+        openDatabaseSourceEdit(button.getAttribute('data-source-id'));
+      }
+
+      async function deleteDatabaseSource(button) {
+        const id = button.getAttribute('data-source-id');
+        const name = button.getAttribute('data-source-name') || 'this source';
+        if (!confirm('Delete database source "' + name + '"? This cannot be undone.')) return;
+        try {
+          const res = await fetch((window.ROOT_PATH || '') + '/admin/database-sources/' + id, { method: 'DELETE' });
+          if (res.ok) {
+            window.Admin.showSuccessMessage('Database source deleted');
+          } else {
+            const text = await res.text();
+            window.Admin.showErrorMessage(text || 'Failed to delete database source');
+          }
+        } catch (e) {
+          window.Admin.showErrorMessage(e.message || 'Failed to delete database source');
+        }
+        loadDatabaseSourceList();
+      }
+
+      async function toggleDatabaseSource(button) {
+        const id = button.getAttribute('data-source-id');
+        try {
+          const res = await fetch((window.ROOT_PATH || '') + '/admin/database-sources/' + id + '/state', { method: 'POST' });
+          if (res.ok) {
+            window.Admin.showSuccessMessage('Database source state updated');
+          } else {
+            const text = await res.text();
+            window.Admin.showErrorMessage(text || 'Failed to update database source');
+          }
+        } catch (e) {
+          window.Admin.showErrorMessage(e.message || 'Failed to update database source');
+        }
+        loadDatabaseSourceList();
+      }
+
+      function testDatabaseSource(button) {
+        const id = button.getAttribute('data-source-id');
+        const content = document.getElementById('database-source-modal-content');
+        if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Testing connection…</div>';
+        openDatabaseSourceModal();
+        const fd = new FormData();
+        fd.set('source_id', id);
+        fetch((window.ROOT_PATH || '') + '/admin/database-sources/test-connection', { method: 'POST', body: fd })
+          .then(function (res) { return res.text(); })
+          .then(function (html) { if (content) content.innerHTML = html; })
+          .catch(function (e) { if (content) content.innerHTML = '<div class="text-red-500 p-3">Test failed: ' + dsEscapeHtml(e.message) + '</div>'; });
+      }
+
+      async function testDatabaseSourceForm(formId) {
+        const form = document.getElementById(formId);
+        const container = document.getElementById('database-source-test-result');
+        if (!form || !container) return;
+        container.innerHTML = '<div class="text-gray-500 dark:text-gray-400 text-sm">Testing connection…</div>';
+        const fd = new FormData(form);
+        try {
+          const res = await fetch((window.ROOT_PATH || '') + '/admin/database-sources/test-connection', { method: 'POST', body: fd });
+          const text = await res.text();
+          container.innerHTML = text;
+        } catch (e) {
+          container.innerHTML = '<div class="text-red-500 text-sm">Test failed: ' + dsEscapeHtml(e.message) + '</div>';
+        }
+      }
+
+      function handleDatabaseSourceEngineChange(select) {
+        const field = document.getElementById('compatibility-mode-field');
+        if (!field) return;
+        const compat = field.querySelector('select[name="compatibility_mode"]');
+        if (select.value === 'oceanbase') {
+          field.classList.remove('opacity-50');
+          if (compat) compat.removeAttribute('disabled');
+        } else {
+          field.classList.add('opacity-50');
+          if (compat) compat.setAttribute('disabled', 'disabled');
+        }
+      }
+
+      // Wire the Database Sources tab to (re)load its list on activation.
+      document.addEventListener('DOMContentLoaded', function () {
+        const tab = document.getElementById('tab-database-sources');
+        if (tab) {
+          tab.addEventListener('click', function () {
+            setTimeout(loadDatabaseSourceList, 100);
+          });
+        }
+        if (window.location.hash === '#database-sources') {
+          setTimeout(loadDatabaseSourceList, 500);
+        }
+      });
+
+      // Close modal + refresh list after create/update form submissions.
+      document.addEventListener('htmx:afterRequest', function (evt) {
+        const elt = evt.detail && evt.detail.elt;
+        const id = elt ? elt.id : null;
+        if (evt.detail.xhr.status === 201 && id === 'database-source-create-form') {
+          closeDatabaseSourceForm();
+          window.Admin.showSuccessMessage('Database source created');
+          loadDatabaseSourceList();
+        } else if (evt.detail.xhr.status === 200 && id === 'database-source-edit-form') {
+          closeDatabaseSourceForm();
+          window.Admin.showSuccessMessage('Database source updated');
+          loadDatabaseSourceList();
+        }
+      });
+
+      window.Admin = window.Admin || {};
+      window.Admin.openDatabaseSourceForm = openDatabaseSourceForm;
+      window.Admin.closeDatabaseSourceForm = closeDatabaseSourceForm;
+      window.Admin.loadDatabaseSourceList = loadDatabaseSourceList;
+      window.Admin.viewDatabaseSource = viewDatabaseSource;
+      window.Admin.editDatabaseSource = editDatabaseSource;
+      window.Admin.deleteDatabaseSource = deleteDatabaseSource;
+      window.Admin.toggleDatabaseSource = toggleDatabaseSource;
+      window.Admin.testDatabaseSource = testDatabaseSource;
+      window.Admin.testDatabaseSourceForm = testDatabaseSourceForm;
+      window.Admin.handleDatabaseSourceEngineChange = handleDatabaseSourceEngineChange;
     </script>
         </main>
       </div>
