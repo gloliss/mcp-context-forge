@@ -257,6 +257,7 @@ class DatabaseSourceService:
 
         db.commit()
         db.refresh(source)
+        cls._invalidate_runtime(source_id)
         logger.info("Updated database source %s", source.name)
         return DatabaseSourceRead.model_validate(source)
 
@@ -276,7 +277,26 @@ class DatabaseSourceService:
             raise DatabaseSourceNotFoundError(f"Database source with ID '{source_id}' not found")
         db.delete(source)
         db.commit()
+        cls._invalidate_runtime(source_id)
         logger.info("Deleted database source %s", source.name)
+
+    @staticmethod
+    def _invalidate_runtime(source_id: str) -> None:
+        """Drop the pooled adapter and cached metadata for ``source_id`` (OB-07).
+
+        Called after a source is updated or deleted so the next invocation
+        rebuilds the pool and re-fetches metadata from the new configuration.
+        Never raises, so runtime invalidation cannot mask the CRUD result.
+
+        Args:
+            source_id: The changed source's ID.
+        """
+        try:
+            from mcpgateway.services.database_tool_service import DatabaseToolService
+
+            DatabaseToolService.invalidate_source(source_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Failed to invalidate runtime for source %s", source_id, exc_info=True)
 
     # ------------------------------------------------------------------
     # Connection testing (OB-06)

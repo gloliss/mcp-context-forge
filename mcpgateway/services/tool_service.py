@@ -7304,12 +7304,19 @@ class ToolService(BaseService):
                     # reusing the same visibility, plugin, audit, and metrics chain.
                     try:
                         # First-Party
+                        from mcpgateway.adapters.database import DatabaseAdapterError, code_for  # pylint: disable=import-outside-toplevel
                         from mcpgateway.services.database_tool_service import DatabaseToolError, DatabaseToolService  # pylint: disable=import-outside-toplevel
 
                         def _invoke_database():
                             """Execute one database tool with an independent worker-thread session."""
                             with fresh_db_session() as db_db:
-                                return DatabaseToolService.call(db_db, tool_name_original, arguments or {})
+                                return DatabaseToolService.call(
+                                    db_db,
+                                    tool_name_original,
+                                    arguments or {},
+                                    caller=user_email,
+                                    trace_id=current_trace_id.get(),
+                                )
 
                         db_execution_task = asyncio.create_task(asyncio.to_thread(_invoke_database))
                         try:
@@ -7328,7 +7335,11 @@ class ToolService(BaseService):
                     except DatabaseToolError as db_err:
                         error_message = str(db_err)
                         logger.warning("Database tool invocation rejected for %s: %s", tool_name_original, db_err)
-                        tool_result = ToolResult(content=[TextContent(type="text", text=f"Database invocation error: {db_err}")], is_error=True)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"Database invocation error: {db_err} [{code_for(db_err)}]")], is_error=True)
+                    except DatabaseAdapterError as db_err:
+                        error_message = str(db_err)
+                        logger.error("Database adapter invocation failed for %s (%s)", tool_name_original, code_for(db_err))
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"Database invocation error: {db_err} [{code_for(db_err)}]")], is_error=True)
                     except Exception as db_err:
                         error_message = "Database operation failed"
                         logger.error("Database tool invocation failed for %s (%s)", tool_name_original, type(db_err).__name__)

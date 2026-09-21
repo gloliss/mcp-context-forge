@@ -3,18 +3,38 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Error hierarchy for the database runtime (OB-02).
+Error hierarchy for the database runtime (OB-02), unified under the OB-07
+error contract.
 
 Callers translate these into stable HTTP/MCP error codes without ever relying
-on a specific engine's exception type — that is the decoupling boundary.
+on a specific engine's exception type — that is the decoupling boundary.  Each
+exception carries a stable ``code`` (see :mod:`mcpgateway.adapters.database.
+error_codes`) so :func:`code_for` can map it to an agent-facing contract
+without ever exposing a driver stack trace.
 """
 
 # Standard
 from typing import Optional
 
+# First-Party
+from mcpgateway.adapters.database.error_codes import (
+    DB_AUTH_FAILED,
+    DB_COMPATIBILITY_MODE_MISMATCH,
+    DB_CONNECTION_FAILED,
+    DB_CONNECTION_TIMEOUT,
+    DB_DATABASE_NOT_FOUND,
+    DB_DRIVER_ERROR,
+    DB_MULTI_STATEMENT_DENIED,
+    DB_QUERY_TIMEOUT,
+    DB_SCHEMA_NOT_FOUND,
+    DB_STATEMENT_DENIED,
+)
+
 
 class DatabaseAdapterError(Exception):
     """Base error for all database adapter operations."""
+
+    code = DB_DRIVER_ERROR
 
 
 class UnknownEngineError(DatabaseAdapterError):
@@ -32,9 +52,29 @@ class AdapterNotAvailableError(DatabaseAdapterError):
 class ConnectionFailureError(DatabaseAdapterError):
     """Raised when a database cannot be reached or a connection fails."""
 
+    code = DB_CONNECTION_FAILED
+
+
+class DBAuthFailedError(ConnectionFailureError):
+    """Raised when a connection is rejected because of bad credentials."""
+
+    code = DB_AUTH_FAILED
+
 
 class QueryError(DatabaseAdapterError):
     """Raised when a statement fails on an otherwise-reachable database."""
+
+
+class DBDatabaseNotFoundError(QueryError):
+    """Raised when the configured database/service name does not exist."""
+
+    code = DB_DATABASE_NOT_FOUND
+
+
+class DBSchemaNotFoundError(QueryError):
+    """Raised when the configured schema is not visible to the source."""
+
+    code = DB_SCHEMA_NOT_FOUND
 
 
 class QueryTimeoutError(QueryError):
@@ -47,10 +87,6 @@ class PoolError(DatabaseAdapterError):
 
 class PoolClosedError(PoolError):
     """Raised when using a pool that has been disposed or closed."""
-
-
-#: Stable error code for a configured/detected compatibility-mode mismatch.
-DB_COMPATIBILITY_MODE_MISMATCH = "DB_COMPATIBILITY_MODE_MISMATCH"
 
 
 class DatabaseCompatModeMismatchError(DatabaseAdapterError):
@@ -68,19 +104,6 @@ class DatabaseCompatModeMismatchError(DatabaseAdapterError):
         self.configured = configured
         self.detected = detected
         super().__init__(f"Compatibility mode mismatch: configured={configured!r}, detected={detected!r}")
-
-
-#: Stable error code for a connection that cannot be established in time.
-DB_CONNECTION_TIMEOUT = "DB_CONNECTION_TIMEOUT"
-
-#: Stable error code for a statement that exceeds its query deadline.
-DB_QUERY_TIMEOUT = "DB_QUERY_TIMEOUT"
-
-#: Stable error code for a statement rejected by the SQL execution policy.
-DB_STATEMENT_DENIED = "DB_STATEMENT_DENIED"
-
-#: Stable error code for a multi-statement submission while disallowed.
-DB_MULTI_STATEMENT_DENIED = "DB_MULTI_STATEMENT_DENIED"
 
 
 class DatabaseConnectionTimeoutError(ConnectionFailureError):

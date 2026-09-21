@@ -5848,6 +5848,45 @@ class DatabaseQueryTemplate(Base):
         return f"<DatabaseQueryTemplate(id='{self.id}', name='{self.name}', slug='{self.slug}')>"
 
 
+class DatabaseAudit(Base):
+    """Per-invocation audit trail for database tools (OB-07).
+
+    Records the minimal set of fields required for compliance without ever
+    persisting credentials, secrets, or plaintext sensitive parameters.  The
+    SQL statement text and bound parameters are deliberately not stored — only
+    the classified ``statement_type``.  ``source_id``/``template_id`` are plain
+    strings (no foreign key) so audit rows survive the deletion of their source
+    or template.
+    """
+
+    __tablename__ = "database_tool_audits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Correlation and identity.
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    caller: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    source_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    template_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+
+    # Result summary.
+    statement_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    row_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    truncated: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    elapsed_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Outcome.
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+    def __repr__(self) -> str:
+        """Return a short, credential-free representation of the audit row."""
+        return f"<DatabaseAudit(id='{self.id}', tool='{self.tool_name}', success={self.success})>"
+
+
 class HttpSchemaArtifact(Base):
     """Immutable OpenAPI document version for an HTTP service."""
 

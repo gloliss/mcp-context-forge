@@ -10,6 +10,8 @@ ContextForge tool layer:
 
 - :mod:`types`          — shared contracts (adapter keys, pool identity, result).
 - :mod:`exceptions`     — the error hierarchy.
+- :mod:`error_codes`    — the unified error contract (OB-07).
+- :mod:`metadata_cache` — TTL metadata cache (OB-07).
 - :mod:`base`           — the :class:`DatabaseAdapter` interface.
 - :mod:`adapters`       — built-in engine implementations.
 - :mod:`oceanbase`      — the unified OceanBase adapter (OB-03).
@@ -19,20 +21,39 @@ ContextForge tool layer:
 """
 
 from mcpgateway.adapters.database.base import DatabaseAdapter, SQLAlchemyDatabaseAdapter
+from mcpgateway.adapters.database.error_codes import (
+    DB_AUTH_FAILED,
+    DB_COMPATIBILITY_MODE_MISMATCH,
+    DB_CONNECTION_FAILED,
+    DB_CONNECTION_TIMEOUT,
+    DB_DATABASE_NOT_FOUND,
+    DB_DRIVER_ERROR,
+    DB_INTERNAL_ERROR,
+    DB_MULTI_STATEMENT_DENIED,
+    DB_QUERY_DENIED,
+    DB_QUERY_TIMEOUT,
+    DB_SCHEMA_NOT_FOUND,
+    DB_SOURCE_DISABLED,
+    DB_SOURCE_NOT_FOUND,
+    DB_STATEMENT_DENIED,
+    DB_TEMPLATE_ARGUMENT_INVALID,
+    DB_TEMPLATE_NOT_FOUND,
+    SUPPORTED_CODES,
+    code_for,
+    error_contract,
+)
 from mcpgateway.adapters.database.exceptions import (
     AdapterNotAvailableError,
     ConnectionFailureError,
-    DB_COMPATIBILITY_MODE_MISMATCH,
-    DB_CONNECTION_TIMEOUT,
-    DB_MULTI_STATEMENT_DENIED,
-    DB_QUERY_TIMEOUT,
-    DB_STATEMENT_DENIED,
     DatabaseAdapterError,
     DatabaseCompatModeMismatchError,
     DatabaseConnectionTimeoutError,
     DatabaseMultiStatementError,
     DatabaseQueryTimeoutError,
     DatabaseStatementDeniedError,
+    DBAuthFailedError,
+    DBDatabaseNotFoundError,
+    DBSchemaNotFoundError,
     PoolClosedError,
     PoolError,
     QueryError,
@@ -40,6 +61,7 @@ from mcpgateway.adapters.database.exceptions import (
     UnknownCompatibilityModeError,
     UnknownEngineError,
 )
+from mcpgateway.adapters.database.metadata_cache import DEFAULT_TTL_SECONDS, DatabaseMetadataCache
 from mcpgateway.adapters.database.oceanbase import OceanBaseAdapter, OceanBaseModeDetector
 from mcpgateway.adapters.database.pool import ConnectionPool, PoolManager
 from mcpgateway.adapters.database.registry import AdapterRegistry, default_registry, get_default_registry
@@ -66,15 +88,31 @@ __all__ = [
     "AdapterRegistry",
     "ConnectionFailureError",
     "ConnectionPool",
+    "DB_AUTH_FAILED",
     "DB_COMPATIBILITY_MODE_MISMATCH",
+    "DB_CONNECTION_FAILED",
     "DB_CONNECTION_TIMEOUT",
+    "DB_DATABASE_NOT_FOUND",
+    "DB_DRIVER_ERROR",
+    "DB_INTERNAL_ERROR",
     "DB_MULTI_STATEMENT_DENIED",
+    "DB_QUERY_DENIED",
     "DB_QUERY_TIMEOUT",
+    "DB_SCHEMA_NOT_FOUND",
+    "DB_SOURCE_DISABLED",
+    "DB_SOURCE_NOT_FOUND",
     "DB_STATEMENT_DENIED",
+    "DB_TEMPLATE_ARGUMENT_INVALID",
+    "DB_TEMPLATE_NOT_FOUND",
+    "DBAuthFailedError",
+    "DBDatabaseNotFoundError",
+    "DBSchemaNotFoundError",
+    "DEFAULT_TTL_SECONDS",
     "DatabaseAdapter",
     "DatabaseAdapterError",
     "DatabaseCompatModeMismatchError",
     "DatabaseConnectionTimeoutError",
+    "DatabaseMetadataCache",
     "DatabaseMultiStatementError",
     "DatabaseQueryTimeoutError",
     "DatabaseRuntimeClient",
@@ -98,12 +136,15 @@ __all__ = [
     "QueryResult",
     "QueryTimeoutError",
     "SQLAlchemyDatabaseAdapter",
+    "SUPPORTED_CODES",
     "SqlPolicy",
     "SqlPolicyGuard",
     "SqlStatementClassifier",
     "StatementClassification",
     "UnknownCompatibilityModeError",
     "UnknownEngineError",
+    "code_for",
     "default_registry",
+    "error_contract",
     "get_default_registry",
 ]

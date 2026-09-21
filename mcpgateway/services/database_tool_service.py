@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Database MCP Tool layer (OB-05).
+Database MCP Tool layer (OB-05), hardened for production (OB-07).
 
 Wires the database runtime (OB-02/03/04) into the ContextForge Tool Registry
 as five fixed, source-agnostic tools: ``db_search_objects``,
@@ -12,13 +12,14 @@ as five fixed, source-agnostic tools: ``db_search_objects``,
 ``source`` argument, so there is exactly one copy of each tool regardless of
 how many sources are registered.
 
-``db_execute_query`` is seeded disabled by default; the other four tools are
-enabled.  ``db_execute_template`` executes a pre-registered
-:class:`DatabaseQueryTemplate` statement with only the arguments supplied by
-the agent — the statement is immutable at call time.
+OB-07 additions: every invocation is recorded in the database tool audit
+trail (``database_tool_audits``), metadata lookups are served from the TTL
+metadata cache, and every failure maps to a stable error code from the
+unified error contract.
 """
 
 # Standard
+from time import monotonic
 from typing import Any, Optional
 
 # Third-Party
@@ -27,7 +28,18 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.adapters.database import DatabaseRuntimeClient
+from mcpgateway.adapters.database.error_codes import (
+    DB_INTERNAL_ERROR,
+    DB_QUERY_DENIED,
+    DB_SOURCE_DISABLED,
+    DB_SOURCE_NOT_FOUND,
+    DB_TEMPLATE_ARGUMENT_INVALID,
+    DB_TEMPLATE_NOT_FOUND,
+    code_for,
+)
+from mcpgateway.adapters.database.sql_policy import SqlStatementClassifier
 from mcpgateway.db import DatabaseQueryTemplate, DatabaseSource, Tool
+from mcpgateway.services.database_audit_service import get_database_audit_service
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 
@@ -47,7 +59,9 @@ TOOL_EXECUTE_TEMPLATE = "db_execute_template"
 
 
 class DatabaseToolError(ValueError):
-    """Base error for database tool operations."""
+    """Base error for database tool operations (OB-05, OB-07)."""
+
+    code = DB_INTERNAL_ERROR
 
 
 class DatabaseToolNotFoundError(DatabaseToolError):
@@ -57,17 +71,31 @@ class DatabaseToolNotFoundError(DatabaseToolError):
 class DatabaseToolSourceNotFoundError(DatabaseToolError):
     """Raised when the requested database source is not found."""
 
+    code = DB_SOURCE_NOT_FOUND
+
 
 class DatabaseToolSourceDisabledError(DatabaseToolError):
     """Raised when the requested database source is disabled."""
+
+    code = DB_SOURCE_DISABLED
 
 
 class DatabaseToolTemplateNotFoundError(DatabaseToolError):
     """Raised when the requested query template is not found."""
 
+    code = DB_TEMPLATE_NOT_FOUND
+
 
 class DatabaseToolTemplateDisabledError(DatabaseToolError):
     """Raised when the requested query template is disabled."""
+
+    code = DB_QUERY_DENIED
+
+
+class DatabaseToolTemplateArgumentInvalidError(DatabaseToolError):
+    """Raised when the supplied template arguments are invalid."""
+
+    code = DB_TEMPLATE_ARGUMENT_INVALID
 
 
 # --------------------------------------------------------------------------
@@ -208,9 +236,12 @@ _TOOL_SPECS: list[dict[str, Any]] = [
     },
 ]
 
+#: Canonical tool names accepted by :meth:`DatabaseToolService.call`.
+_TOOL_NAMES = frozenset(spec["name"] for spec in _TOOL_SPECS)
+
 
 class DatabaseToolService:
-    """Register and dispatch the five built-in database tools (OB-05)."""
+    """Register and dispatch the five built-in database tools (OB-05, OB-07)."""
 
     #: Module-level runtime client so pools are reused across invocations.
     _runtime = DatabaseRuntimeClient()
@@ -348,71 +379,200 @@ class DatabaseToolService:
     # Invocation dispatch
     # ------------------------------------------------------------------
     @classmethod
-    def call(cls, db: Session, name: str, arguments: Optional[dict], runtime: Optional[DatabaseRuntimeClient] = None) -> dict[str, Any]:
+    def call(
+        cls,
+        db: Session,
+        name: str,
+        arguments: Optional[dict],
+        runtime: Optional[DatabaseRuntimeClient] = None,
+        caller: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         """Execute one database tool against the selected source.
+
+        Every invocation is recorded in the database tool audit trail; failures
+        map to the unified error contract (a stable ``code``), never a driver
+        stack trace.
 
         Args:
             db: Database session.
             name: Canonical tool name (``original_name``).
             arguments: Tool arguments from the caller.
             runtime: Optional runtime client override (test injection).
+            caller: Optional caller identity for the audit trail.
+            trace_id: Optional request trace identifier for the audit trail.
 
         Returns:
             dict[str, Any]: The serialized tool result.
 
         Raises:
             DatabaseToolError: For missing/disabled sources, templates, or tools.
+            DatabaseAdapterError: For policy, connection, or query failures.
         """
         args = arguments or {}
         client = runtime if runtime is not None else cls._runtime
+        started = monotonic()
 
-        if name == TOOL_SEARCH_OBJECTS:
+        if name not in _TOOL_NAMES:
+            raise DatabaseToolNotFoundError(f"Unknown database tool '{name}'")
+
+        source = None
+        source_id: Optional[str] = None
+        template_id: Optional[str] = None
+        statement_type: Optional[str] = None
+        result: Optional[dict[str, Any]] = None
+        error_code: Optional[str] = None
+
+        try:
             source = cls.resolve_source(db, args.get("source"))
+            source_id = source.id
             adapter = client.adapter_for(source)
-            return adapter.search_objects(
-                name=args.get("name"),
-                kind=args.get("kind"),
-                limit=int(args.get("limit") or 100),
-            ).to_dict()
 
-        if name == TOOL_EXECUTE_QUERY:
-            source = cls.resolve_source(db, args.get("source"))
-            adapter = client.adapter_for(source)
-            return adapter.execute(
-                sql=args.get("sql"),
-                params=args.get("params"),
-                max_rows=args.get("max_rows"),
-            ).to_dict()
+            if name == TOOL_SEARCH_OBJECTS:
+                result = cls._search_objects(client, source, adapter, args)
+            elif name == TOOL_EXECUTE_QUERY:
+                statement_type = cls._classify_statement(args.get("sql"))
+                result = adapter.execute(
+                    sql=args.get("sql"),
+                    params=args.get("params"),
+                    max_rows=args.get("max_rows"),
+                ).to_dict()
+            elif name == TOOL_EXPLAIN_QUERY:
+                statement_type = "explain"
+                result = adapter.explain(args.get("sql")).to_dict()
+            elif name == TOOL_HEALTH_CHECK:
+                result = cls._health_check(source, adapter)
+            elif name == TOOL_EXECUTE_TEMPLATE:
+                template = cls.resolve_template(db, source, args.get("template"))
+                template_id = template.id
+                statement_type = cls._classify_statement(template.statement)
+                result = adapter.execute(
+                    sql=template.statement,
+                    params=args.get("arguments") or {},
+                    max_rows=template.max_rows,
+                    query_timeout=template.timeout_seconds,
+                ).to_dict()
 
-        if name == TOOL_EXPLAIN_QUERY:
-            source = cls.resolve_source(db, args.get("source"))
-            adapter = client.adapter_for(source)
-            return adapter.explain(args.get("sql")).to_dict()
+            return result
+        except Exception as exc:
+            error_code = code_for(exc)
+            raise
+        finally:
+            row_count, truncated = cls._result_metrics(result)
+            elapsed_ms = round((monotonic() - started) * 1000.0, 3)
+            cls._record_audit(
+                db,
+                name=name,
+                caller=caller,
+                trace_id=trace_id,
+                source_id=source_id,
+                template_id=template_id,
+                statement_type=statement_type,
+                row_count=row_count,
+                truncated=truncated,
+                elapsed_ms=elapsed_ms,
+                success=(error_code is None and result is not None),
+                error_code=error_code,
+            )
 
-        if name == TOOL_HEALTH_CHECK:
-            source = cls.resolve_source(db, args.get("source"))
-            adapter = client.adapter_for(source)
-            health = adapter.health_check()
-            detected = adapter.detect_mode()
-            return {
-                "healthy": health.get("ok"),
-                "engine": source.engine,
-                "compatibility_mode": getattr(source, "compatibility_mode", None),
-                "detected_mode": detected,
-                "latency": health.get("latency_ms"),
-                "error": health.get("error"),
-                "pool": health.get("pool"),
-            }
+    # ------------------------------------------------------------------
+    # Dispatch helpers
+    # ------------------------------------------------------------------
+    @classmethod
+    def _search_objects(cls, client: Any, source: Any, adapter: Any, args: dict[str, Any]) -> dict[str, Any]:
+        """Serve ``db_search_objects`` through the metadata cache when present."""
+        kind = args.get("kind")
+        name = args.get("name")
+        limit = int(args.get("limit") or 100)
+        cache = getattr(client, "metadata_cache", None)
+        if cache is None:
+            return adapter.search_objects(name=name, kind=kind, limit=limit).to_dict()
 
-        if name == TOOL_EXECUTE_TEMPLATE:
-            source = cls.resolve_source(db, args.get("source"))
-            template = cls.resolve_template(db, source, args.get("template"))
-            adapter = client.adapter_for(source)
-            return adapter.execute(
-                sql=template.statement,
-                params=args.get("arguments") or {},
-                max_rows=template.max_rows,
-                query_timeout=template.timeout_seconds,
-            ).to_dict()
+        key = cache.key_for(source, kind=kind, name=name, limit=limit)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
 
-        raise DatabaseToolNotFoundError(f"Unknown database tool '{name}'")
+        result = adapter.search_objects(name=name, kind=kind, limit=limit).to_dict()
+        cache.put(key, result)
+        return result
+
+    @staticmethod
+    def _health_check(source: Any, adapter: Any) -> dict[str, Any]:
+        """Render the ``db_health_check`` result without ever exposing a credential."""
+        health = adapter.health_check()
+        detected = adapter.detect_mode()
+        return {
+            "healthy": health.get("ok"),
+            "engine": source.engine,
+            "compatibility_mode": getattr(source, "compatibility_mode", None),
+            "detected_mode": detected,
+            "latency": health.get("latency_ms"),
+            "error": health.get("error"),
+            "pool": health.get("pool"),
+        }
+
+    @staticmethod
+    def _classify_statement(sql: Optional[str]) -> Optional[str]:
+        """Return the leading statement type of ``sql``, or ``None`` when absent."""
+        if not sql:
+            return None
+        try:
+            classification = SqlStatementClassifier().classify(sql)
+        except Exception:  # never let classification fail the invocation
+            return None
+        return classification.statement_types[0] if classification.statement_types else None
+
+    @staticmethod
+    def _result_metrics(result: Optional[dict[str, Any]]) -> tuple[Optional[int], Optional[bool]]:
+        """Extract ``(row_count, truncated)`` from a serialized tool result."""
+        if isinstance(result, dict):
+            return result.get("row_count"), result.get("truncated")
+        return None, None
+
+    @staticmethod
+    def _record_audit(
+        db: Session,
+        *,
+        name: str,
+        caller: Optional[str],
+        trace_id: Optional[str],
+        source_id: Optional[str],
+        template_id: Optional[str],
+        statement_type: Optional[str],
+        row_count: Optional[int],
+        truncated: Optional[bool],
+        elapsed_ms: Optional[float],
+        success: bool,
+        error_code: Optional[str],
+    ) -> None:
+        """Record one audit row, never letting an audit failure mask a result."""
+        try:
+            get_database_audit_service().record(
+                db,
+                tool_name=name,
+                trace_id=trace_id,
+                caller=caller,
+                source_id=source_id,
+                template_id=template_id,
+                statement_type=statement_type,
+                row_count=row_count,
+                truncated=truncated,
+                elapsed_ms=elapsed_ms,
+                success=success,
+                error_code=error_code,
+            )
+        except Exception:  # pragma: no cover - defensive, audit must never raise
+            logger.debug("Failed to record database tool audit for %s", name, exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Runtime invalidation (OB-07)
+    # ------------------------------------------------------------------
+    @classmethod
+    def invalidate_source(cls, source_id: str) -> None:
+        """Drop the pooled adapter and cached metadata for ``source_id``.
+
+        Called whenever a source's configuration changes so the next invocation
+        rebuilds the pool and re-fetches metadata.
+        """
+        cls._runtime.invalidate(source_id)
