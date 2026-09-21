@@ -287,6 +287,31 @@ def test_dialect_metadata_sources():
     assert "all_procedures" in oracle.procedures_sql(None)[0]
 
 
+def test_mysql_url_appends_tenant():
+    """MySQL mode appends ``@tenant`` to the login when a tenant is set."""
+    source = _source("mysql")
+    source.tenant_name = "app_tenant"
+
+    assert OceanBaseAdapter.build_url(source).username == "user@app_tenant"
+
+
+def test_mysql_url_preserves_explicit_tenant_login():
+    """A username already carrying ``@tenant`` is left unchanged."""
+    source = _source("mysql")
+    source.username = "root@sys"
+    source.tenant_name = "app_tenant"
+
+    assert OceanBaseAdapter.build_url(source).username == "root@sys"
+
+
+def test_mysql_url_without_tenant():
+    """Without a tenant the login name stays the bare username."""
+    source = _source("mysql")
+    source.tenant_name = None
+
+    assert OceanBaseAdapter.build_url(source).username == "user"
+
+
 @pytest.mark.parametrize("compat_mode", ["mysql", "oracle"])
 class TestOceanBaseSearchObjects:
     """The five-kind ``search_objects`` contract, run for both modes (OB-05).

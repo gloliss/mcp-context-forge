@@ -83,11 +83,25 @@ class MySQLConnectionProvider(ConnectionProvider):
 
     dialect_driver = "mysql+pymysql"
 
+    @staticmethod
+    def _login_name(source: Any) -> Optional[str]:
+        """Render the MySQL login name, appending ``@tenant`` when required.
+
+        OceanBase's MySQL protocol selects the tenant from the login name
+        (``user@tenant``).  The source's ``tenant_name`` is otherwise unused on
+        this path, so append it when set and not already present in the username.
+        """
+        username = getattr(source, "username", None)
+        tenant = getattr(source, "tenant_name", None)
+        if username and tenant and "@" not in str(username):
+            return f"{username}@{tenant}"
+        return username
+
     def build_url(self, source: Any) -> URL:
         """Render a MySQL-mode URL whose database is the source's database."""
         return URL.create(
             self.dialect_driver,
-            username=getattr(source, "username", None),
+            username=self._login_name(source),
             password=getattr(source, "password", None),
             host=getattr(source, "host", None) or "localhost",
             port=getattr(source, "port", None),
