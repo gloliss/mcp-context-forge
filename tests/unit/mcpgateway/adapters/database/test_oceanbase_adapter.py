@@ -287,6 +287,22 @@ def test_dialect_metadata_sources():
     assert "all_procedures" in oracle.procedures_sql(None)[0]
 
 
+def test_mysql_dialect_quotes_reserved_schema_alias():
+    """``schema`` is reserved in OceanBase/MySQL, so the dialect backtick-quotes it."""
+    mysql = OceanBaseMySQLDialect()
+    statements = (
+        mysql.schemas_sql(),
+        mysql.tables_sql(None),
+        mysql.views_sql(None),
+        mysql.columns_sql(None, "USERS"),
+        mysql.indexes_sql(None, "USERS"),
+        mysql.procedures_sql(None),
+    )
+    for sql, _ in statements:
+        assert "AS `schema`" in sql
+        assert "AS schema" not in sql
+
+
 def test_mysql_url_appends_tenant():
     """MySQL mode appends ``@tenant`` to the login when a tenant is set."""
     source = _source("mysql")

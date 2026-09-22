@@ -200,7 +200,7 @@ class OceanBaseMySQLDialect(OceanBaseDialect):
     def schemas_sql(self) -> tuple[str, dict]:
         """Return ``(sql, params)`` listing schemas."""
         return (
-            "SELECT SCHEMA_NAME AS schema, SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
+            "SELECT SCHEMA_NAME AS `schema`, SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME",
             {},
         )
 
@@ -208,7 +208,7 @@ class OceanBaseMySQLDialect(OceanBaseDialect):
         """Return ``(sql, params)`` listing tables."""
         clause, params = self._schema_clause("TABLE_SCHEMA", schema)
         sql = (
-            "SELECT TABLE_SCHEMA AS schema, TABLE_NAME AS name, TABLE_COMMENT AS description "
+            "SELECT TABLE_SCHEMA AS `schema`, TABLE_NAME AS name, TABLE_COMMENT AS description "
             "FROM information_schema.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND " + clause + " ORDER BY TABLE_NAME"
         )
         return sql, params
@@ -217,7 +217,7 @@ class OceanBaseMySQLDialect(OceanBaseDialect):
         """Return ``(sql, params)`` listing views."""
         clause, params = self._schema_clause("TABLE_SCHEMA", schema)
         sql = (
-            "SELECT TABLE_SCHEMA AS schema, TABLE_NAME AS name, TABLE_COMMENT AS description "
+            "SELECT TABLE_SCHEMA AS `schema`, TABLE_NAME AS name, TABLE_COMMENT AS description "
             "FROM information_schema.TABLES WHERE TABLE_TYPE = 'VIEW' AND " + clause + " ORDER BY TABLE_NAME"
         )
         return sql, params
@@ -227,7 +227,7 @@ class OceanBaseMySQLDialect(OceanBaseDialect):
         clause, params = self._schema_clause("TABLE_SCHEMA", schema)
         params["name"] = name
         sql = (
-            "SELECT TABLE_SCHEMA AS schema, COLUMN_NAME AS name, COLUMN_COMMENT AS description "
+            "SELECT TABLE_SCHEMA AS `schema`, COLUMN_NAME AS name, COLUMN_COMMENT AS description "
             "FROM information_schema.COLUMNS WHERE " + clause + " AND TABLE_NAME = :name ORDER BY ORDINAL_POSITION"
         )
         return sql, params
@@ -237,7 +237,7 @@ class OceanBaseMySQLDialect(OceanBaseDialect):
         clause, params = self._schema_clause("TABLE_SCHEMA", schema)
         params["name"] = name
         sql = (
-            "SELECT TABLE_SCHEMA AS schema, INDEX_NAME AS name, COLUMN_NAME AS column_name "
+            "SELECT TABLE_SCHEMA AS `schema`, INDEX_NAME AS name, COLUMN_NAME AS column_name "
             "FROM information_schema.STATISTICS WHERE " + clause + " AND TABLE_NAME = :name ORDER BY INDEX_NAME, SEQ_IN_INDEX"
         )
         return sql, params
@@ -246,7 +246,7 @@ class OceanBaseMySQLDialect(OceanBaseDialect):
         """Return ``(sql, params)`` listing procedures/functions."""
         clause, params = self._schema_clause("ROUTINE_SCHEMA", schema)
         sql = (
-            "SELECT ROUTINE_SCHEMA AS schema, ROUTINE_NAME AS name, ROUTINE_TYPE AS type "
+            "SELECT ROUTINE_SCHEMA AS `schema`, ROUTINE_NAME AS name, ROUTINE_TYPE AS type "
             "FROM information_schema.ROUTINES WHERE " + clause + " ORDER BY ROUTINE_NAME"
         )
         return sql, params
