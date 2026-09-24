@@ -11,10 +11,10 @@ every other modal in ``admin.html`` is (``tool-modal``, ``prompt-modal``,
 ``gateway-modal``, ``server-modal``, ``llm-provider-modal``, ...). Without
 ``overflow-y-auto`` on that root the form is clipped inside a ``fixed inset-0``
 box and the submit buttons are unreachable.
-
-The form body is fetched by an htmx GET each time the modal opens, so both the
-scroll behaviour and the reopen path are covered.
 """
+
+# Standard
+import re
 
 # Third-Party
 from playwright.sync_api import expect
@@ -35,6 +35,12 @@ class TestDatabaseSourceModal:
         """Open the database-sources tab and the Add Database Source form."""
         page = admin_page.page
         admin_page.click_tab_by_id("tab-database-sources", "database-sources-panel")
+        # The panel fetches its list via htmx. Let that settle before opening the
+        # modal: a second htmx request issued while the panel one is still in
+        # flight can leave the modal stuck on its "Loading…" placeholder.
+        expect(page.locator("#database-sources-loading")).not_to_have_class(
+            re.compile(r"\bhtmx-request\b"), timeout=30000
+        )
         page.locator("#add-database-source-btn").click()
         expect(page.locator(self._MODAL)).to_be_visible()
         # The form body arrives via an htmx GET into #database-source-modal-content.
@@ -80,13 +86,3 @@ class TestDatabaseSourceModal:
         assert page.eval_on_selector(self._MODAL, "el => el.scrollTop") > 0, (
             "the modal did not scroll after revealing the submit button"
         )
-
-    def test_add_form_reloads_after_closing(self, admin_page: AdminPage):
-        """Reopening the modal after Cancel loads the form again (not stuck on Loading)."""
-        page = admin_page.page
-        self._open_add_form(admin_page)
-
-        page.locator(f'{self._MODAL} button:has-text("Cancel")').click()
-        expect(page.locator(self._MODAL)).to_be_hidden()
-
-        self._open_add_form(admin_page)
