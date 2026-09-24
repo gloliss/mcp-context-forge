@@ -796,6 +796,25 @@ class TestToolService:
         assert tool_read.auth.password == settings.masked_auth_value
 
     @pytest.mark.asyncio
+    async def test_convert_tool_to_read_normalizes_string_tags(self, tool_service, mock_tool):
+        """String tags (e.g. database tools) are normalized to ToolRead dict tags.
+
+        Regression test: database tools are registered with ``tags=["database"]``
+        (List[str]) but ToolRead declares ``List[Dict[str, str]]``. The raw passthrough
+        used to raise a pydantic ValidationError and silently drop the tool from listing.
+        """
+        mock_tool.tags = ["database"]
+        tool_read = tool_service.convert_tool_to_read(mock_tool)
+        assert tool_read.tags == [{"id": "database", "label": "database"}]
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_preserves_dict_tags(self, tool_service, mock_tool):
+        """Already-structured dict tags pass through unchanged."""
+        mock_tool.tags = [{"id": "db", "label": "Database"}]
+        tool_read = tool_service.convert_tool_to_read(mock_tool)
+        assert tool_read.tags == [{"id": "db", "label": "Database"}]
+
+    @pytest.mark.asyncio
     async def test_convert_tool_to_read_bearer_auth(self, tool_service, mock_tool):
         """Check auth for bearer auth"""
 

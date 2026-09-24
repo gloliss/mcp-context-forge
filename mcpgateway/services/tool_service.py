@@ -136,6 +136,7 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.validation.tags import validate_tags_field
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -1749,7 +1750,14 @@ class ToolService(BaseService):
         tool_dict["custom_name"] = custom_name
         tool_dict["gateway_slug"] = getattr(tool, "gateway_slug", "") or ""
         tool_dict["custom_name_slug"] = getattr(tool, "custom_name_slug", "") or ""
-        tool_dict["tags"] = getattr(tool, "tags", []) or []
+        raw_tags = getattr(tool, "tags", []) or []
+        # Tags may be stored as List[str] (legacy, e.g. database tools) or
+        # List[Dict[str, str]] (structured). ToolRead declares List[Dict[str, str]],
+        # so normalize string tags the same way GatewayService does.
+        if raw_tags and isinstance(raw_tags[0], str):
+            tool_dict["tags"] = validate_tags_field(raw_tags)
+        else:
+            tool_dict["tags"] = raw_tags
         tool_dict["team"] = getattr(tool, "team", None)
 
         # Mask custom headers unless the requester is allowed to modify this tool.
