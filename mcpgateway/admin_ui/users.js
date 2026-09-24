@@ -41,6 +41,9 @@ export const showUserEditModal = async function (userEmail) {
   try {
     if (window.htmx && typeof window.htmx.ajax === "function") {
       await window.htmx.ajax("GET", url, {
+        // Own request element: htmx.ajax() without a source shares document.body's
+        // in-flight state, so a panel request still running would queue this one.
+        source: modalContent,
         target: "#user-edit-modal-content",
         swap: "innerHTML",
       });

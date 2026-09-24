@@ -4197,7 +4197,7 @@
       </div>
 
       <!-- Bulk Import Modal -->
-      <div id="bulk-import-modal" class="fixed inset-0 z-40 hidden">
+      <div id="bulk-import-modal" class="fixed inset-0 z-40 hidden overflow-y-auto">
         <div
           id="bulk-import-backdrop"
           class="absolute inset-0 bg-black/50"
@@ -14794,7 +14794,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- User Edit Modal -->
-    <div id="user-edit-modal" class="fixed inset-0 z-40 hidden">
+    <div id="user-edit-modal" class="fixed inset-0 z-40 hidden overflow-y-auto">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -14837,7 +14837,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- Create Team Modal -->
-    <div id="create-team-modal" class="fixed inset-0 z-40 hidden">
+    <div id="create-team-modal" class="fixed inset-0 z-40 hidden overflow-y-auto">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -15020,7 +15020,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- Team Edit Modal -->
-    <div id="team-edit-modal" class="fixed inset-0 z-40 hidden">
+    <div id="team-edit-modal" class="fixed inset-0 z-40 hidden overflow-y-auto">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -15046,7 +15046,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- Team Join Requests Modal -->
-    <div id="team-join-requests-modal" class="fixed inset-0 z-40 hidden">
+    <div id="team-join-requests-modal" class="fixed inset-0 z-40 hidden overflow-y-auto">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -15095,7 +15095,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
     {% if is_admin %}
     <!-- User Invitation Modal -->
-    <div id="invite-user-modal" class="fixed inset-0 z-40 hidden">
+    <div id="invite-user-modal" class="fixed inset-0 z-40 hidden overflow-y-auto">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -15212,7 +15212,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- Role Assignment Modal -->
-    <div id="role-assignment-modal" class="fixed inset-0 z-40 hidden">
+    <div id="role-assignment-modal" class="fixed inset-0 z-40 hidden overflow-y-auto">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -15363,6 +15363,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         if (mc) mc.innerHTML = '';
         // Load edit modal content via HTMX
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/edit', {
+          source: mc,  // own request element, not the shared document.body state
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {
@@ -15379,6 +15380,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const mc = document.getElementById('team-edit-modal-content');
         if (mc) mc.innerHTML = '';
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members', {
+          source: mc,  // own request element, not the shared document.body state
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {
@@ -15390,6 +15392,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const mc = document.getElementById('team-edit-modal-content');
         if (mc) mc.innerHTML = '';
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add', {
+          source: mc,  // own request element, not the shared document.body state
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {
@@ -15421,8 +15424,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function viewJoinRequestsSafe(button) {
         const teamId = button.getAttribute('data-team-id');
+        const content = document.getElementById('team-join-requests-modal-content');
         // Load join requests modal content
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-requests', {
+          source: content,  // own request element, not the shared document.body state
           target: '#team-join-requests-modal-content',
           swap: 'innerHTML'
         }).then(() => {
@@ -15779,6 +15784,11 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Loading…</div>';
         openDatabaseSourceModal();
         htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/new', {
+          // Own request element: htmx keys in-flight state on the request element,
+          // and htmx.ajax() without a source falls back to document.body, which
+          // every other source-less call shares — a panel request still in flight
+          // would queue (and can discard) this one, stranding the modal on "Loading…".
+          source: content,
           target: '#database-source-modal-content',
           swap: 'innerHTML'
         });
@@ -15795,6 +15805,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Loading…</div>';
         openDatabaseSourceModal();
         htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/' + id + '/view', {
+          source: content,  // own request element, not the shared document.body state
           target: '#database-source-modal-content',
           swap: 'innerHTML'
         });
@@ -15805,6 +15816,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Loading…</div>';
         openDatabaseSourceModal();
         htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/' + id + '/edit', {
+          source: content,  // own request element, not the shared document.body state
           target: '#database-source-modal-content',
           swap: 'innerHTML'
         });
