@@ -39,10 +39,15 @@ import {
 
 import { showCopyableModal } from "../../../mcpgateway/admin_ui/modals.js";
 import { showToast } from "../../../mcpgateway/admin_ui/utils.js";
+import { showConfirm } from "../../../mcpgateway/admin_ui/confirm.js";
 
 // Mock dependencies before imports
 vi.mock("../../../mcpgateway/admin_ui/modals.js", () => ({
   showCopyableModal: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/confirm.js", () => ({
+  showConfirm: vi.fn(),
 }));
 
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
@@ -838,7 +843,7 @@ describe("saveLLMProvider", () => {
 // ---------------------------------------------------------------------------
 describe("deleteLLMProvider", () => {
   test("deletes provider after confirmation", async () => {
-    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
     });
@@ -849,8 +854,9 @@ describe("deleteLLMProvider", () => {
 
     await deleteLLMProvider("provider-1", "Test Provider");
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Test Provider")
+    expect(showConfirm).toHaveBeenCalledWith(
+      expect.stringContaining("Test Provider"),
+      { danger: true }
     );
     expect(fetchSpy).toHaveBeenCalledWith(
       "/llm/providers/provider-1",
@@ -861,24 +867,22 @@ describe("deleteLLMProvider", () => {
       "success"
     );
 
-    confirmSpy.mockRestore();
     fetchSpy.mockRestore();
   });
 
   test("does not delete if user cancels", async () => {
-    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+    showConfirm.mockResolvedValue(false);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
     await deleteLLMProvider("provider-1", "Test Provider");
 
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(showConfirm).toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
 
-    confirmSpy.mockRestore();
   });
 
   test("handles delete error", async () => {
-    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: false,
     });
@@ -887,7 +891,6 @@ describe("deleteLLMProvider", () => {
 
     expect(showToast).toHaveBeenCalledWith("Failed to delete provider", "error");
 
-    confirmSpy.mockRestore();
     fetchSpy.mockRestore();
   });
 });
@@ -1605,7 +1608,7 @@ describe("saveLLMModel", () => {
 // ---------------------------------------------------------------------------
 describe("deleteLLMModel", () => {
   test("deletes model after confirmation", async () => {
-    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
     });
@@ -1616,8 +1619,9 @@ describe("deleteLLMModel", () => {
 
     await deleteLLMModel("model-1", "GPT-4");
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining("GPT-4")
+    expect(showConfirm).toHaveBeenCalledWith(
+      expect.stringContaining("GPT-4"),
+      { danger: true }
     );
     expect(fetchSpy).toHaveBeenCalledWith(
       "/llm/models/model-1",
@@ -1625,20 +1629,18 @@ describe("deleteLLMModel", () => {
     );
     expect(showToast).toHaveBeenCalledWith("Model deleted successfully", "success");
 
-    confirmSpy.mockRestore();
     fetchSpy.mockRestore();
   });
 
   test("does not delete if user cancels", async () => {
-    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+    showConfirm.mockResolvedValue(false);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
     await deleteLLMModel("model-1", "GPT-4");
 
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(showConfirm).toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
 
-    confirmSpy.mockRestore();
   });
 });
 

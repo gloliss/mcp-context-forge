@@ -49,6 +49,7 @@ import {
   handleDeleteUserError,
   safeGetElement,
   showErrorMessage,
+  showNotification,
   showSuccessMessage,
   updateEditToolUrl,
 } from "./utils.js";
@@ -354,7 +355,7 @@ import {
         const prevType = this.dataset.prevValue;
         const selectedType = this.value;
         if (prevType === "REST" && selectedType === "MCP") {
-          alert("You cannot change integration type from REST to MCP.");
+          showNotification("You cannot change integration type from REST to MCP.", "error");
           this.value = prevType;
           // Optionally, reset any dependent fields here
         } else {

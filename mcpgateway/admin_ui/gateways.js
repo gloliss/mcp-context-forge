@@ -26,6 +26,7 @@ import {
   makeCopyIdButton,
   safeGetElement,
   showErrorMessage,
+  showNotification,
   showSuccessMessage,
 } from "./utils.js";
 
@@ -887,7 +888,7 @@ export const initGatewaySelect = function (
         reloadAssociatedItems();
       } catch (error) {
         console.error("Error in Select All:", error);
-        alert("Failed to select all gateways. Please try again.");
+        showNotification("Failed to select all gateways. Please try again.", "error");
         newSelectBtn.disabled = false;
         update(); // Reset button text via update()
       } finally {

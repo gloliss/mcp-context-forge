@@ -10,7 +10,7 @@ import { cleanupResourceTestModal } from "./resources.js";
 import { escapeHtml } from "./security.js";
 import { resetEditSelections } from "./servers.js";
 import { cleanupToolTestModal } from "./tools.js";
-import { getCookie, safeGetElement } from "./utils.js";
+import { getCookie, safeGetElement, showNotification } from "./utils.js";
 
 export function openModal(modalId) {
   try {
@@ -319,11 +319,11 @@ export const submitApiKeyForm = function (event) {
           });
         }
       } else {
-        alert("Registration failed: " + (data.error || data.message));
+        showNotification("Registration failed: " + (data.error || data.message), "error");
       }
     })
     .catch((error) => {
-      alert("Error registering server: " + error);
+      showNotification("Error registering server: " + error, "error");
     });
 };
 
@@ -373,15 +373,17 @@ export const viewGrpcMethods = function (serviceId) {
           }
           methodsList += "\n";
         });
-        alert(methodsList);
+        showCopyableModal("gRPC Methods", methodsList, "info");
       } else {
-        alert(
-          "No methods discovered for this service. Try re-reflecting the service."
+        showCopyableModal(
+          "gRPC Methods",
+          "No methods discovered for this service. Try re-reflecting the service.",
+          "info"
         );
       }
     })
     .catch((error) => {
-      alert("Error fetching methods: " + error);
+      showNotification("Error fetching methods: " + error, "error");
     });
 };
 
@@ -412,14 +414,16 @@ export const viewHttpOperations = function (serviceId) {
             operationsList += `    Exposed: ${operation.exposed ? "yes" : "no"}\n\n`;
           });
         });
-        alert(operationsList);
+        showCopyableModal("HTTP Operations", operationsList, "info");
       } else {
-        alert(
-          "No operations imported for this service yet. Import an OpenAPI document first."
+        showCopyableModal(
+          "HTTP Operations",
+          "No operations imported for this service yet. Import an OpenAPI document first.",
+          "info"
         );
       }
     })
     .catch((error) => {
-      alert("Error fetching operations: " + error);
+      showNotification("Error fetching operations: " + error, "error");
     });
 };

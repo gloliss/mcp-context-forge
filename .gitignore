@@ -271,6 +271,7 @@ jwt/
 mcpgateway/static/vendor/
 mcpgateway/static/bundle-*.js
 mcpgateway/static/chunk-*.js
+mcpgateway/static/i18n-*.js
 mcpgateway/static/app/
 mcpgateway/static/assets/
 mcpgateway/static/.vite/

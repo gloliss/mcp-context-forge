@@ -328,8 +328,12 @@ class TestHTMXInteractions:
                 expect(metrics_page.get_metric_content(section)).to_be_visible()
 
     def test_delete_with_confirmation(self, tools_page: ToolsPage):
-        """Test delete functionality with confirmation dialog."""
-        # Use an existing tool row to verify confirmation dialog without mutating data
+        """Test delete shows the in-app confirmation dialog and cancelling aborts the delete.
+
+        The UI no longer uses the browser-native ``window.confirm``; ``confirm.js``
+        renders a ``div[role="dialog"][aria-modal="true"]`` in the page instead, so we
+        assert against that DOM node and verify that cancelling sends no delete request.
+        """
         tools_page.navigate_to_tools_tab()
         tools_page.wait_for_tools_table_loaded()
 
@@ -337,18 +341,36 @@ class TestHTMXInteractions:
         if tool_row.count() == 0:
             pytest.skip("No tools available for delete confirmation test.")
 
-        dialog_seen = {"value": False}
-        tools_page.page.on("dialog", lambda dialog: (dialog.dismiss(), dialog_seen.__setitem__("value", True)))
+        delete_requests = []
+        tools_page.page.on(
+            "request",
+            lambda req: delete_requests.append(req.url)
+            if "/admin/tools/" in req.url and req.url.endswith("/delete")
+            else None,
+        )
 
         # Open the action dropdown — delete button is inside the Alpine overflow menu
         tools_page.open_action_dropdown(tool_row)
         delete_btn = tool_row.locator('button[role="menuitem"]:has-text("Delete")')
-        if delete_btn.count() > 0:
-            delete_btn.click()
+        if delete_btn.count() == 0:
+            pytest.skip("Delete action not available for this tool row.")
+        delete_btn.click()
 
-        # Wait a moment for dialog handling
-        tools_page.page.wait_for_timeout(500)
-        assert dialog_seen["value"] is True
+        # The in-app dialog (not the native window.confirm) should appear.
+        dialog = tools_page.page.locator('div[role="dialog"][aria-modal="true"]:visible')
+        expect(dialog).to_be_visible(timeout=10000)
+        expect(dialog.locator('button:has-text("Confirm")')).to_be_visible()
+        cancel_btn = dialog.locator('button:has-text("Cancel")')
+        expect(cancel_btn).to_be_visible()
+
+        # Cancelling closes the dialog and aborts the delete (no request fired).
+        cancel_btn.click()
+        expect(
+            tools_page.page.locator('div[role="dialog"][aria-modal="true"]:visible')
+        ).to_have_count(0)
+        assert delete_requests == [], (
+            f"Delete request sent despite cancelling confirmation: {delete_requests}"
+        )
 
     @pytest.mark.slow
     def test_network_error_handling(self, tools_page: ToolsPage):

@@ -26,6 +26,7 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   getCookie: vi.fn(() => "test-jwt"),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
+  showNotification: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -343,7 +344,7 @@ describe("toggleGrpcTlsFields", () => {
 // viewGrpcMethods
 // ---------------------------------------------------------------------------
 describe("viewGrpcMethods", () => {
-  test("fetches methods and alerts results", async () => {
+  test("fetches methods and shows copyable modal", async () => {
     window.ROOT_PATH = "";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       json: () =>
@@ -353,7 +354,6 @@ describe("viewGrpcMethods", () => {
           ],
         }),
     });
-    const alertSpy = vi.spyOn(globalThis, "alert").mockImplementation(() => {});
 
     viewGrpcMethods("svc-1");
 
@@ -364,10 +364,11 @@ describe("viewGrpcMethods", () => {
       "/admin/grpc/svc-1/methods",
       expect.objectContaining({ method: "GET" })
     );
-    expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining("pkg.Service/Method"));
+    const content = document.getElementById("copyable-modal-content");
+    expect(content).not.toBeNull();
+    expect(content.textContent).toContain("pkg.Service/Method");
 
     fetchSpy.mockRestore();
-    alertSpy.mockRestore();
     delete window.ROOT_PATH;
   });
 
@@ -376,15 +377,15 @@ describe("viewGrpcMethods", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       json: () => Promise.resolve({ methods: [] }),
     });
-    const alertSpy = vi.spyOn(globalThis, "alert").mockImplementation(() => {});
 
     viewGrpcMethods("svc-2");
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining("No methods"));
+    const content = document.getElementById("copyable-modal-content");
+    expect(content).not.toBeNull();
+    expect(content.textContent).toContain("No methods");
 
     fetchSpy.mockRestore();
-    alertSpy.mockRestore();
     delete window.ROOT_PATH;
   });
 });

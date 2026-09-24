@@ -596,10 +596,24 @@ export const updateEditToolUrl = function () {
 
 /**
  * Format timestamp for display
+ *
+ * Locale-aware: follows the same locale opt-out the i18n overlay uses
+ * (`localStorage["mcpgateway.locale"] === "en"` keeps the English format;
+ * anything else renders the Chinese format). This is the one utility that
+ * needs source-level locale handling — date/number formatting is not a
+ * string replacement the DOM overlay can reach.
  */
 export const formatTimestamp = function (timestamp) {
   const date = new Date(timestamp);
-  return date.toLocaleString("en-US", {
+  let locale = "zh-CN";
+  try {
+    if (window.localStorage?.getItem("mcpgateway.locale") === "en") {
+      locale = "en-US";
+    }
+  } catch {
+    /* storage may be unavailable — default to the Chinese locale */
+  }
+  return date.toLocaleString(locale, {
     month: "short",
     day: "numeric",
     hour: "2-digit",

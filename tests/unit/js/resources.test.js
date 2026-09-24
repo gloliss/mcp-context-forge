@@ -47,6 +47,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   parseUriTemplate: vi.fn(() => []),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
+  showNotification: vi.fn(),
 }));
 
 beforeEach(() => {

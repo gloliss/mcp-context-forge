@@ -555,6 +555,39 @@ def get_bundle_css_files() -> list:
     return []
 
 
+_i18n_js_cache: dict[str, Optional[str]] = {"filename": None}
+_I18N_ENTRY_SRC = "mcpgateway/admin_ui/i18n/standalone.js"
+
+
+def get_i18n_js_filename(static_dir: Optional[Path] = None) -> str:
+    """Resolve the standalone locale bundle, falling back to the newest built file."""
+    static_dir = static_dir or Path(__file__).parent / "static"
+    cached = _i18n_js_cache["filename"]
+    if cached is not None and (static_dir / cached).exists():
+        return cached
+
+    manifest_path = static_dir / ".vite" / "manifest.json"
+    try:
+        if manifest_path.exists():
+            manifest = orjson.loads(manifest_path.read_text(encoding="utf-8"))
+            for entry in manifest.values():
+                if isinstance(entry, dict) and entry.get("src") == _I18N_ENTRY_SRC:
+                    filename = entry.get("file")
+                    if isinstance(filename, str) and (static_dir / filename).is_file():
+                        _i18n_js_cache["filename"] = filename
+                        return filename
+    except (OSError, ValueError, TypeError) as exc:
+        LOGGER.warning("Failed to read Vite manifest for i18n bundle: %s", exc)
+
+    bundles = sorted(static_dir.glob("i18n-*.js"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if bundles:
+        _i18n_js_cache["filename"] = bundles[0].name
+        return bundles[0].name
+
+    LOGGER.warning("No i18n-*.js found in %s; the UI will use its original text", static_dir)
+    return ""
+
+
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
     """Normalize UI hide values from CSV/list input into a validated set.
 
@@ -4340,6 +4373,7 @@ async def admin_ui(
             "root_path": root_path,
             "bundle_js": get_bundle_js_filename(),
             "bundle_css": get_bundle_css_files(),
+            "i18n_js": get_i18n_js_filename(),
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
@@ -4601,6 +4635,7 @@ async def admin_login_page(request: Request) -> Response:
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
             "sri_hashes": load_sri_hashes(),
             "bundle_css": get_bundle_css_files(),
+            "i18n_js": get_i18n_js_filename(),
         },
     )
 
@@ -4811,6 +4846,7 @@ async def admin_forgot_password_page(request: Request) -> Response:
         {
             "request": request,
             "root_path": root_path,
+            "i18n_js": get_i18n_js_filename(),
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "sri_hashes": load_sri_hashes(),
@@ -4887,6 +4923,7 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
         {
             "request": request,
             "root_path": root_path,
+            "i18n_js": get_i18n_js_filename(),
             "token": token,
             "token_valid": token_valid,
             "token_error": token_error,
@@ -5291,6 +5328,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "password_requirements": password_requirements,
             "sri_hashes": load_sri_hashes(),
             "bundle_css": get_bundle_css_files(),
+            "i18n_js": get_i18n_js_filename(),
         },
     )
     _set_admin_csrf_cookie(request, response)

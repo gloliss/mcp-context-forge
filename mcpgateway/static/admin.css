@@ -1,3 +1,43 @@
+/* ============================================================================
+   ContextForge Admin UI — theme tokens
+   ----------------------------------------------------------------------------
+   Mirror of `theme.extend.colors` in `tailwind.config.js`. Only the handful of
+   rules below that Tailwind utility classes cannot reach (sidebar, chat
+   bubbles, markdown body, scrollbars) read from these; everything else is
+   generated from the Tailwind config.
+
+   Values are space-separated RGB channels so that a token composes with an
+   alpha, e.g. `rgb(var(--cf-gray-400) / 40%)`, and also works solid, e.g.
+   `rgb(var(--cf-gray-400))` — the same convention Tailwind uses internally.
+
+   Keep in sync with tailwind.config.js: `tests/unit/js/themeTokens.test.js`
+   fails if a token here drifts from the config value.
+   ============================================================================ */
+:root {
+    --cf-gray-50: 249 250 251; /* #f9fafb */
+    --cf-gray-100: 242 244 247; /* #f2f4f7 */
+    --cf-gray-200: 228 231 236; /* #e4e7ec */
+    --cf-gray-300: 208 213 221; /* #d0d5dd */
+    --cf-gray-400: 154 164 182; /* #9aa4b6 */
+    --cf-gray-500: 102 112 133; /* #667085 */
+    --cf-gray-600: 71 84 103; /* #475467 */
+    --cf-gray-700: 52 64 84; /* #344054 */
+    --cf-gray-800: 29 41 57; /* #1d2939 */
+    --cf-gray-900: 16 24 40; /* #101828 */
+    --cf-gray-950: 10 14 23; /* #0a0e17 */
+    --cf-indigo-50: 238 244 255; /* #eef4ff */
+    --cf-indigo-100: 224 234 255; /* #e0eaff */
+    --cf-indigo-200: 199 215 254; /* #c7d7fe */
+    --cf-indigo-300: 164 188 253; /* #a4bcfd */
+    --cf-indigo-400: 127 145 247; /* #7f91f7 */
+    --cf-indigo-500: 85 102 238; /* #5566ee */
+    --cf-indigo-600: 69 71 232; /* #4547e8 */
+    --cf-indigo-700: 53 56 205; /* #3538cd */
+    --cf-indigo-800: 45 49 166; /* #2d31a6 */
+    --cf-indigo-900: 44 49 120; /* #2c3178 */
+    --cf-indigo-950: 26 29 74; /* #1a1d4a */
+}
+
 /* Hide Alpine-managed elements until Alpine has processed them.
    Prevents a brief flash of content (e.g. overflow menus) on initial load
    and after HTMX swaps. */
@@ -14,41 +54,41 @@
 /* Sidebar scrollbar */
 .sidebar-scroll {
     scrollbar-width: thin;
-    scrollbar-color: rgb(156 163 175 / 40%) transparent;
+    scrollbar-color: rgb(var(--cf-gray-400) / 40%) transparent;
 }
 
 /* Sidebar link styling */
 .sidebar-link {
-    color: rgb(107 114 128);
+    color: rgb(var(--cf-gray-500));
     text-decoration: none;
     margin-left: 0.25rem;
     margin-right: 0.25rem;
 }
 
 .sidebar-link:hover {
-    background-color: rgb(243 244 246);
-    color: rgb(17 24 39);
+    background-color: rgb(var(--cf-gray-100));
+    color: rgb(var(--cf-gray-900));
 }
 
 .dark .sidebar-link {
-    color: rgb(156 163 175);
+    color: rgb(var(--cf-gray-400));
 }
 
 .dark .sidebar-link:hover {
-    background-color: rgb(55 65 81);
-    color: rgb(243 244 246);
+    background-color: rgb(var(--cf-gray-700));
+    color: rgb(var(--cf-gray-100));
 }
 
 /* Active sidebar link */
 .sidebar-link.active {
-    background-color: rgb(238 242 255);
-    color: rgb(79 70 229);
+    background-color: rgb(var(--cf-indigo-50));
+    color: rgb(var(--cf-indigo-600));
     font-weight: 600;
 }
 
 .dark .sidebar-link.active {
-    background-color: rgb(49 46 129 / 40%);
-    color: rgb(165 180 252);
+    background-color: rgb(var(--cf-indigo-900) / 40%);
+    color: rgb(var(--cf-indigo-300));
 }
 
 /* Sidebar section headers */
@@ -88,7 +128,7 @@
 
 /* CSS for the spinner */
 .spinner {
-    border: 4px solid #f3f3f3;
+    border: 4px solid rgb(var(--cf-gray-100));
     border-top: 4px solid #3498db;
     border-radius: 50%;
     width: 24px;
@@ -169,31 +209,31 @@
     gap: 0.5rem;
     cursor: pointer;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    background: linear-gradient(to bottom, rgb(255 255 255 / 80%), rgb(249 250 251 / 80%));
+    background: rgb(255 255 255 / 80%);
 }
 
 .server-item:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgb(0 0 0 / 10%);
-    border-color: rgb(99 102 241);
+    border-color: rgb(var(--cf-indigo-500));
 }
 
 .server-item.border-indigo-500 {
-    background: linear-gradient(to bottom, rgb(238 242 255 / 100%), rgb(224 231 255 / 100%));
-    border-color: rgb(99 102 241);
-    box-shadow: 0 4px 12px rgb(99 102 241 / 25%);
+    background: rgb(var(--cf-indigo-50));
+    border-color: rgb(var(--cf-indigo-500));
+    box-shadow: 0 4px 12px rgb(var(--cf-indigo-500) / 25%);
 }
 
 .dark .server-item {
-    background: linear-gradient(to bottom, rgb(31 41 55 / 80%), rgb(17 24 39 / 80%));
+    background: rgb(var(--cf-gray-800) / 80%);
 }
 
 .dark .server-item:hover {
-    box-shadow: 0 4px 12px rgb(99 102 241 / 30%);
+    box-shadow: 0 4px 12px rgb(var(--cf-indigo-500) / 30%);
 }
 
 .dark .server-item.border-indigo-500 {
-    background: linear-gradient(to bottom, rgb(49 46 129 / 40%), rgb(67 56 202 / 30%));
+    background: rgb(var(--cf-indigo-900) / 40%);
 }
 
 /* Configuration Toggle Button */
@@ -202,11 +242,11 @@
 }
 
 #llm-config-toggle:hover {
-    background-color: rgb(243 244 246 / 100%);
+    background-color: rgb(var(--cf-gray-100) / 100%);
 }
 
 .dark #llm-config-toggle:hover {
-    background-color: rgb(55 65 81 / 100%);
+    background-color: rgb(var(--cf-gray-700) / 100%);
 }
 
 #llm-config-chevron {
@@ -225,7 +265,7 @@
     /* scroll-behavior: smooth; -- Removed to prevent jitter during frequent streaming updates */
     min-height: 0;
     scrollbar-width: thin;
-    scrollbar-color: rgb(156 163 175 / 50%) transparent;
+    scrollbar-color: rgb(var(--cf-gray-400) / 50%) transparent;
 }
 
 #chat-messages-container::-webkit-scrollbar {
@@ -237,12 +277,12 @@
 }
 
 #chat-messages-container::-webkit-scrollbar-thumb {
-    background-color: rgb(156 163 175 / 50%);
+    background-color: rgb(var(--cf-gray-400) / 50%);
     border-radius: 3px;
 }
 
 #chat-messages-container::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(156 163 175 / 70%);
+    background-color: rgb(var(--cf-gray-400) / 70%);
 }
 
 /* Chat Message Bubbles */
@@ -276,14 +316,14 @@
 .user-message .rounded-lg,
 .user-message .rounded-2xl {
     max-width: 85%;
-    background: linear-gradient(135deg, rgb(79 70 229), rgb(124 58 237));
+    background: rgb(var(--cf-indigo-600));
     color: white;
     padding: 0.625rem 1rem;
     border-radius: 1.25rem 1.25rem 0.25rem;
     line-height: 1.5;
     overflow-wrap: break-word;
     word-break: normal;
-    box-shadow: 0 4px 12px rgb(99 102 241 / 20%);
+    box-shadow: 0 4px 12px rgb(var(--cf-indigo-500) / 20%);
     border: 1px solid rgb(255 255 255 / 10%);
 }
 
@@ -297,13 +337,13 @@
 .assistant-message .rounded-2xl {
     max-width: min(90%, 850px);
     background: white;
-    color: rgb(31 41 55);
+    color: rgb(var(--cf-gray-800));
     padding: 0.75rem 1.125rem;
     border-radius: 1.25rem 1.25rem 1.25rem 0.25rem;
     line-height: 1.6;
     overflow-wrap: break-word;
     word-break: normal;
-    border: 1px solid rgb(229 231 235);
+    border: 1px solid rgb(var(--cf-gray-200));
     box-shadow: 0 4px 12px rgb(0 0 0 / 5%);
     transition: box-shadow 0.2s ease;
 }
@@ -315,9 +355,9 @@
 
 .dark .assistant-message .rounded-lg,
 .dark .assistant-message .rounded-2xl {
-    background: rgb(31 41 55);
-    color: rgb(243 244 246);
-    border-color: rgb(55 65 81);
+    background: rgb(var(--cf-gray-800));
+    color: rgb(var(--cf-gray-100));
+    border-color: rgb(var(--cf-gray-700));
     box-shadow: 0 4px 12px rgb(0 0 0 / 25%);
 }
 
@@ -341,13 +381,13 @@
 
 .markdown-body h1 {
     font-size: 1.5rem;
-    border-bottom: 1px solid rgb(229 231 235);
+    border-bottom: 1px solid rgb(var(--cf-gray-200));
     padding-bottom: 0.3rem;
 }
 
 .markdown-body h2 {
     font-size: 1.25rem;
-    border-bottom: 1px solid rgb(229 231 235);
+    border-bottom: 1px solid rgb(var(--cf-gray-200));
     padding-bottom: 0.3rem;
 }
 
@@ -361,7 +401,7 @@
 
 .dark .markdown-body h1,
 .dark .markdown-body h2 {
-    border-bottom-color: rgb(55 65 81);
+    border-bottom-color: rgb(var(--cf-gray-700));
 }
 
 .markdown-body p {
@@ -373,29 +413,29 @@
 }
 
 .markdown-body pre {
-    background-color: rgb(243 244 246);
+    background-color: rgb(var(--cf-gray-100));
     border-radius: 0.5rem;
     padding: 0.75rem;
     margin: 0.75rem 0;
     overflow-x: auto;
-    border: 1px solid rgb(229 231 235);
+    border: 1px solid rgb(var(--cf-gray-200));
 }
 
 .dark .markdown-body pre {
-    background-color: rgb(17 24 39);
-    border-color: rgb(55 65 81);
+    background-color: rgb(var(--cf-gray-900));
+    border-color: rgb(var(--cf-gray-700));
 }
 
 .markdown-body code {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     font-size: 0.8125rem;
     padding: 0.125rem 0.25rem;
-    background-color: rgb(243 244 246);
+    background-color: rgb(var(--cf-gray-100));
     border-radius: 0.25rem;
 }
 
 .dark .markdown-body code {
-    background-color: rgb(55 65 81);
+    background-color: rgb(var(--cf-gray-700));
 }
 
 .markdown-body pre code {
@@ -420,9 +460,9 @@
 }
 
 .markdown-body blockquote {
-    border-left: 4px solid rgb(209 213 219);
+    border-left: 4px solid rgb(var(--cf-gray-300));
     padding-left: 1rem;
-    color: rgb(107 114 128);
+    color: rgb(var(--cf-gray-500));
     margin: 0.75rem 0;
 }
 
@@ -437,8 +477,8 @@
 }
 
 .dark .markdown-body blockquote {
-    border-left-color: rgb(75 85 99);
-    color: rgb(156 163 175);
+    border-left-color: rgb(var(--cf-gray-600));
+    color: rgb(var(--cf-gray-400));
 }
 
 .markdown-body table {
@@ -465,23 +505,23 @@
 .markdown-body th,
 .markdown-body td {
     display: table-cell;
-    border: 1px solid rgb(229 231 235);
+    border: 1px solid rgb(var(--cf-gray-200));
     padding: 0.5rem 0.75rem;
     text-align: left;
 }
 
 .dark .markdown-body th,
 .dark .markdown-body td {
-    border-color: rgb(55 65 81);
+    border-color: rgb(var(--cf-gray-700));
 }
 
 .markdown-body th {
-    background-color: rgb(249 250 251);
+    background-color: rgb(var(--cf-gray-50));
     font-weight: 600;
 }
 
 .dark .markdown-body th {
-    background-color: rgb(17 24 39);
+    background-color: rgb(var(--cf-gray-900));
 }
 
 /* System Message (Centered) */
@@ -558,7 +598,7 @@
 }
 
 .dark #chat-input-container {
-    background: rgb(17 24 39 / 98%);
+    background: rgb(var(--cf-gray-900) / 98%);
 }
 
 #chat-input {
@@ -571,8 +611,8 @@
 
 #chat-input:focus {
     outline: none;
-    border-color: rgb(99 102 241);
-    box-shadow: 0 0 0 3px rgb(99 102 241 / 10%);
+    border-color: rgb(var(--cf-indigo-500));
+    box-shadow: 0 0 0 3px rgb(var(--cf-indigo-500) / 10%);
 }
 
 #chat-send-btn {
@@ -630,18 +670,18 @@
 }
 
 #llm-chat-servers-list::-webkit-scrollbar-thumb {
-    background-color: rgb(156 163 175 / 40%);
+    background-color: rgb(var(--cf-gray-400) / 40%);
     border-radius: 3px;
 }
 
 #llm-chat-servers-list::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(156 163 175 / 60%);
+    background-color: rgb(var(--cf-gray-400) / 60%);
 }
 
 /* Configuration Form Scrollbar */
 #llm-config-form {
     scrollbar-width: thin;
-    scrollbar-color: rgb(156 163 175 / 50%) transparent;
+    scrollbar-color: rgb(var(--cf-gray-400) / 50%) transparent;
 }
 
 #llm-config-form::-webkit-scrollbar {
@@ -653,12 +693,12 @@
 }
 
 #llm-config-form::-webkit-scrollbar-thumb {
-    background-color: rgb(156 163 175 / 50%);
+    background-color: rgb(var(--cf-gray-400) / 50%);
     border-radius: 3px;
 }
 
 #llm-config-form::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(156 163 175 / 70%);
+    background-color: rgb(var(--cf-gray-400) / 70%);
 }
 
 /* Remove default paragraph margins in messages */
@@ -697,7 +737,7 @@
 }
 
 .tool-events {
-    border-left: 2px solid rgb(99 102 241 / 25%);
+    border-left: 2px solid rgb(var(--cf-indigo-500) / 25%);
     padding-left: 8px;
 }
 
@@ -789,14 +829,14 @@
     margin-bottom: 0.75rem;
     border-radius: 0.5rem;
     overflow: hidden;
-    background: linear-gradient(135deg, rgb(99 102 241 / 5%), rgb(139 92 246 / 5%));
-    border: 1px solid rgb(99 102 241 / 20%);
+    background: rgb(var(--cf-indigo-500) / 5%);
+    border: 1px solid rgb(var(--cf-indigo-500) / 20%);
     transition: all 0.2s ease;
 }
 
 .dark .thinking-container {
-    background: linear-gradient(135deg, rgb(99 102 241 / 8%), rgb(139 92 246 / 8%));
-    border-color: rgb(99 102 241 / 30%);
+    background: rgb(var(--cf-indigo-500) / 8%);
+    border-color: rgb(var(--cf-indigo-500) / 30%);
 }
 
 /* Thinking Header - Clickable area */
@@ -816,11 +856,11 @@
 }
 
 .dark .thinking-header {
-    background: rgb(31 41 55 / 30%);
+    background: rgb(var(--cf-gray-800) / 30%);
 }
 
 .dark .thinking-header:hover {
-    background: rgb(31 41 55 / 50%);
+    background: rgb(var(--cf-gray-800) / 50%);
 }
 
 /* Header Content - Left side */
@@ -835,11 +875,13 @@
 .thinking-icon {
     width: 1rem;
     height: 1rem;
-    color: rgb(99 102 241);
+    color: rgb(var(--cf-indigo-500));
     flex-shrink: 0;
 }
 
 .dark .thinking-icon {
+    /* Left as-is on purpose: this is a `blue` accent, not part of the
+       `gray` / `indigo` ramps this change owns. */
     color: rgb(147 197 253);
 }
 
@@ -847,27 +889,27 @@
 .thinking-label {
     font-size: 0.813rem;
     font-weight: 600;
-    color: rgb(75 85 99);
+    color: rgb(var(--cf-gray-600));
     letter-spacing: 0.01em;
 }
 
 .dark .thinking-label {
-    color: rgb(209 213 219);
+    color: rgb(var(--cf-gray-300));
 }
 
 /* Thinking Count Badge */
 .thinking-count {
     font-size: 0.688rem;
     padding: 0.125rem 0.5rem;
-    background: rgb(99 102 241 / 15%);
-    color: rgb(67 56 202);
+    background: rgb(var(--cf-indigo-500) / 15%);
+    color: rgb(var(--cf-indigo-700));
     border-radius: 0.75rem;
     font-weight: 500;
 }
 
 .dark .thinking-count {
-    background: rgb(99 102 241 / 25%);
-    color: rgb(165 180 252);
+    background: rgb(var(--cf-indigo-500) / 25%);
+    color: rgb(var(--cf-indigo-300));
 }
 
 /* Toggle Button */
@@ -884,23 +926,23 @@
 }
 
 .thinking-toggle:hover {
-    background: rgb(99 102 241 / 10%);
+    background: rgb(var(--cf-indigo-500) / 10%);
 }
 
 .dark .thinking-toggle:hover {
-    background: rgb(99 102 241 / 20%);
+    background: rgb(var(--cf-indigo-500) / 20%);
 }
 
 /* Chevron Icon */
 .thinking-chevron {
     width: 1rem;
     height: 1rem;
-    color: rgb(107 114 128);
+    color: rgb(var(--cf-gray-500));
     transition: transform 0.2s ease;
 }
 
 .dark .thinking-chevron {
-    color: rgb(156 163 175);
+    color: rgb(var(--cf-gray-400));
 }
 
 /* Thinking Content - Collapsible area */
@@ -921,7 +963,7 @@
 }
 
 .dark .thinking-content {
-    background: rgb(17 24 39 / 30%);
+    background: rgb(var(--cf-gray-900) / 30%);
 }
 
 /* Custom scrollbar for thinking content */
@@ -934,12 +976,12 @@
 }
 
 .thinking-content::-webkit-scrollbar-thumb {
-    background-color: rgb(156 163 175 / 40%);
+    background-color: rgb(var(--cf-gray-400) / 40%);
     border-radius: 3px;
 }
 
 .thinking-content::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(156 163 175 / 60%);
+    background-color: rgb(var(--cf-gray-400) / 60%);
 }
 
 /* Individual Thinking Step */
@@ -947,7 +989,7 @@
     display: flex;
     gap: 0.625rem;
     padding: 0.5rem 0;
-    border-bottom: 1px solid rgb(229 231 235 / 50%);
+    border-bottom: 1px solid rgb(var(--cf-gray-200) / 50%);
     animation: thinking-step-in 0.3s ease-out;
 }
 
@@ -956,7 +998,7 @@
 }
 
 .dark .thinking-step {
-    border-bottom-color: rgb(55 65 81 / 50%);
+    border-bottom-color: rgb(var(--cf-gray-700) / 50%);
 }
 
 /* Animation for thinking steps appearing */
@@ -978,18 +1020,18 @@
     width: 1.5rem;
     height: 1.5rem;
     border-radius: 50%;
-    background: linear-gradient(135deg, rgb(99 102 241), rgb(139 92 246));
+    background: rgb(var(--cf-indigo-600));
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 0.688rem;
     font-weight: 600;
-    box-shadow: 0 2px 4px rgb(99 102 241 / 30%);
+    box-shadow: 0 2px 4px rgb(var(--cf-indigo-500) / 30%);
 }
 
 .dark .thinking-step-number {
-    box-shadow: 0 2px 4px rgb(99 102 241 / 50%);
+    box-shadow: 0 2px 4px rgb(var(--cf-indigo-500) / 50%);
 }
 
 /* Step Text Content */
@@ -997,13 +1039,13 @@
     flex: 1;
     font-size: 0.813rem;
     line-height: 1.5;
-    color: rgb(55 65 81);
+    color: rgb(var(--cf-gray-700));
     white-space: pre-wrap;
     overflow-wrap: break-word;
 }
 
 .dark .thinking-step-text {
-    color: rgb(209 213 219);
+    color: rgb(var(--cf-gray-300));
 }
 
 /* Final Answer Content - After thinking */
@@ -1011,23 +1053,23 @@
     margin-top: 0.5rem;
     font-size: 0.875rem;
     line-height: 1.5;
-    color: rgb(17 24 39);
+    color: rgb(var(--cf-gray-900));
     white-space: pre-wrap;
     overflow-wrap: break-word;
 }
 
 .dark .final-answer-content {
-    color: rgb(243 244 246);
+    color: rgb(var(--cf-gray-100));
 }
 
 /* When thinking exists, add subtle separator */
 .thinking-container+.final-answer-content {
     padding-top: 0.75rem;
-    border-top: 1px solid rgb(229 231 235 / 30%);
+    border-top: 1px solid rgb(var(--cf-gray-200) / 30%);
 }
 
 .dark .thinking-container+.final-answer-content {
-    border-top-color: rgb(55 65 81 / 30%);
+    border-top-color: rgb(var(--cf-gray-700) / 30%);
 }
 
 /* Responsive adjustments */
@@ -1077,7 +1119,7 @@
 nav[class*="-mb-px"] {
     overflow: auto hidden;
     scrollbar-width: thin;
-    scrollbar-color: rgb(156 163 175 / 50%) transparent;
+    scrollbar-color: rgb(var(--cf-gray-400) / 50%) transparent;
     -webkit-overflow-scrolling: touch;
 
     /* Ensure tabs don't wrap */
@@ -1094,12 +1136,12 @@ nav[class*="-mb-px"]::-webkit-scrollbar-track {
 }
 
 nav[class*="-mb-px"]::-webkit-scrollbar-thumb {
-    background-color: rgb(156 163 175 / 50%);
+    background-color: rgb(var(--cf-gray-400) / 50%);
     border-radius: 2px;
 }
 
 nav[class*="-mb-px"]::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(156 163 175 / 70%);
+    background-color: rgb(var(--cf-gray-400) / 70%);
 }
 
 /* Ensure tab links don't shrink below readable size */
@@ -1118,13 +1160,13 @@ nav[class*="-mb-px"]::-webkit-scrollbar-thumb:hover {
 
     .tab-link {
         width: 100%;
-        border-bottom: 1px solid rgb(229 231 235 / 50%);
+        border-bottom: 1px solid rgb(var(--cf-gray-200) / 50%);
         border-left: 3px solid transparent;
         padding-left: 0.75rem;
     }
 
     .tab-link[class*="border-indigo"] {
-        border-left-color: rgb(99 102 241);
+        border-left-color: rgb(var(--cf-indigo-500));
         border-bottom-color: transparent;
     }
 }

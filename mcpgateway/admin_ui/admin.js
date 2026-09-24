@@ -299,6 +299,12 @@ Admin.testMCPSearchManually = testMCPSearchManually;
 // Metrics is loaded on-demand by lazy-loader.js (see TAB_FEATURE_MAP in tabs.js);
 // it is deliberately not statically imported here so Rollup can split it into its own chunk.
 
+// Confirm / alert dialogs (in-app replacements for window.confirm/alert)
+import { showAlert, showConfirm } from "./confirm.js";
+
+Admin.showAlert = showAlert;
+Admin.showConfirm = showConfirm;
+
 // Modals
 import {
   closeApiKeyModal,

@@ -24,6 +24,7 @@ import {
   makeCopyIdButton,
   safeGetElement,
   showErrorMessage,
+  showNotification,
   showSuccessMessage,
   updateEditToolUrl,
 } from "./utils.js";
@@ -2284,7 +2285,7 @@ export const initToolSelect = function (
         update();
       } catch (error) {
         console.error("Error in Select All:", error);
-        alert("Failed to select all tools. Please try again.");
+        showNotification("Failed to select all tools. Please try again.", "error");
         newSelectBtn.disabled = false;
       } finally {
         newSelectBtn.disabled = false;

@@ -1,4 +1,5 @@
 import { AppState } from "./appState.js";
+import { showConfirm } from "./confirm.js";
 import { DEFAULT_TEAMS_PER_PAGE } from "./constants.js";
 import { searchTeamSelector } from "./formFieldHandlers.js";
 import { escapeHtml, safeReplaceState } from "./security.js";
@@ -398,8 +399,9 @@ export const leaveTeam = async function (teamId, teamName) {
   }
 
   // Show confirmation dialog
-  const confirmed = confirm(
-    `Are you sure you want to leave the team "${teamName}"? This action cannot be undone.`
+  const confirmed = await showConfirm(
+    `Are you sure you want to leave the team "${teamName}"? This action cannot be undone.`,
+    { danger: true }
   );
   if (!confirmed) {
     return;
@@ -508,8 +510,9 @@ export const rejectJoinRequest = async function (teamId, requestId) {
     return;
   }
 
-  const confirmed = confirm(
-    "Are you sure you want to reject this join request?"
+  const confirmed = await showConfirm(
+    "Are you sure you want to reject this join request?",
+    { danger: true }
   );
   if (!confirmed) {
     return;

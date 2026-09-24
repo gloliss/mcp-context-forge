@@ -13,6 +13,7 @@ import {
   parseUriTemplate,
   safeGetElement,
   showErrorMessage,
+  showNotification,
 } from "./utils.js";
 
 export const testResource = async function (resourceId) {
@@ -1063,7 +1064,7 @@ export const initResourceSelect = function (
         update();
       } catch (error) {
         console.error("Error selecting all resources:", error);
-        alert("Failed to select all resources. Please try again.");
+        showNotification("Failed to select all resources. Please try again.", "error");
         newSelectBtn.disabled = false;
         update(); // Reset button text via update()
       } finally {

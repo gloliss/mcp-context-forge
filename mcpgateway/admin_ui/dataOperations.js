@@ -1,5 +1,6 @@
 import { getCookie } from "./utils.js";
 import { escapeHtml } from "./security.js";
+import { showConfirm } from "./confirm.js";
 
 const rootPath = () => window.ROOT_PATH || "";
 
@@ -1241,9 +1242,10 @@ const setupHttpOperations = () => {
   document.querySelectorAll(".http-delete").forEach((control) => {
     control.addEventListener("click", async () => {
       if (
-        !window.confirm(
-          "Are you sure you want to delete this HTTP service? Its generated tools will be removed."
-        )
+        !(await showConfirm(
+          "Are you sure you want to delete this HTTP service? Its generated tools will be removed.",
+          { danger: true }
+        ))
       ) {
         return;
       }

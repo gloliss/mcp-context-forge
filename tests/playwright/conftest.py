@@ -437,7 +437,15 @@ def browser_context_args(
 @pytest.fixture
 def context(new_context) -> BrowserContext:
     """Create a browser context using pytest-playwright hooks for artifacts."""
-    return new_context(ignore_https_errors=True)
+    context = new_context(ignore_https_errors=True)
+    # UI_TEST_LOCALE selects the in-app language for UI tests. When it is "en"
+    # (the default) we pin the locale so existing English text selectors keep
+    # working; for "zh" we leave localStorage unset so the i18n overlay applies
+    # the default Chinese translation.
+    locale = os.environ.get("UI_TEST_LOCALE", "en")
+    if locale == "en":
+        context.add_init_script("try { localStorage.setItem('mcpgateway.locale', 'en'); } catch (e) {}")
+    return context
 
 
 # Fixture if you need the default page fixture name

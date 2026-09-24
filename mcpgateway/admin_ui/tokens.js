@@ -1,4 +1,5 @@
 import { getAuthHeaders } from "./auth.js";
+import { showConfirm } from "./confirm.js";
 import {
   escapeHtml,
   logRestrictedContext,
@@ -641,9 +642,10 @@ const showTokenCreatedModal = function (tokenData) {
  */
 const revokeToken = async function (tokenId, tokenName) {
   if (
-    !confirm(
-      `Are you sure you want to revoke the token "${tokenName}"? This action cannot be undone.`
-    )
+    !(await showConfirm(
+      `Are you sure you want to revoke the token "${tokenName}"? This action cannot be undone.`,
+      { danger: true }
+    ))
   ) {
     return;
   }

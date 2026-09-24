@@ -1,6 +1,7 @@
 import { PANEL_SEARCH_CONFIG, TOGGLE_FRAGMENT_MAP } from "./constants.js";
+import { showConfirm } from "./confirm.js";
 import { navigateAdmin } from "./navigation.js";
-import { buildTableUrl, getCookie, isInactiveChecked } from "./utils.js";
+import { buildTableUrl, getCookie, isInactiveChecked, showNotification } from "./utils.js";
 
 // ===================================================================
 // ENTITY TYPE DISPLAY NAMES
@@ -130,7 +131,7 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
   } catch (error) {
     // Network error or missing config — notify user and fallback to full reload
     console.error("Form submit error:", error);
-    alert("Failed to refresh table. Reloading page...");
+    showNotification("Failed to refresh table. Reloading page...", "error");
     const fragment = TOGGLE_FRAGMENT_MAP[type] || type;
     const params = new URLSearchParams();
     params.set("include_inactive", String(isInactiveCheckedBool));
@@ -159,12 +160,12 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
 // Legacy alias for backward compatibility
 export const handleToggleSubmit = handleFormSubmitAndRefresh;
 
-export const handleSubmitWithConfirmation = function (event, type) {
+export const handleSubmitWithConfirmation = async function (event, type) {
   event.preventDefault();
 
   const displayName = ENTITY_DISPLAY_NAMES[type] || type;
   const confirmationMessage = `Are you sure you want to permanently delete this ${displayName}? (Deactivation is reversible, deletion is permanent)`;
-  const confirmation = confirm(confirmationMessage);
+  const confirmation = await showConfirm(confirmationMessage, { danger: true });
   if (!confirmation) {
     return false;
   }
@@ -172,7 +173,7 @@ export const handleSubmitWithConfirmation = function (event, type) {
   return handleFormSubmitAndRefresh(event, type);
 };
 
-export const handleDeleteSubmit = function (
+export const handleDeleteSubmit = async function (
   event,
   type,
   name = "",
@@ -183,13 +184,14 @@ export const handleDeleteSubmit = function (
   const displayName = ENTITY_DISPLAY_NAMES[type] || type;
   const targetName = name ? `${displayName} "${name}"` : `this ${displayName}`;
   const confirmationMessage = `Are you sure you want to permanently delete ${targetName}? (Deactivation is reversible, deletion is permanent)`;
-  const confirmation = confirm(confirmationMessage);
+  const confirmation = await showConfirm(confirmationMessage, { danger: true });
   if (!confirmation) {
     return false;
   }
 
-  const purgeConfirmation = confirm(
-    `Also purge ALL metrics history for ${targetName}? This deletes raw metrics and hourly rollups and cannot be undone.`
+  const purgeConfirmation = await showConfirm(
+    `Also purge ALL metrics history for ${targetName}? This deletes raw metrics and hourly rollups and cannot be undone.`,
+    { danger: true }
   );
   if (purgeConfirmation) {
     const form = event.target;

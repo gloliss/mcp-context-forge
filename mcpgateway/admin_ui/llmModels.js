@@ -1,5 +1,6 @@
 import { AppState } from "./appState.js";
 import { getAuthHeaders } from "./auth.js";
+import { showConfirm } from "./confirm.js";
 import { showCopyableModal } from "./modals.js";
 import { parseErrorResponse } from "./security.js";
 import { safeGetElement, showToast } from "./utils.js";
@@ -590,9 +591,10 @@ export const saveLLMProvider = async function (event) {
  */
 export const deleteLLMProvider = async function (providerId, providerName) {
   if (
-    !confirm(
+    !(await showConfirm(
       `Are you sure you want to delete the provider "${providerName}"? This will also delete all associated models.`,
-    )
+      { danger: true }
+    ))
   ) {
     return;
   }
@@ -949,7 +951,7 @@ export const saveLLMModel = async function (event) {
  * Delete LLM Model
  */
 export const deleteLLMModel = async function (modelId, modelName) {
-  if (!confirm(`Are you sure you want to delete the model "${modelName}"?`)) {
+  if (!(await showConfirm(`Are you sure you want to delete the model "${modelName}"?`, { danger: true }))) {
     return;
   }
 

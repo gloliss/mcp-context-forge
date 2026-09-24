@@ -47,6 +47,7 @@ import {
   fetchModelsForModelModal,
   toggleLLMModel,
 } from "../../../mcpgateway/admin_ui/llmModels.js";
+import { showConfirm } from "../../../mcpgateway/admin_ui/confirm.js";
 
 vi.mock("../../../mcpgateway/admin_ui/modals.js", () => ({
   showCopyableModal: vi.fn(),
@@ -57,6 +58,11 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   parseErrorResponse: vi.fn((response, defaultMsg) =>
     Promise.resolve(defaultMsg)
   ),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/confirm.js", () => ({
+  showConfirm: vi.fn(),
+  showAlert: vi.fn(),
 }));
 
 // getAuthToken defaults to "" (httponly session-cookie login) for most tests;
@@ -195,6 +201,7 @@ afterEach(() => {
   delete window.htmx;
   clearCookies();
   vi.restoreAllMocks();
+  showConfirm.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -271,7 +278,7 @@ describe("saveLLMProvider CSRF headers", () => {
 // ---------------------------------------------------------------------------
 describe("deleteLLMProvider CSRF headers", () => {
   test("DELETE includes X-CSRF-Token and omits Authorization", async () => {
-    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
     });
@@ -292,8 +299,6 @@ describe("deleteLLMProvider CSRF headers", () => {
     );
     const [, options] = fetchSpy.mock.calls[0];
     expect(options.headers).not.toHaveProperty("Authorization");
-
-    confirmSpy.mockRestore();
   });
 });
 
@@ -414,7 +419,7 @@ describe("saveLLMModel CSRF headers", () => {
 // ---------------------------------------------------------------------------
 describe("deleteLLMModel CSRF headers", () => {
   test("DELETE includes X-CSRF-Token and omits Authorization", async () => {
-    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
     });
@@ -435,8 +440,6 @@ describe("deleteLLMModel CSRF headers", () => {
     );
     const [, options] = fetchSpy.mock.calls[0];
     expect(options.headers).not.toHaveProperty("Authorization");
-
-    confirmSpy.mockRestore();
   });
 });
 
@@ -537,7 +540,7 @@ describe("missing CSRF cookie", () => {
     [
       "deleteLLMProvider (DELETE /llm/providers/{id})",
       async () => {
-        vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+        showConfirm.mockResolvedValue(true);
         const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
           ok: true,
         });
@@ -551,7 +554,7 @@ describe("missing CSRF cookie", () => {
     [
       "deleteLLMModel (DELETE /llm/models/{id})",
       async () => {
-        vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+        showConfirm.mockResolvedValue(true);
         const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
           ok: true,
         });

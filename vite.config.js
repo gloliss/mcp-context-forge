@@ -12,15 +12,9 @@ function cleanOldBundles() {
       if (fs.existsSync(outDir)) {
         const files = fs.readdirSync(outDir);
         for (const file of files) {
-          // Remove old bundle files (bundle-*.js pattern)
-          if (file.startsWith('bundle-') && file.endsWith('.js')) {
+          if (/^(bundle|chunk|i18n)-.*\.js(\.gz)?$/.test(file)) {
             fs.unlinkSync(path.join(outDir, file));
-            console.log(`Removed old bundle: ${file}`);
-          }
-          // Remove old chunk files
-          if (file.startsWith('chunk-') && file.endsWith('.js')) {
-            fs.unlinkSync(path.join(outDir, file));
-            console.log(`Removed old chunk: ${file}`);
+            console.log(`Removed old build artifact: ${file}`);
           }
         }
       }
@@ -49,10 +43,13 @@ export default defineConfig({
     // Generate manifest for Python to read the hashed filename
     manifest: true,
     rollupOptions: {
-      input: path.resolve(__dirname, 'mcpgateway/admin_ui/index.js'),
+      input: {
+        index: path.resolve(__dirname, 'mcpgateway/admin_ui/index.js'),
+        i18n: path.resolve(__dirname, 'mcpgateway/admin_ui/i18n/standalone.js'),
+      },
       output: {
         // Add content hash to filename for cache busting
-        entryFileNames: 'bundle-[hash].js',
+        entryFileNames: (chunk) => chunk.name === 'i18n' ? 'i18n-[hash].js' : 'bundle-[hash].js',
         chunkFileNames: 'chunk-[name]-[hash].js',
         format: 'es', // ES modules format for code splitting
         // Manual chunks for code splitting (function-based for Vite 8/rolldown)

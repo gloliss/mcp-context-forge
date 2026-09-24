@@ -47,6 +47,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   makeCopyIdButton: vi.fn(() => document.createElement("button")),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
+  showNotification: vi.fn(),
 }));
 
 afterEach(() => {

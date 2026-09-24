@@ -13,6 +13,7 @@ import {
   makeCopyIdButton,
   safeGetElement,
   showErrorMessage,
+  showNotification,
 } from "./utils.js";
 
 /**
@@ -814,7 +815,7 @@ export const initPromptSelect = function (
         update();
       } catch (error) {
         console.error("Error selecting all prompts:", error);
-        alert("Failed to select all prompts. Please try again.");
+        showNotification("Failed to select all prompts. Please try again.", "error");
         newSelectBtn.disabled = false;
         update(); // Reset button text via update()
       } finally {

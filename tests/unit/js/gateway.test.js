@@ -68,6 +68,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
   showSuccessMessage: vi.fn(),
+  showNotification: vi.fn(),
 }));
 
 afterEach(() => {

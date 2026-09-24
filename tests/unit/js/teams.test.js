@@ -45,6 +45,7 @@ import {
   showSuccessMessage,
 } from "../../../mcpgateway/admin_ui/utils.js";
 import { getAuthToken } from "../../../mcpgateway/admin_ui/tokens.js";
+import { showConfirm } from "../../../mcpgateway/admin_ui/confirm.js";
 
 // Mock dependencies BEFORE importing the module under test
 vi.mock("../../../mcpgateway/admin_ui/appState.js", () => ({
@@ -81,6 +82,10 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
 
 vi.mock("../../../mcpgateway/admin_ui/formFieldHandlers.js", () => ({
   searchTeamSelector: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/confirm.js", () => ({
+  showConfirm: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -712,7 +717,7 @@ describe("leaveTeam", () => {
   });
 
   test("leaves team successfully after confirmation", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
 
     fetchWithTimeout.mockResolvedValue({
       ok: true,
@@ -725,8 +730,9 @@ describe("leaveTeam", () => {
 
     await leaveTeam("team-123", "Engineering");
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining('leave the team "Engineering"')
+    expect(showConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('leave the team "Engineering"'),
+      { danger: true }
     );
     expect(fetchWithTimeout).toHaveBeenCalledWith(
       "/teams/team-123/leave",
@@ -741,7 +747,7 @@ describe("leaveTeam", () => {
   });
 
   test("does not leave team when user cancels", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    showConfirm.mockResolvedValue(false);
 
     await leaveTeam("team-123", "Engineering");
 
@@ -750,7 +756,7 @@ describe("leaveTeam", () => {
 
   test("shows error when leave fails", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
 
     fetchWithTimeout.mockResolvedValue({
       ok: false,
@@ -875,7 +881,7 @@ describe("rejectJoinRequest", () => {
   });
 
   test("rejects join request successfully after confirmation", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
 
     fetchWithTimeout.mockResolvedValue({
       ok: true,
@@ -888,8 +894,9 @@ describe("rejectJoinRequest", () => {
 
     await rejectJoinRequest("team-123", "request-456");
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining("reject this join request")
+    expect(showConfirm).toHaveBeenCalledWith(
+      expect.stringContaining("reject this join request"),
+      { danger: true }
     );
     expect(fetchWithTimeout).toHaveBeenCalledWith(
       "/teams/team-123/join-requests/request-456",
@@ -905,7 +912,7 @@ describe("rejectJoinRequest", () => {
   });
 
   test("does not reject when user cancels", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    showConfirm.mockResolvedValue(false);
 
     await rejectJoinRequest("team-123", "request-456");
 
@@ -914,7 +921,7 @@ describe("rejectJoinRequest", () => {
 
   test("shows error when rejection fails", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
 
     fetchWithTimeout.mockResolvedValue({
       ok: false,

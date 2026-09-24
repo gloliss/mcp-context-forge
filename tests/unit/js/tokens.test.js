@@ -30,6 +30,7 @@ import {
   getPaginationParams,
   copyToClipboard,
 } from "../../../mcpgateway/admin_ui/utils.js";
+import { showConfirm } from "../../../mcpgateway/admin_ui/confirm.js";
 
 // Mock dependencies
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
@@ -50,6 +51,10 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   getPaginationParams: vi.fn(() => ({ perPage: 10 })),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showNotification: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/confirm.js", () => ({
+  showConfirm: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -846,7 +851,7 @@ describe("setupTokenListEventHandlers", () => {
   });
 
   test("token-revoke triggers confirm then fetchWithTimeout", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { showNotification } = await import("../../../mcpgateway/admin_ui/utils.js");
 
@@ -877,7 +882,7 @@ describe("setupTokenListEventHandlers", () => {
     // Allow async handlers to run
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(showConfirm).toHaveBeenCalled();
     expect(fetchWithTimeout).toHaveBeenCalledWith(
       expect.stringContaining("tok-99"),
       expect.objectContaining({ method: "DELETE" })
@@ -887,12 +892,11 @@ describe("setupTokenListEventHandlers", () => {
       "success"
     );
 
-    confirmSpy.mockRestore();
     consoleSpy.mockRestore();
   });
 
   test("token-revoke does nothing when confirm is cancelled", () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    showConfirm.mockResolvedValue(false);
 
     const panel = document.createElement("div");
     panel.id = "tokens-panel";
@@ -909,7 +913,6 @@ describe("setupTokenListEventHandlers", () => {
     btn.click();
 
     expect(fetchWithTimeout).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   test("non-button click is ignored", () => {
@@ -1589,7 +1592,7 @@ describe("setupTokenListEventHandlers - revokeToken error paths", () => {
 
   test("revokeToken shows error notification when response is not ok", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
     const { showNotification } = await import("../../../mcpgateway/admin_ui/utils.js");
     const { parseErrorResponse: mockParse } = await import("../../../mcpgateway/admin_ui/security.js");
 
@@ -1616,13 +1619,12 @@ describe("setupTokenListEventHandlers - revokeToken error paths", () => {
       "error"
     );
 
-    confirmSpy.mockRestore();
     consoleSpy.mockRestore();
   });
 
   test("revokeToken catch block fires when fetchWithTimeout throws", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
     const { showNotification } = await import("../../../mcpgateway/admin_ui/utils.js");
 
     fetchWithTimeout.mockRejectedValue(new Error("Network down"));
@@ -1651,7 +1653,6 @@ describe("setupTokenListEventHandlers - revokeToken error paths", () => {
       "error"
     );
 
-    confirmSpy.mockRestore();
     consoleSpy.mockRestore();
   });
 });

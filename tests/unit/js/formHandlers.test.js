@@ -11,9 +11,21 @@ import {
   handleDeleteSubmit,
 } from "../../../mcpgateway/admin_ui/formHandlers.js";
 import { navigateAdmin } from "../../../mcpgateway/admin_ui/navigation.js";
+import { showConfirm } from "../../../mcpgateway/admin_ui/confirm.js";
+import { showNotification } from "../../../mcpgateway/admin_ui/utils.js";
 
 vi.mock("../../../mcpgateway/admin_ui/navigation.js", () => ({
   navigateAdmin: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/confirm.js", () => ({
+  showConfirm: vi.fn(),
+  showAlert: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  showNotification: vi.fn(),
 }));
 
 afterEach(() => {
@@ -22,9 +34,10 @@ afterEach(() => {
   delete global.window.htmx;
   delete global.window.ROOT_PATH;
   // Provide safe defaults so tests that spyOn(global.fetch) or assert on
-  // global.alert do not fail when a previous test deleted the property.
+  // showNotification do not fail when a previous test deleted the property.
   global.fetch = vi.fn().mockResolvedValue({ ok: true });
-  global.alert = vi.fn();
+  showConfirm.mockReset();
+  showNotification.mockReset();
   vi.mocked(navigateAdmin).mockClear();
 });
 
@@ -92,18 +105,19 @@ describe("handleSubmitWithConfirmation", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    showConfirm.mockResolvedValue(true);
 
     await handleSubmitWithConfirmation(event, "tools");
 
     // Confirmation message should use singular display name "tool", not plural "tools"
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining("permanently delete this tool")
+    expect(showConfirm).toHaveBeenCalledWith(
+      expect.stringContaining("permanently delete this tool"),
+      { danger: true }
     );
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  test("does not submit when user cancels confirmation", () => {
+  test("does not submit when user cancels confirmation", async () => {
     document.body.innerHTML = '<form id="test-form" action="/test"></form>';
     const form = document.getElementById("test-form");
 
@@ -112,9 +126,9 @@ describe("handleSubmitWithConfirmation", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    showConfirm.mockResolvedValue(false);
 
-    const result = handleSubmitWithConfirmation(event, "tools");
+    const result = await handleSubmitWithConfirmation(event, "tools");
 
     expect(result).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -134,35 +148,32 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true) // first confirm (delete)
-      .mockReturnValueOnce(true); // second confirm (purge metrics)
+    showConfirm.mockResolvedValue(true);
 
     await handleDeleteSubmit(event, "gateways", "test-gw");
 
-    expect(window.confirm).toHaveBeenCalledTimes(2);
+    expect(showConfirm).toHaveBeenCalledTimes(2);
     const purgeField = form.querySelector('input[name="purge_metrics"]');
     expect(purgeField).not.toBeNull();
     expect(purgeField.value).toBe("true");
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  test("uses name in confirmation message when provided", () => {
+  test("uses name in confirmation message when provided", async () => {
     document.body.innerHTML = '<form id="test-form"></form>';
     const form = document.getElementById("test-form");
     form.submit = vi.fn();
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
-    handleDeleteSubmit(event, "tools", "my-tool");
+    await handleDeleteSubmit(event, "tools", "my-tool");
 
     // Confirmation message should use singular display name "tool", not plural "tools"
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('tool "my-tool"')
+    expect(showConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('tool "my-tool"'),
+      { danger: true }
     );
   });
 
@@ -175,9 +186,7 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     await handleDeleteSubmit(event, "catalog");
 
@@ -186,16 +195,16 @@ describe("handleDeleteSubmit", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  test("returns false when user cancels first confirmation", () => {
+  test("returns false when user cancels first confirmation", async () => {
     document.body.innerHTML = '<form id="test-form"></form>';
     const form = document.getElementById("test-form");
     form.submit = vi.fn();
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    showConfirm.mockResolvedValue(false);
 
-    const result = handleDeleteSubmit(event, "resources");
+    const result = await handleDeleteSubmit(event, "resources");
 
     expect(result).toBe(false);
     expect(form.submit).not.toHaveBeenCalled();
@@ -214,9 +223,7 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     await handleDeleteSubmit(event, "tools", "t1");
 
@@ -241,9 +248,7 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     let capturedFormData;
     vi.spyOn(global, "fetch").mockImplementation((_url, options) => {
@@ -276,9 +281,7 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     // type="agent" for the confirmation message, but inactiveType="a2a-agents" is used
     // for refresh lookup in PANEL_SEARCH_CONFIG (handleDeleteSubmit uses inactiveType || type)
@@ -315,9 +318,7 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     await handleDeleteSubmit(event, "catalog", "test-server", "catalog");
 
@@ -333,7 +334,6 @@ describe("handleDeleteSubmit", () => {
   });
 
   test("falls back to navigateAdmin when PANEL_SEARCH_CONFIG is missing for a type", async () => {
-    global.alert = vi.fn();
     const form = document.createElement("form");
     form.id = "test-form";
     form.action = "/test";
@@ -349,20 +349,17 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     await handleDeleteSubmit(event, "unknown", "test-unknown", "unknown-type");
 
     // HTMX should NOT be called; instead alert + navigateAdmin fallback is triggered
     expect(htmxAjaxMock).not.toHaveBeenCalled();
-    expect(global.alert).toHaveBeenCalledWith("Failed to refresh table. Reloading page...");
+    expect(showNotification).toHaveBeenCalledWith("Failed to refresh table. Reloading page...", "error");
     expect(navigateAdmin).toHaveBeenCalled();
   });
 
   test("falls back to navigateAdmin for roots (fallbackOnly entity)", async () => {
-    global.alert = vi.fn();
     const form = document.createElement("form");
     form.id = "test-form";
     form.action = "/test";
@@ -378,9 +375,7 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     await handleDeleteSubmit(event, "roots", "test-root", "roots");
 
@@ -390,7 +385,6 @@ describe("handleDeleteSubmit", () => {
   });
 
   test("falls back to navigateAdmin when fetch response is not ok", async () => {
-    global.alert = vi.fn();
     const form = document.createElement("form");
     form.id = "test-form";
     form.action = "/test";
@@ -405,15 +399,13 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     await handleDeleteSubmit(event, "tools", "test-tool", "tools");
 
     expect(fetchMock).toHaveBeenCalled();
     expect(htmxAjaxMock).not.toHaveBeenCalled();
-    expect(global.alert).toHaveBeenCalledWith("Failed to refresh table. Reloading page...");
+    expect(showNotification).toHaveBeenCalledWith("Failed to refresh table. Reloading page...", "error");
     expect(navigateAdmin).toHaveBeenCalled();
   });
 
@@ -437,15 +429,13 @@ describe("handleDeleteSubmit", () => {
 
     const event = { preventDefault: vi.fn(), target: form };
 
-    vi.spyOn(window, "confirm")
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    showConfirm.mockResolvedValueOnce(true).mockResolvedValue(false);
 
     await handleDeleteSubmit(event, "tools", "test-tool", "tools");
 
     expect(fetchMock).toHaveBeenCalled();
     // HTMX SHOULD be called because status 0 is treated as success
     expect(htmxAjaxMock).toHaveBeenCalled();
-    expect(global.alert).not.toHaveBeenCalled();
+    expect(showNotification).not.toHaveBeenCalled();
   });
 });

@@ -142,6 +142,24 @@
         }
         tokenInput.value = csrfToken;
       });
+
+      // In-app confirmation for forms carrying data-confirm-message.
+      // One-time guard + requestSubmit() (not submit()) so the CSRF injection
+      // listener above still runs on the actual submission.
+      document.addEventListener("submit", async function (event) {
+        const form = event.target instanceof HTMLFormElement ? event.target : null;
+        if (!form || !form.hasAttribute("data-confirm-message")) {
+          return;
+        }
+        if (form.dataset.confirmAccepted === "true") {
+          return; // re-entry from requestSubmit(): allow native submission
+        }
+        event.preventDefault();
+        if (await window.Admin.showConfirm(form.dataset.confirmMessage)) {
+          form.dataset.confirmAccepted = "true";
+          form.requestSubmit();
+        }
+      });
     </script>
 
     <!-- Password Validator (shared utility) -->
@@ -160,6 +178,14 @@
       window.htmxConfig = window.htmxConfig || {};
       window.htmxConfig.inlineScriptNonce = "{{ csp_nonce(request) }}";
     </script>
+    <style>
+      html:not([data-i18n-ready]) body {
+        visibility: hidden;
+        animation: i18n-failsafe 0s linear 1200ms forwards;
+      }
+      @keyframes i18n-failsafe { to { visibility: visible; } }
+    </style>
+    {% if i18n_js %}<script type="module" src="{{ root_path }}/static/{{ i18n_js }}"></script>{% endif %}
     <script type="module" src="{{ root_path }}/static/{{ bundle_js }}"></script>
     {% if is_admin %}
     <script defer src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
@@ -631,13 +657,6 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
                 </svg>
               </a>
-              <a href="https://github.com/IBM/mcp-context-forge" target="_blank"
-                 class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                 title="GitHub">
-                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                  <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path>
-                </svg>
-              </a>
             </div>
           </div>
         </div>
@@ -760,7 +779,7 @@
 
               <!-- Logout -->
               {% if 'logout' not in hidden_header_items %}
-              <form method="post" action="{{ root_path }}/admin/logout" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to logout?" data-prevent-default="false">
+              <form method="post" action="{{ root_path }}/admin/logout" class="inline" data-confirm-message="Are you sure you want to logout?">
                 <button
                   type="submit"
                   class="px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
@@ -8128,7 +8147,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         <div class="grpc-sync-preview-body">Loading…</div>
                       </div>
                     </div>
-                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to delete this gRPC service?" data-prevent-default="false">
+                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" data-confirm-message="Are you sure you want to delete this gRPC service?">
                       <button
                         type="submit"
                         class="px-3 py-1 text-sm font-medium bg-red-100 text-red-800 rounded-md hover:bg-red-200"
@@ -12902,12 +12921,12 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const finalEmail = selectedUser || emailInput;
 
         if (!finalEmail) {
-          alert('Please select an existing user or enter an email address');
+          window.Admin.showNotification('Please select an existing user or enter an email address', 'error');
           return;
         }
 
         if (!inviteData.team_id) {
-          alert('Please select a team');
+          window.Admin.showNotification('Please select a team', 'error');
           return;
         }
 
@@ -12934,7 +12953,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         .then(html => {
           // Check if HTML contains success message
           if (html.includes('added successfully')) {
-            alert('Member added successfully!');
+            window.Admin.showNotification('Member added successfully!', 'success');
             closeInviteUserModal();
             // Trigger page refresh for teams tab if it's visible
             if (document.getElementById('teams-list')) {
@@ -12944,15 +12963,15 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             // Extract error message from HTML
             const errorMatch = html.match(/>([^<]+)</);
             const errorMsg = errorMatch ? errorMatch[1] : 'Unknown error';
-            alert('Error adding member: ' + errorMsg);
+            window.Admin.showNotification('Error adding member: ' + errorMsg, 'error');
           } else {
-            alert('Member added successfully!');
+            window.Admin.showNotification('Member added successfully!', 'success');
             closeInviteUserModal();
           }
         })
         .catch(error => {
           console.error('Error sending invitation:', error);
-          alert('Error adding member: ' + error.message);
+          window.Admin.showNotification('Error adding member: ' + error.message, 'error');
         });
       }
 
@@ -13078,17 +13097,17 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         // Validate required fields
         if (!assignmentData.user_email) {
-          alert('Please select a user');
+          window.Admin.showNotification('Please select a user', 'error');
           return;
         }
 
         if (!assignmentData.team_id) {
-          alert('Please select a team');
+          window.Admin.showNotification('Please select a team', 'error');
           return;
         }
 
         if (!assignmentData.role) {
-          alert('Please select a role');
+          window.Admin.showNotification('Please select a role', 'error');
           return;
         }
 
@@ -13115,7 +13134,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         .then(html => {
           // Check if HTML contains success message
           if (html.includes('Role updated successfully')) {
-            alert('Role assigned successfully!');
+            window.Admin.showNotification('Role assigned successfully!', 'success');
             closeRoleAssignmentModal();
             // Trigger page refresh for teams tab if it's visible
             if (document.getElementById('teams-list')) {
@@ -13125,15 +13144,15 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             // Extract error message from HTML
             const errorMatch = html.match(/>([^<]+)</);
             const errorMsg = errorMatch ? errorMatch[1] : 'Unknown error';
-            alert('Error assigning role: ' + errorMsg);
+            window.Admin.showNotification('Error assigning role: ' + errorMsg, 'error');
           } else {
-            alert('Role assigned successfully!');
+            window.Admin.showNotification('Role assigned successfully!', 'success');
             closeRoleAssignmentModal();
           }
         })
         .catch(error => {
           console.error('Error assigning role:', error);
-          alert('Error assigning role: ' + error.message);
+          window.Admin.showNotification('Error assigning role: ' + error.message, 'error');
         });
       }
 
@@ -15309,10 +15328,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       // to enable server-side search and pagination
 
       // Safe team action functions using data attributes
-      function requestToJoinTeamSafe(button) {
+      async function requestToJoinTeamSafe(button) {
         const teamId = button.getAttribute('data-team-id');
         const teamName = button.getAttribute('data-team-name');
-        if (confirm(`Request to join "${teamName}"?`)) {
+        if (await window.Admin.showConfirm(`Request to join "${teamName}"?`)) {
           // HTMX call to create join request
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request', {
             target: button.parentElement,
@@ -15324,10 +15343,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       }
 
-      function leaveTeamSafe(button) {
+      async function leaveTeamSafe(button) {
         const teamId = button.getAttribute('data-team-id');
         const teamName = button.getAttribute('data-team-name');
-        if (confirm(`Leave team "${teamName}"? You will lose access to team resources.`)) {
+        if (await window.Admin.showConfirm(`Leave team "${teamName}"? You will lose access to team resources.`, { danger: true })) {
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/leave', {
             target: 'body',
             swap: 'none'
@@ -15378,10 +15397,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         });
       }
 
-      function deleteTeamSafe(button) {
+      async function deleteTeamSafe(button) {
         const teamId = button.getAttribute('data-team-id');
         const teamName = button.getAttribute('data-team-name');
-        if (confirm(`Delete team "${teamName}"? This action cannot be undone.`)) {
+        if (await window.Admin.showConfirm(`Delete team "${teamName}"? This action cannot be undone.`, { danger: true })) {
           htmx.ajax('DELETE', window.ROOT_PATH + '/admin/teams/' + teamId, {
             target: 'body',
             swap: 'none'
@@ -15390,8 +15409,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       }
 
-      function cancelJoinRequest(teamId, requestId) {
-        if (confirm('Cancel your join request?')) {
+      async function cancelJoinRequest(teamId, requestId) {
+        if (await window.Admin.showConfirm('Cancel your join request?')) {
           htmx.ajax('DELETE', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request/' + requestId, {
             target: 'body',
             swap: 'none'
@@ -15411,8 +15430,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         });
       }
 
-      function approveJoinRequest(teamId, requestId) {
-        if (confirm('Approve this join request?')) {
+      async function approveJoinRequest(teamId, requestId) {
+        if (await window.Admin.showConfirm('Approve this join request?')) {
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-requests/' + requestId + '/approve', {
             target: '#team-join-requests-modal-content',
             swap: 'innerHTML'
@@ -15420,8 +15439,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       }
 
-      function rejectJoinRequest(teamId, requestId) {
-        if (confirm('Reject this join request?')) {
+      async function rejectJoinRequest(teamId, requestId) {
+        if (await window.Admin.showConfirm('Reject this join request?')) {
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-requests/' + requestId + '/reject', {
             target: '#team-join-requests-modal-content',
             swap: 'innerHTML'
@@ -15802,7 +15821,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       async function deleteDatabaseSource(button) {
         const id = button.getAttribute('data-source-id');
         const name = button.getAttribute('data-source-name') || 'this source';
-        if (!confirm('Delete database source "' + name + '"? This cannot be undone.')) return;
+        if (!(await window.Admin.showConfirm('Delete database source "' + name + '"? This cannot be undone.', { danger: true }))) return;
         try {
           const res = await fetch((window.ROOT_PATH || '') + '/admin/database-sources/' + id, { method: 'DELETE' });
           if (res.ok) {

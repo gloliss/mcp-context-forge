@@ -40,7 +40,7 @@ vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({ initializeTeamScoping
 vi.mock("../../../mcpgateway/admin_ui/tools.js", () => ({ cleanupToolTestState: vi.fn(), editTool: vi.fn(), enrichTool: vi.fn(), generateToolTestCases: vi.fn(), initToolSelect: vi.fn(), loadTools: vi.fn(), validateTool: vi.fn(), viewTool: vi.fn() }));
 vi.mock("../../../mcpgateway/admin_ui/users.js", () => ({ hideUserEditModal: vi.fn(), performUserSearch: vi.fn(), registerAdminActionListeners: vi.fn() }));
 vi.mock("../../../mcpgateway/admin_ui/initialization.js", () => ({ initializeCodeMirrorEditors: vi.fn(), initializeEventListeners: vi.fn(), initializeExportImport: vi.fn(), initializeGlobalSearch: vi.fn(), initializeSearchInputs: vi.fn(), initializeTabState: vi.fn(), initializeToolSelects: vi.fn(), registerReloadAllResourceSections: vi.fn(), setupBulkImportModal: vi.fn(), setupTooltipsWithAlpine: vi.fn() }));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({ createMemoizedInit: vi.fn((fn) => ({ init: fn, debouncedInit: vi.fn(), reset: vi.fn() })), safeGetElement: vi.fn((id) => document.getElementById(id)), showErrorMessage: vi.fn(), showSuccessMessage: vi.fn(), updateEditToolUrl: vi.fn() }));
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({ createMemoizedInit: vi.fn((fn) => ({ init: fn, debouncedInit: vi.fn(), reset: vi.fn() })), safeGetElement: vi.fn((id) => document.getElementById(id)), showErrorMessage: vi.fn(), showSuccessMessage: vi.fn(), showNotification: vi.fn(), updateEditToolUrl: vi.fn() }));
 
 beforeEach(() => {
   window.Admin = { chartRegistry: { destroyAll: vi.fn() }, generateBulkTestCases: vi.fn() };
