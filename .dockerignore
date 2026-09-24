@@ -288,6 +288,20 @@ mcpgateway/static/vendor/
 mcpgateway/static/**/*.map
 mcpgateway/static/**/*.tmp
 
+# Hashed frontend build output: bundle/chunk/i18n JavaScript, their
+# vite-plugin-compression .gz twins, and the manifest naming them. The
+# frontend-builder stage generates these inside the image, but a working tree
+# that has run a local frontend build still holds them, and the later
+# `COPY mcpgateway/ /app/mcpgateway/` would land on top of the builder's
+# output — admin.py resolves the bundle through the manifest first, so a stale
+# manifest makes the app serve a stale bundle. Keep them out of the context.
+mcpgateway/static/bundle-*.js
+mcpgateway/static/chunk-*.js
+mcpgateway/static/i18n-*.js
+mcpgateway/static/.vite/
+mcpgateway/static/*.gz
+mcpgateway/static/**/*.gz
+
 # Exclude test harnesses (should not ship in container images)
 mcpgateway/static/iframe-test-harness.html
 
