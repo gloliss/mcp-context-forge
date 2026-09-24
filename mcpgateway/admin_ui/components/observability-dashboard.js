@@ -252,7 +252,13 @@ export function observabilityDashboard() {
         .ajax(
           "GET",
           `${rootPath()}/admin/observability/traces?${this.traceQueryString()}`,
-          { target: "#traces-list", swap: "innerHTML" }
+          {
+            // Own request element: htmx.ajax() without a source shares document.body's
+            // in-flight state, so a still-running request would queue this one.
+            source: document.getElementById("traces-list"),
+            target: "#traces-list",
+            swap: "innerHTML",
+          }
         )
         .catch((error) => {
           console.error("Failed to refresh Observability traces:", error);
@@ -268,6 +274,9 @@ export function observabilityDashboard() {
       }
       htmx
         .ajax("GET", `${rootPath()}/admin/observability/stats`, {
+          // Own request element: htmx.ajax() without a source shares document.body's
+          // in-flight state, so a still-running request would queue this one.
+          source: document.getElementById("stats-container"),
           target: "#stats-container",
           swap: "innerHTML",
         })

@@ -635,6 +635,9 @@ export const showTab = function (tabName) {
               if (window.htmx && window.htmx.ajax) {
                 window.htmx
                   .ajax("GET", `${rootPath}/admin/mcp-registry/partial`, {
+                    // Own request element: htmx.ajax() without a source shares document.body's
+                    // in-flight state, so a still-running request would queue this one.
+                    source: registryContent,
                     target: "#mcp-registry-servers",
                     swap: "innerHTML",
                   })

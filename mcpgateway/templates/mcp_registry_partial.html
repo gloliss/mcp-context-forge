@@ -686,7 +686,13 @@ function registerServerWithApiKey() {
       closeApiKeyModal();
       // Refresh the server list
       if (window.htmx && window.htmx.ajax) {
-        window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
+        window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {
+          // Own request element: htmx.ajax() without a source shares document.body's
+          // in-flight state, so a still-running request would queue this one.
+          source: document.getElementById('mcp-registry-servers'),
+          target: '#mcp-registry-servers',
+          swap: 'innerHTML'
+        });
       } else {
         location.reload();
       }
@@ -711,7 +717,13 @@ function getCookie(name) {
 function refreshCatalog() {
   const rootPath = window.ROOT_PATH || '';
   if (window.htmx && window.htmx.ajax) {
-    window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
+    window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {
+      // Own request element: htmx.ajax() without a source shares document.body's
+      // in-flight state, so a still-running request would queue this one.
+      source: document.getElementById('mcp-registry-servers'),
+      target: '#mcp-registry-servers',
+      swap: 'innerHTML'
+    });
   } else {
     location.reload();
   }

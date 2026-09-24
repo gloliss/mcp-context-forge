@@ -698,6 +698,7 @@ const refreshLLMProviders = function () {
   const container = safeGetElement("llm-providers-container");
   if (container) {
     window.htmx.ajax("GET", `${window.ROOT_PATH}/admin/llm/providers/html`, {
+      source: container,  // own request element, not the shared document.body state
       target: "#llm-providers-container",
       swap: "innerHTML",
     });
@@ -1008,6 +1009,7 @@ const refreshLLMModels = function () {
   const container = safeGetElement("llm-models-container");
   if (container) {
     window.htmx.ajax("GET", `${window.ROOT_PATH}/admin/llm/models/html`, {
+      source: container,  // own request element, not the shared document.body state
       target: "#llm-models-container",
       swap: "innerHTML",
     });
@@ -1023,6 +1025,9 @@ export const filterModelsByProvider = function (providerId) {
     : `${window.ROOT_PATH}/admin/llm/models/html`;
 
   window.htmx.ajax("GET", url, {
+    // Own request element: htmx.ajax() without a source shares document.body's
+    // in-flight state, so a still-running request would queue this one.
+    source: document.getElementById("llm-models-container"),
     target: "#llm-models-container",
     swap: "innerHTML",
   });

@@ -104,6 +104,9 @@ export const loadSearchablePanel = function (entityType) {
   const url = `${window.ROOT_PATH}/admin/${panelConfig.partialPath}?${params.toString()}`;
   if (window.htmx && window.htmx.ajax) {
     window.htmx.ajax("GET", url, {
+      // Own request element: htmx.ajax() without a source shares document.body's
+      // in-flight state, so a still-running request would queue this one.
+      source: document.querySelector(panelConfig.targetSelector),
       target: panelConfig.targetSelector,
       swap: "outerHTML",
       indicator: panelConfig.indicatorSelector,

@@ -238,6 +238,7 @@ export function paginationData() {
 
       // Trigger the HTMX fetch; indicator comes from data-hx-indicator.
       window.htmx.ajax("GET", url.toString(), {
+        source: targetElement,  // own request element, not the shared document.body state
         target: this.targetSelector,
         swap: this.swapStyle,
         indicator: this.indicator,

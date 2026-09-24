@@ -124,6 +124,9 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
       navigateAdmin(fragment, fallbackParams);
     } else {
       window.htmx.ajax('GET', partialUrl, {
+        // Own request element: htmx.ajax() without a source shares document.body's
+        // in-flight state, so a still-running request would queue this one.
+        source: document.querySelector(targetSelector),
         target: targetSelector,
         swap: 'outerHTML'
       });

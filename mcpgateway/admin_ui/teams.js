@@ -105,6 +105,7 @@ const performTeamSearch = async function (searchTerm) {
       // HTMX handles the indicator automatically via the indicator option
       // Don't manually hide it - HTMX will hide it when request completes
       window.htmx.ajax("GET", url, {
+        source: container,  // own request element, not the shared document.body state
         target: "#unified-teams-list",
         swap: "innerHTML",
         indicator: "#teams-loading",
@@ -813,6 +814,7 @@ export const handleAdminTeamAction = function (event) {
         }
         const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
         window.htmx.ajax("GET", url, {
+          source: unifiedList,  // own request element, not the shared document.body state
           target: "#unified-teams-list",
           swap: "innerHTML",
         });
@@ -828,6 +830,7 @@ export const handleAdminTeamAction = function (event) {
             "GET",
             `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members`,
             {
+              source: modalContent,  // own request element, not the shared document.body state
               target: "#team-edit-modal-content",
               swap: "innerHTML",
             }
@@ -842,6 +845,7 @@ export const handleAdminTeamAction = function (event) {
           "GET",
           `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/join-requests`,
           {
+            source: joinRequests,  // own request element, not the shared document.body state
             target: "#team-join-requests-modal-content",
             swap: "innerHTML",
           }

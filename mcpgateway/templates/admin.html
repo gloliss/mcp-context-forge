@@ -15334,6 +15334,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         if (await window.Admin.showConfirm(`Request to join "${teamName}"?`)) {
           // HTMX call to create join request
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request', {
+            source: button,  // own request element, not the shared document.body state
             target: button.parentElement,
             swap: 'innerHTML'
           }).catch(error => {
@@ -15348,6 +15349,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const teamName = button.getAttribute('data-team-name');
         if (await window.Admin.showConfirm(`Leave team "${teamName}"? You will lose access to team resources.`, { danger: true })) {
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/leave', {
+            source: button,  // own request element, not the shared document.body state
             target: 'body',
             swap: 'none'
           });
@@ -15405,6 +15407,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const teamName = button.getAttribute('data-team-name');
         if (await window.Admin.showConfirm(`Delete team "${teamName}"? This action cannot be undone.`, { danger: true })) {
           htmx.ajax('DELETE', window.ROOT_PATH + '/admin/teams/' + teamId, {
+            source: button,  // own request element, not the shared document.body state
             target: 'body',
             swap: 'none'
           });
@@ -15412,9 +15415,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       }
 
-      async function cancelJoinRequest(teamId, requestId) {
+      async function cancelJoinRequest(teamId, requestId, event) {
         if (await window.Admin.showConfirm('Cancel your join request?')) {
+          const requestEl = event && event.target instanceof Element
+            ? event.target.closest('[data-action-click]')
+            : null;
           htmx.ajax('DELETE', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request/' + requestId, {
+            source: requestEl,  // own request element, not the shared document.body state
             target: 'body',
             swap: 'none'
           });
@@ -15438,6 +15445,9 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       async function approveJoinRequest(teamId, requestId) {
         if (await window.Admin.showConfirm('Approve this join request?')) {
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-requests/' + requestId + '/approve', {
+            // Own request element: htmx.ajax() without a source shares document.body's
+            // in-flight state, so a still-running request would queue this one.
+            source: document.getElementById('team-join-requests-modal-content'),
             target: '#team-join-requests-modal-content',
             swap: 'innerHTML'
           });
@@ -15447,6 +15457,9 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       async function rejectJoinRequest(teamId, requestId) {
         if (await window.Admin.showConfirm('Reject this join request?')) {
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-requests/' + requestId + '/reject', {
+            // Own request element: htmx.ajax() without a source shares document.body's
+            // in-flight state, so a still-running request would queue this one.
+            source: document.getElementById('team-join-requests-modal-content'),
             target: '#team-join-requests-modal-content',
             swap: 'innerHTML'
           });
@@ -15476,6 +15489,9 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const url = window.ROOT_PATH + '/admin/teams/partial?' + params.toString();
 
         htmx.ajax('GET', url, {
+          // Own request element: htmx.ajax() without a source shares document.body's
+          // in-flight state, so a still-running request would queue this one.
+          source: document.getElementById('unified-teams-list'),
           target: '#unified-teams-list',
           swap: 'innerHTML',
           indicator: '#teams-loading'
@@ -15773,6 +15789,9 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function loadDatabaseSourceList() {
         htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/partial', {
+          // Own request element: htmx.ajax() without a source shares document.body's
+          // in-flight state, so a still-running request would queue this one.
+          source: document.getElementById('database-sources-list'),
           target: '#database-sources-list',
           swap: 'innerHTML',
           indicator: '#database-sources-loading'

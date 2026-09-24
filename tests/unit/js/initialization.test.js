@@ -120,6 +120,7 @@ vi.mock("../../../mcpgateway/admin_ui/formSubmitHandlers.js", () => ({
   handleEditToolFormSubmit: vi.fn(),
   handleGatewayFormSubmit: vi.fn(),
   handleGrpcServiceFormSubmit: vi.fn(),
+  handleHttpServiceFormSubmit: vi.fn(),
   handlePromptFormSubmit: vi.fn(),
   handleResourceFormSubmit: vi.fn(),
   handleServerFormSubmit: vi.fn(),

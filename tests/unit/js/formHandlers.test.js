@@ -292,10 +292,13 @@ describe("handleDeleteSubmit", () => {
       'GET',
       expect.stringContaining('/admin/a2a/partial'),
       expect.objectContaining({
+        source: tableDiv,  // element that owns this refresh, not the form that triggered it
         target: '#agents-table',  // targetSelector from PANEL_SEARCH_CONFIG, not #a2a-agents-table
         swap: 'outerHTML'
       })
     );
+    // A form source would make htmx serialise the form's fields into this GET.
+    expect(htmxAjaxMock.mock.calls[0][2].source).not.toBe(form);
   });
 
   test("uses PANEL_SEARCH_CONFIG for catalog/servers refresh", async () => {
@@ -327,10 +330,13 @@ describe("handleDeleteSubmit", () => {
       'GET',
       expect.stringContaining('/admin/servers/partial'),
       expect.objectContaining({
+        source: tableDiv,  // element that owns this refresh, not the form that triggered it
         target: '#servers-table',  // targetSelector from PANEL_SEARCH_CONFIG for catalog
         swap: 'outerHTML'
       })
     );
+    // A form source would make htmx serialise the form's fields into this GET.
+    expect(htmxAjaxMock.mock.calls[0][2].source).not.toBe(form);
   });
 
   test("falls back to navigateAdmin when PANEL_SEARCH_CONFIG is missing for a type", async () => {

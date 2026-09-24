@@ -1132,6 +1132,7 @@ const reloadAssociatedItems = function () {
     if (window.htmx) {
       window.htmx
         .ajax("GET", toolsUrl, {
+          source: toolsContainer,  // own request element, not the shared document.body state
           target: `#${toolsContainerId}`,
           swap: "innerHTML",
         })
@@ -1416,6 +1417,7 @@ const reloadAssociatedItems = function () {
     if (window.htmx) {
       window.htmx
         .ajax("GET", promptsUrl, {
+          source: promptsContainer,  // own request element, not the shared document.body state
           target: `#${promptsContainerId}`,
           swap: "innerHTML",
         })
@@ -1855,6 +1857,9 @@ export const refreshGatewayTools = async function (gatewayId, gatewayName, butto
       _refreshParams
     );
     window.htmx.ajax("GET", reloadUrl, {
+      // Own request element: htmx.ajax() without a source shares document.body's
+      // in-flight state, so a still-running request would queue this one.
+      source: document.getElementById("gateways-table"),
       target: "#gateways-table",
       swap: "outerHTML",
     });

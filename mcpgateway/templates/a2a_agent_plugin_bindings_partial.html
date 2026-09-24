@@ -241,7 +241,13 @@ function filterByTeam(teamId) {
     params.delete('team_id');
   }
   const url = '{{ root_path }}/admin/a2a/plugin-bindings/partial' + (params.toString() ? '?' + params.toString() : '');
-  htmx.ajax('GET', url, { target: '#a2a-plugin-bindings-panel', swap: 'innerHTML' });
+  htmx.ajax('GET', url, {
+    // Own request element: htmx.ajax() without a source shares document.body's
+    // in-flight state, so a still-running request would queue this one.
+    source: document.getElementById('a2a-plugin-bindings-panel'),
+    target: '#a2a-plugin-bindings-panel',
+    swap: 'innerHTML'
+  });
 }
 
 function showAddBindingForm() {

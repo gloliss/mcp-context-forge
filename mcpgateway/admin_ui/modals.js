@@ -314,7 +314,10 @@ export const submitApiKeyForm = function (event) {
         // Reload the catalog
         if (window.htmx && window.htmx.ajax) {
           window.htmx.ajax("GET", `${rootPath}/admin/mcp-registry/partial`, {
-            target: "#mcp-registry-content",
+            // Own request element: htmx.ajax() without a source shares document.body's
+            // in-flight state, so a still-running request would queue this one.
+            source: document.getElementById("mcp-registry-servers"),
+            target: "#mcp-registry-servers",
             swap: "innerHTML",
           });
         }
