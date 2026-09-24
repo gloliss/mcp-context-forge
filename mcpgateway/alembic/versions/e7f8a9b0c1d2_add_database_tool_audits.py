@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/alembic/versions/d3e4f5a6b7c8_add_database_tool_audits.py
+"""Location: ./mcpgateway/alembic/versions/e7f8a9b0c1d2_add_database_tool_audits.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
@@ -11,7 +11,7 @@ statement type, result summary, outcome) and never any credential, secret, SQL
 statement text, or bound parameter.  ``source_id``/``template_id`` carry no
 foreign key so audit rows survive the deletion of their source or template.
 
-Revision ID: d3e4f5a6b7c8
+Revision ID: e7f8a9b0c1d2
 Revises: c1d2e3f4a5b6
 Create Date: 2026-09-21
 """
@@ -23,7 +23,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "d3e4f5a6b7c8"
+revision: str = "e7f8a9b0c1d2"
 down_revision: Union[str, Sequence[str], None] = "c1d2e3f4a5b6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
