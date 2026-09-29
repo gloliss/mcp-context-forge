@@ -2897,40 +2897,6 @@ class TestAdminResourceRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 415
 
-        team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(return_value=None)
-        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
-        monkeypatch.setattr(
-            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
-            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
-        )
-
-        mock_register_resource.side_effect = ContentTypeError(mime_type="application/x-executable", allowed_types=["text/plain", "application/json"])
-
-        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        assert isinstance(result, JSONResponse)
-        assert result.status_code == 415
-
-    @patch.object(ResourceService, "register_resource")
-    async def test_admin_add_resource_content_type_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
-        """Test adding resource with ContentTypeError."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentTypeError
-
-        team_service = MagicMock()
-        team_service.verify_team_for_user = AsyncMock(return_value=None)
-        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
-        monkeypatch.setattr(
-            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
-            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
-        )
-
-        mock_register_resource.side_effect = ContentTypeError(mime_type="application/x-executable", allowed_types=["text/plain", "application/json"])
-
-        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        assert isinstance(result, JSONResponse)
-        assert result.status_code == 415
-
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_validation_conflict_and_rollback_failure(self, mock_register_resource, mock_request, mock_db, monkeypatch):
         """Cover ValidationError/URI conflict handlers and rollback failure suppression in admin_add_resource."""
@@ -6288,7 +6254,7 @@ class TestA2AAgentManagement:
     async def test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_request, mock_db):
         """Test listing A2A agents when A2A is enabled."""
         # First-Party
-        from mcpgateway.schemas import PaginationMeta, PaginationLinks
+        from mcpgateway.schemas import PaginationMeta
 
         mock_request.state = MagicMock()
         mock_request.state.token_teams = None
@@ -17250,10 +17216,6 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
         async def request(self, **_kwargs):
             return MockResponse()
 
-    class MockClientText(MockClient):
-        async def request(self, **_kwargs):
-            return MockResponseText()
-
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
     mock_db.execute.return_value.scalars.return_value.first.return_value = None
@@ -27475,7 +27437,6 @@ class TestTransferGatewayOwnership:
             token_teams=["team-1"],
         )
 
-
     @pytest.mark.asyncio
     async def test_transfer_gateway_ownership_not_found(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr(
@@ -27564,7 +27525,6 @@ class TestCatalogPermissionErrorBranches:
         with pytest.raises(HTTPException) as exc_info:
             await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
         assert exc_info.value.status_code == 403
-
 
     @pytest.mark.asyncio
     async def test_admin_register_catalog_requires_gateways_create(self, monkeypatch, allow_permission, mock_db):
