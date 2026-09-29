@@ -11840,7 +11840,9 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
         async def aggregate_metrics(self, _db):
             return self._metrics
 
-    monkeypatch.setattr("mcpgateway.admin.ToolService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.5}))
+    # The handler aggregates tool metrics through the module-level shared
+    # singleton, not a fresh ToolService, so patch what the handler resolves.
+    monkeypatch.setattr("mcpgateway.admin.tool_service", StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.5}))
     monkeypatch.setattr("mcpgateway.admin.ServerService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.4}))
     monkeypatch.setattr("mcpgateway.admin.PromptService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.3}))
     # Ensure at least one metric lacks avg_response_time so the avg_time None branch is covered.
@@ -11852,6 +11854,13 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     context = mock_request.app.state.templates.TemplateResponse.call_args.args[2]
     assert context["mcp_runtime"]["mode"] == "rust-managed"
     assert context["mcp_runtime"]["mounted"] == "rust"
+    # These hold only while the tool-metrics stub above actually applies; they are
+    # what makes the ineffective-stub regression visible instead of silent.
+    assert context["total_executions"] == 4
+    assert context["success_rate"] == 100.0
+    # resource_metrics reports no avg_response_time and must be left out of the
+    # average rather than counted as zero: (0.5 + 0.4 + 0.3) / 3 = 0.4s.
+    assert context["avg_latency_ms"] == pytest.approx(400.0)
 
 
 @pytest.mark.asyncio
@@ -11916,7 +11925,9 @@ async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_r
         async def aggregate_metrics(self, _db):
             return self._metrics
 
-    monkeypatch.setattr("mcpgateway.admin.ToolService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.5}))
+    # The handler aggregates tool metrics through the module-level shared
+    # singleton, not a fresh ToolService, so patch what the handler resolves.
+    monkeypatch.setattr("mcpgateway.admin.tool_service", StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.5}))
     monkeypatch.setattr("mcpgateway.admin.ServerService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.4}))
     monkeypatch.setattr("mcpgateway.admin.PromptService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.3}))
     monkeypatch.setattr("mcpgateway.admin.ResourceService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.2}))
@@ -11984,7 +11995,9 @@ async def test_get_overview_partial_redis_check_exception(monkeypatch, mock_requ
         async def aggregate_metrics(self, _db):
             return self._metrics
 
-    monkeypatch.setattr("mcpgateway.admin.ToolService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.5}))
+    # The handler aggregates tool metrics through the module-level shared
+    # singleton, not a fresh ToolService, so patch what the handler resolves.
+    monkeypatch.setattr("mcpgateway.admin.tool_service", StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.5}))
     monkeypatch.setattr("mcpgateway.admin.ServerService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.4}))
     monkeypatch.setattr("mcpgateway.admin.PromptService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.3}))
     monkeypatch.setattr("mcpgateway.admin.ResourceService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.2}))
