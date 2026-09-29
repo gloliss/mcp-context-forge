@@ -15442,30 +15442,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         });
       }
 
-      async function approveJoinRequest(teamId, requestId) {
-        if (await window.Admin.showConfirm('Approve this join request?')) {
-          htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-requests/' + requestId + '/approve', {
-            // Own request element: htmx.ajax() without a source shares document.body's
-            // in-flight state, so a still-running request would queue this one.
-            source: document.getElementById('team-join-requests-modal-content'),
-            target: '#team-join-requests-modal-content',
-            swap: 'innerHTML'
-          });
-        }
-      }
-
-      async function rejectJoinRequest(teamId, requestId) {
-        if (await window.Admin.showConfirm('Reject this join request?')) {
-          htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-requests/' + requestId + '/reject', {
-            // Own request element: htmx.ajax() without a source shares document.body's
-            // in-flight state, so a still-running request would queue this one.
-            source: document.getElementById('team-join-requests-modal-content'),
-            target: '#team-join-requests-modal-content',
-            swap: 'innerHTML'
-          });
-        }
-      }
-
       // Initialize team management when teams tab is shown
       function initializeTeamManagement() {
         // Load teams list using /teams/partial endpoint
@@ -15768,8 +15744,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       if (typeof openCreateTeamModal !== 'undefined') window.Admin.openCreateTeamModal = openCreateTeamModal;
       if (typeof closeCreateTeamModal !== 'undefined') window.Admin.closeCreateTeamModal = closeCreateTeamModal;
       if (typeof loadTeamMembersView !== 'undefined') window.Admin.loadTeamMembersView = loadTeamMembersView;
-      if (typeof approveJoinRequest !== 'undefined') window.Admin.approveJoinRequest = approveJoinRequest;
-      if (typeof rejectJoinRequest !== 'undefined') window.Admin.rejectJoinRequest = rejectJoinRequest;
     </script>
 
     <script nonce="{{ csp_nonce(request) }}">

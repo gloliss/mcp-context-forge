@@ -26,6 +26,9 @@ EXPECTED_AUTOCOMPLETE: Dict[Tuple[str, str], str] = {
     ("change-password-required.html", "confirm_password"): "new-password",
     # admin.html – create-user form
     ("admin.html", "new_user_password"): "new-password",
+    # database_source_form.html – DB connection password (entered, never
+    # autofilled: on edit the field is left blank to keep the current password)
+    ("database_source_form.html", "password"): "new-password",
 }
 
 
@@ -115,7 +118,7 @@ class TestPasswordAutocompleteAttributes:
         fields = _collect_password_fields(tpl_path)
         assert len(fields) >= 1, "login.html should have at least 1 password field"
         pw_field = fields[0]
-        assert pw_field.get("autocomplete") == "current-password", f"login.html password should be 'current-password', " f"got '{pw_field.get('autocomplete')}'"
+        assert pw_field.get("autocomplete") == "current-password", f"login.html password should be 'current-password', got '{pw_field.get('autocomplete')}'"
 
     def test_change_password_template_has_correct_values(self) -> None:
         """change-password-required.html must use current-password and new-password."""
@@ -163,7 +166,7 @@ class TestOAuthCallbackUrlNotHardcoded:
         matches = re.findall(r"<code[^>]*>(.*?)</code", clean, flags=re.DOTALL)
         hardcoded = [m.strip() for m in matches if "oauth/callback" in m and "localhost" in m]
 
-        assert not hardcoded, "Found hardcoded localhost OAuth callback URLs in <code> hints " "(should use {{ request.base_url }}):\n  " + "\n  ".join(hardcoded)
+        assert not hardcoded, "Found hardcoded localhost OAuth callback URLs in <code> hints (should use {{ request.base_url }}):\n  " + "\n  ".join(hardcoded)
 
 
 class TestAdminNavigationStructure:

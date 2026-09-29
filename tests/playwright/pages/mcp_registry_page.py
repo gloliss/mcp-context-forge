@@ -231,6 +231,59 @@ class MCPRegistryPage(BasePage):
         # Wait for the #server-grid element that only exists in the partial response.
         self.page.wait_for_selector("#server-grid", state="attached", timeout=60000)
 
+    # ==================== Pagination ====================
+
+    @property
+    def page_info(self) -> Locator:
+        """The "Page N of M" label shown between the pagination links."""
+        return self.registry_servers_container.locator("span.px-4.py-2")
+
+    @property
+    def next_page_link(self) -> Locator:
+        """Link to the following page, present only while one exists."""
+        return self.registry_servers_container.get_by_role("link", name="Next", exact=True)
+
+    @property
+    def previous_page_link(self) -> Locator:
+        """Link back to the preceding page, present only from page 2 onwards."""
+        return self.registry_servers_container.get_by_role("link", name="Previous", exact=True)
+
+    def total_pages(self) -> int:
+        """Read the page count off the "Page N of M" label.
+
+        Raises:
+            AssertionError: If the label is absent or does not carry a page count.
+        """
+        expect(self.page_info).to_be_visible(timeout=10000)
+        label = self.page_info.inner_text().strip()
+        if not label.startswith("Page ") or " of " not in label:
+            raise AssertionError(f"Unexpected pagination label: {label!r}")
+        return int(label.rsplit(" ", 1)[-1])
+
+    def go_to_next_page(self) -> None:
+        """Follow the Next link and wait for the partial to replace the container."""
+        self._wait_for_registry_refresh(self.next_page_link.click)
+
+    def go_to_previous_page(self) -> None:
+        """Follow the Previous link and wait for the partial to replace the container."""
+        self._wait_for_registry_refresh(self.previous_page_link.click)
+
+    def watch_htmx_target_errors(self) -> None:
+        """Start recording htmx:targetError events raised from now on."""
+        self.page.evaluate(
+            """() => {
+                window.__htmxTargetErrors = [];
+                document.addEventListener('htmx:targetError', (event) => {
+                    const elt = event.detail && event.detail.elt;
+                    window.__htmxTargetErrors.push(elt ? elt.outerHTML.slice(0, 200) : 'unknown');
+                });
+            }"""
+        )
+
+    def htmx_target_errors(self) -> list:
+        """Elements whose request aborted because hx-target matched no element."""
+        return self.page.evaluate("() => window.__htmxTargetErrors || []")
+
     # ==================== High-Level Filter Operations ====================
 
     def select_category(self, category: str) -> None:

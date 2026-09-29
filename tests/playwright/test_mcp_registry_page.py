@@ -397,3 +397,57 @@ class TestMCPRegistryHTMX:
 
         # Verify content is still visible
         expect(mcp_registry_page.server_grid).to_be_visible()
+
+
+@pytest.mark.ui
+class TestMCPRegistryPagination:
+    """The catalog paginates once it outgrows the page size.
+
+    Regression: all four pagination links targeted ``#mcp-registry-content``, an
+    id no template defines. htmx resolves ``hx-target`` at request time, so every
+    click aborted with ``htmx:targetError`` and the swap never happened. The links
+    rendered correctly and nothing surfaced the failure, so the only way to catch
+    it is to click one and require the container to be replaced.
+    """
+
+    def test_pagination_links_render_for_a_multi_page_catalog(self, mcp_registry_page: MCPRegistryPage):
+        """A catalog larger than one page must render the pagination controls."""
+        mcp_registry_page.navigate_to_registry_tab()
+        mcp_registry_page.wait_for_registry_loaded()
+
+        expect(mcp_registry_page.page_info).to_be_visible()
+        assert mcp_registry_page.total_pages() > 1, f"catalog fits on one page ({mcp_registry_page.page_info.inner_text()}); nothing to paginate"
+
+    def test_next_page_replaces_the_registry_content(self, mcp_registry_page: MCPRegistryPage):
+        """Following Next must swap in page 2 rather than silently doing nothing."""
+        mcp_registry_page.navigate_to_registry_tab()
+        mcp_registry_page.wait_for_registry_loaded()
+        mcp_registry_page.watch_htmx_target_errors()
+
+        total_pages = mcp_registry_page.total_pages()
+        assert total_pages > 1, "the catalog must span more than one page for this test to mean anything"
+        page_one_count = mcp_registry_page.get_server_count()
+
+        # _wait_for_registry_refresh asserts the partial responded and that
+        # #mcp-registry-servers was actually replaced.
+        mcp_registry_page.go_to_next_page()
+
+        expect(mcp_registry_page.page_info).to_have_text(f"Page 2 of {total_pages}")
+        expect(mcp_registry_page.previous_page_link).to_be_visible()
+        assert mcp_registry_page.htmx_target_errors() == [], "pagination aborted with htmx:targetError: hx-target names an id that no template defines"
+        assert 0 < mcp_registry_page.get_server_count() < page_one_count, "page 2 should hold the remainder, fewer cards than page 1"
+
+    def test_previous_link_returns_to_the_first_page(self, mcp_registry_page: MCPRegistryPage):
+        """The round trip back to page 1 must swap content as well."""
+        mcp_registry_page.navigate_to_registry_tab()
+        mcp_registry_page.wait_for_registry_loaded()
+        mcp_registry_page.watch_htmx_target_errors()
+
+        total_pages = mcp_registry_page.total_pages()
+        assert total_pages > 1, "the catalog must span more than one page for this test to mean anything"
+        mcp_registry_page.go_to_next_page()
+
+        mcp_registry_page.go_to_previous_page()
+
+        expect(mcp_registry_page.page_info).to_have_text(f"Page 1 of {total_pages}")
+        assert mcp_registry_page.htmx_target_errors() == [], "pagination aborted with htmx:targetError: hx-target names an id that no template defines"
