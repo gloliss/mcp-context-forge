@@ -443,7 +443,8 @@ class DatabaseSourceService:
         ``SELECT 1`` in one round-trip; its latency is reported once.  The
         compatibility-mode check is only run for OceanBase (the only engine with
         a dual wire mode), and the schema check verifies that the configured
-        ``schema_name``/``database_name`` is visible.
+        ``schema_name`` is visible — an engine that cannot list schemas reports
+        it as skipped rather than failing.
 
         Args:
             adapter: A constructed :class:`DatabaseAdapter`.
@@ -496,22 +497,44 @@ class DatabaseSourceService:
             else:
                 checks.append({"name": "compatibility_mode", "status": "skipped", "detail": "Not applicable for this engine"})
 
-            # 3. Database-schema access.
-            target = source.schema_name or source.database_name
+            # 3. Schema access.  The configured database/service is the
+            # connection target, so a successful connection already proves it
+            # exists; only a schema names something inside that connection.
+            target = source.schema_name
             if not target:
-                checks.append({"name": "database_schema", "status": "skipped", "detail": "No schema/database specified"})
+                checks.append({"name": "database_schema", "status": "skipped", "detail": "No schema configured; the connection check covers the database"})
             else:
                 try:
-                    visible = {obj.name for obj in adapter.list_schemas()}
-                    if target in visible:
-                        checks.append({"name": "database_schema", "status": "passed", "detail": f"Schema/database '{target}' is accessible"})
-                    else:
-                        checks.append({"name": "database_schema", "status": "failed", "detail": f"Schema/database '{target}' not found among visible schemas"})
-                except DatabaseAdapterError as exc:
+                    visible = cls._visible_schemas(adapter)
+                except (DatabaseAdapterError, AttributeError) as exc:
                     checks.append({"name": "database_schema", "status": "failed", "detail": cls._safe_db_error(exc, source)})
+                else:
+                    if visible is None:
+                        checks.append({"name": "database_schema", "status": "skipped", "detail": "Schema listing is unavailable for this engine"})
+                    elif target in visible:
+                        checks.append({"name": "database_schema", "status": "passed", "detail": f"Schema '{target}' is accessible"})
+                    else:
+                        checks.append({"name": "database_schema", "status": "failed", "detail": f"Schema '{target}' not found among visible schemas"})
 
         ok = connected and all(check["status"] != "failed" for check in checks)
         return {"ok": ok, "latency_ms": latency_ms, "checks": checks}
+
+    @staticmethod
+    def _visible_schemas(adapter: Any) -> Optional[set[str]]:
+        """Return the schema names visible to ``adapter``.
+
+        Args:
+            adapter: A constructed :class:`DatabaseAdapter`.
+
+        Returns:
+            Optional[set[str]]: The visible schema names, or ``None`` when the
+            adapter cannot list them (schema metadata is not part of the
+            adapter ABC, so a third-party adapter may not implement it).
+        """
+        lister = getattr(adapter, "list_schemas", None)
+        if lister is None:
+            return None
+        return {str(obj.name) for obj in lister()}
 
     @staticmethod
     def _safe_db_error(exc: BaseException, source: Any) -> str:

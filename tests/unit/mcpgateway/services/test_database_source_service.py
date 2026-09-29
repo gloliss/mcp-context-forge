@@ -277,22 +277,33 @@ class _FakeAdapter:
         self.closed = True
 
 
+class _FakeAdapterWithoutSchemaListing(_FakeAdapter):
+    """Adapter double for an engine whose adapter cannot list schemas."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Absent capability: the attribute lookup the service performs finds
+        # nothing to call, which is how a non-listing engine presents itself.
+        self.list_schemas = None
+
+
 class _FakeRegistry:
     """Adapter registry double that builds a fresh adapter per source."""
 
-    def __init__(self, **adapter_kwargs):
+    def __init__(self, adapter_cls=_FakeAdapter, **adapter_kwargs):
+        self._adapter_cls = adapter_cls
         self._adapter_kwargs = adapter_kwargs
         self.adapters = []
 
     def create_adapter(self, source, pool=None):
-        adapter = _FakeAdapter(source, **self._adapter_kwargs)
+        adapter = self._adapter_cls(source, **self._adapter_kwargs)
         self.adapters.append(adapter)
         return adapter
 
 
 def test_test_connection_success(test_db):
     """A reachable source passes every check and reports latency."""
-    created = DatabaseSourceService.create_source(test_db, _payload(name="Prod", password="s3cr3t"))
+    created = DatabaseSourceService.create_source(test_db, _payload(name="Prod", password="s3cr3t", schema_name="test"))
     registry = _FakeRegistry(mode="mysql", schemas=["test"])
 
     result = DatabaseSourceService.test_connection(test_db, source_id=created.id, registry=registry)
@@ -307,6 +318,43 @@ def test_test_connection_success(test_db):
     assert statuses["database_schema"] == "passed"
     # The transient adapter is always closed, even on success.
     assert registry.adapters and registry.adapters[0].closed is True
+
+
+def test_test_connection_schema_not_visible(test_db):
+    """A schema missing from the adapter's listing fails the schema check."""
+    created = DatabaseSourceService.create_source(test_db, _payload(schema_name="missing"))
+    registry = _FakeRegistry(mode="mysql", schemas=["test"])
+
+    result = DatabaseSourceService.test_connection(test_db, source_id=created.id, registry=registry)
+
+    assert result["ok"] is False
+    schema_checks = [c for c in result["checks"] if c["name"] == "database_schema"]
+    assert schema_checks and schema_checks[0]["status"] == "failed"
+    assert "missing" in schema_checks[0]["detail"]
+
+
+def test_test_connection_skips_schema_check_without_listing(test_db):
+    """An adapter that cannot list schemas is skipped, never an error."""
+    created = DatabaseSourceService.create_source(test_db, _payload(schema_name="test"))
+    registry = _FakeRegistry(adapter_cls=_FakeAdapterWithoutSchemaListing, mode="mysql", schemas=["test"])
+
+    result = DatabaseSourceService.test_connection(test_db, source_id=created.id, registry=registry)
+
+    assert result["ok"] is True
+    statuses = {check["name"]: check["status"] for check in result["checks"]}
+    assert statuses["database_schema"] == "skipped"
+
+
+def test_test_connection_skips_schema_check_without_schema_name(test_db):
+    """A source naming only a database is covered by the connection check."""
+    created = DatabaseSourceService.create_source(test_db, _payload())
+    registry = _FakeRegistry(mode="mysql", schemas=[])
+
+    result = DatabaseSourceService.test_connection(test_db, source_id=created.id, registry=registry)
+
+    assert result["ok"] is True
+    schema_checks = [c for c in result["checks"] if c["name"] == "database_schema"]
+    assert schema_checks and schema_checks[0]["status"] == "skipped"
 
 
 def test_test_connection_mode_mismatch(test_db):

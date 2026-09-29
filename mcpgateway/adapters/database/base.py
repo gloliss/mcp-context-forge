@@ -18,7 +18,7 @@ from typing import Any, Optional
 import threading
 
 # Third-Party
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, URL
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError as SQLAlchemyTimeoutError
 
@@ -33,7 +33,7 @@ from mcpgateway.adapters.database.exceptions import (
 )
 from mcpgateway.adapters.database.pool import ConnectionPool, PoolConfig, PoolIdentity
 from mcpgateway.adapters.database.sql_policy import SqlPolicy, SqlPolicyGuard, SqlStatementClassifier
-from mcpgateway.adapters.database.types import QueryResult
+from mcpgateway.adapters.database.types import METADATA_TYPE_SCHEMA, MetadataObject, QueryResult
 
 
 class DatabaseAdapter(ABC):
@@ -151,7 +151,12 @@ class SQLAlchemyDatabaseAdapter(DatabaseAdapter):
 
     @classmethod
     def build_connect_args(cls, source: Any) -> dict[str, Any]:
-        """Return driver ``connect_args``; ssl/charset/timezone mapping is deferred."""
+        """Return driver ``connect_args`` for ``source``.
+
+        The base adapter adds nothing: concrete adapters translate the source's
+        ``ssl_mode`` with :mod:`mcpgateway.adapters.database.tls`.  ``timezone``
+        remains unmapped.
+        """
         return {}
 
     # ------------------------------------------------------------------
@@ -245,6 +250,20 @@ class SQLAlchemyDatabaseAdapter(DatabaseAdapter):
         """List visible schema objects via the dialect's metadata query."""
         sql, params = self._search_objects_query(name, kind, limit)
         return self.execute(sql, params, max_rows=int(limit))
+
+    def list_schemas(self) -> list[MetadataObject]:
+        """List the namespaces visible to the source's connection.
+
+        Reflection-based, so every SQLAlchemy-backed engine answers the same
+        metadata contract as :class:`OceanBaseAdapter`, which overrides this
+        with its own dialect queries.
+        """
+        try:
+            with self._pool.connect() as conn:
+                names = inspect(conn).get_schema_names()
+        except SQLAlchemyError as exc:
+            raise QueryError(str(exc)) from exc
+        return [MetadataObject(name=str(name), type=METADATA_TYPE_SCHEMA) for name in names]
 
     def explain(self, sql: str) -> QueryResult:
         """Return the engine's execution plan for ``sql``."""

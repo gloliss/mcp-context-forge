@@ -22,6 +22,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine, URL
 
 # First-Party
+from mcpgateway.adapters.database import tls
 from mcpgateway.adapters.database.base import SQLAlchemyDatabaseAdapter
 from mcpgateway.adapters.database.exceptions import AdapterNotAvailableError, DatabaseAdapterError, DatabaseCompatModeMismatchError
 from mcpgateway.adapters.database.types import (
@@ -109,11 +110,12 @@ class MySQLConnectionProvider(ConnectionProvider):
         )
 
     def build_connect_args(self, source: Any) -> dict[str, Any]:
-        """Forward the source's charset to the driver when configured."""
+        """Forward the source's charset and ``ssl_mode`` to the driver."""
         args: dict[str, Any] = {}
         charset = getattr(source, "charset", None)
         if charset:
             args["charset"] = charset
+        args.update(tls.pymysql_ssl_args(tls.normalized_ssl_mode(source)))
         return args
 
 
@@ -137,6 +139,10 @@ class OracleConnectionProvider(ConnectionProvider):
             port=getattr(source, "port", None),
             database=service,
         )
+
+    def build_connect_args(self, source: Any) -> dict[str, Any]:
+        """Map the source's ``ssl_mode`` onto the wire protocol."""
+        return tls.oracledb_protocol_args(tls.normalized_ssl_mode(source))
 
 
 class OceanBaseDialect(ABC):

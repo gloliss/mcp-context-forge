@@ -277,6 +277,10 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 #  - Include gRPC packages because the Admin UI imports the gRPC management
 #    service even when the experimental runtime feature is disabled
 #  - Install plugins from PyPI (cpex-* packages)
+#  - Install the MySQL/Oracle drivers the database-source feature needs: the
+#    MySQL extra plus oracledb as a direct requirement, because oracledb is
+#    deliberately kept out of pyproject.toml/uv.lock (see
+#    experiments/oceanbase_driver_poc/requirements-poc.txt)
 #  - Install local native extensions from pre-built wheels (if built)
 #  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
 #  - Remove build tools but keep runtime dist-info
@@ -297,7 +301,7 @@ RUN set -euo pipefail \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
         /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat,grpc,xml,soap]" "psycopg[c]>=3.3.3"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat,grpc,xml,soap]"; \
+        /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability,plugins,llmchat,grpc,xml,soap]" "oracledb>=26.0.0"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \

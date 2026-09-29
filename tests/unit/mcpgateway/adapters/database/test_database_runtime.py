@@ -10,8 +10,13 @@ engine, unknown mode, pool create, pool reuse, pool invalidate, pool close, and
 connection failure — plus the unified result contract and truncation.
 """
 
+# Standard
+import ssl
+from types import SimpleNamespace
+
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 
 # First-Party
@@ -19,7 +24,9 @@ from mcpgateway.adapters.database import (
     AdapterRegistry,
     ConnectionFailureError,
     ConnectionPool,
+    DatabaseAdapterError,
     DatabaseRuntimeClient,
+    METADATA_TYPE_SCHEMA,
     PoolConfig,
     PoolIdentity,
     PoolManager,
@@ -324,3 +331,111 @@ def test_runtime_client_reuses_pool():
 
     assert isinstance(first, _TestAdapter)
     assert first.pool is second.pool
+
+
+# --------------------------------------------------------------------------
+# TLS connect args: ssl_mode must reach the driver
+# --------------------------------------------------------------------------
+def _ca_bundle(monkeypatch, tmp_path) -> str:
+    """Point the system CA lookup at an existing file and return its path."""
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("")
+    monkeypatch.setattr(ssl, "get_default_verify_paths", lambda: SimpleNamespace(cafile=str(bundle)))
+    return str(bundle)
+
+
+@pytest.mark.parametrize(
+    "adapter_cls,ssl_mode,expected",
+    [
+        (MySQLAdapter, None, {}),
+        (MySQLAdapter, "preferred", {}),
+        (MySQLAdapter, "disabled", {"ssl_disabled": True}),
+        (MySQLAdapter, "required", {"ssl_verify_cert": False}),
+        (PostgreSQLAdapter, None, {}),
+        (PostgreSQLAdapter, "disabled", {"sslmode": "disable"}),
+        (PostgreSQLAdapter, "preferred", {"sslmode": "prefer"}),
+        (PostgreSQLAdapter, "required", {"sslmode": "require"}),
+        (OracleAdapter, None, {}),
+        (OracleAdapter, "disabled", {"protocol": "tcp"}),
+        (OracleAdapter, "preferred", {"protocol": "tcps"}),
+        (OracleAdapter, "required", {"protocol": "tcps"}),
+    ],
+)
+def test_ssl_mode_reaches_the_driver(adapter_cls, ssl_mode, expected):
+    """Every mappable mode becomes driver parameters that enforce it."""
+    assert adapter_cls.build_connect_args(make_source(ssl_mode=ssl_mode)) == expected
+
+
+@pytest.mark.parametrize("adapter_cls", [MySQLAdapter, PostgreSQLAdapter])
+@pytest.mark.parametrize("ssl_mode", ["verify_ca", "verify_full"])
+def test_verifying_ssl_modes_pin_the_system_ca_bundle(adapter_cls, ssl_mode, monkeypatch, tmp_path):
+    """The verifying modes name the trust store rather than leaving it implicit."""
+    bundle = _ca_bundle(monkeypatch, tmp_path)
+    args = adapter_cls.build_connect_args(make_source(ssl_mode=ssl_mode))
+
+    if adapter_cls is MySQLAdapter:
+        assert args["ssl_ca"] == bundle
+        assert args["ssl_verify_cert"] is True
+        # PyMySQL only verifies the hostname when it was given a CA to verify with.
+        assert bool(args.get("ssl_verify_identity")) == (ssl_mode == "verify_full")
+    else:
+        assert args["sslrootcert"] == bundle
+        assert args["sslmode"] == ssl_mode.replace("_", "-")
+
+
+def test_missing_ca_bundle_fails_closed(monkeypatch):
+    """A verifying mode with no discoverable trust store refuses to connect."""
+    monkeypatch.setattr(ssl, "get_default_verify_paths", lambda: SimpleNamespace(cafile=None))
+
+    with pytest.raises(DatabaseAdapterError):
+        MySQLAdapter.build_connect_args(make_source(ssl_mode="verify_ca"))
+
+
+def test_postgres_connect_args_keep_the_search_path():
+    """The TLS mapping composes with the schema search path."""
+    args = PostgreSQLAdapter.build_connect_args(make_source(ssl_mode="required", schema_name="reporting"))
+
+    assert args == {"options": "-csearch_path=reporting", "sslmode": "require"}
+
+
+def test_unknown_ssl_mode_is_rejected():
+    """An unrecognized mode is an error, never a silent default."""
+    with pytest.raises(DatabaseAdapterError):
+        MySQLAdapter.build_connect_args(make_source(ssl_mode="sometimes"))
+
+
+@pytest.mark.parametrize("ssl_mode", ["verify_ca", "verify_full"])
+def test_oracle_refuses_unenforceable_ssl_modes(ssl_mode):
+    """Oracle verification needs a wallet, so it is refused, not downgraded."""
+    with pytest.raises(DatabaseAdapterError):
+        OracleAdapter.build_connect_args(make_source(engine="oracle", ssl_mode=ssl_mode))
+
+
+# --------------------------------------------------------------------------
+# Metadata reflection shared by the non-OceanBase adapters
+# --------------------------------------------------------------------------
+class _ReflectionAdapter(SQLAlchemyDatabaseAdapter):
+    """Adapter bound to an in-memory SQLite engine, for reflection tests.
+
+    The generic metadata path reflects through whatever engine the pool holds,
+    so SQLite exercises it without an external server.
+    """
+
+    dialect_driver = "sqlite+pysqlite"
+
+
+def test_generic_adapter_lists_schemas():
+    """The shared adapter answers the schema contract for a non-OceanBase engine."""
+    source = make_source()
+    pool = ConnectionPool(
+        identity=PoolIdentity.from_source(source),
+        engine=create_engine("sqlite+pysqlite:///:memory:"),
+        pool_config=PoolConfig(),
+    )
+    adapter = _ReflectionAdapter(source, pool=pool)
+
+    schemas = adapter.list_schemas()
+
+    assert [obj.name for obj in schemas] == ["main"]
+    assert schemas[0].type == METADATA_TYPE_SCHEMA
+    assert schemas[0].schema is None

@@ -15,6 +15,7 @@ changing the :class:`DatabaseAdapter` contract.
 from typing import Any, Optional
 
 # First-Party
+from mcpgateway.adapters.database import tls
 from mcpgateway.adapters.database.base import SQLAlchemyDatabaseAdapter
 
 
@@ -49,6 +50,11 @@ class MySQLAdapter(SQLAlchemyDatabaseAdapter):
 
     def _explain_sql(self, sql: str) -> str:
         return f"EXPLAIN {sql}"
+
+    @classmethod
+    def build_connect_args(cls, source: Any) -> dict[str, Any]:
+        """Translate ``ssl_mode`` into PyMySQL's TLS parameters."""
+        return tls.pymysql_ssl_args(tls.normalized_ssl_mode(source))
 
 
 class PostgreSQLAdapter(SQLAlchemyDatabaseAdapter):
@@ -85,11 +91,12 @@ class PostgreSQLAdapter(SQLAlchemyDatabaseAdapter):
 
     @classmethod
     def build_connect_args(cls, source: Any) -> dict[str, Any]:
-        """Set the search path when the source names a schema."""
+        """Set the schema search path and translate ``ssl_mode`` for libpq."""
         args: dict[str, Any] = {}
         schema = getattr(source, "schema_name", None)
         if schema:
             args["options"] = f"-csearch_path={schema}"
+        args.update(tls.libpq_ssl_args(tls.normalized_ssl_mode(source)))
         return args
 
 
@@ -124,6 +131,11 @@ class OracleAdapter(SQLAlchemyDatabaseAdapter):
     def _explain_sql(self, sql: str) -> str:
         # Oracle plans land in PLAN_TABLE; a two-step readback is deferred.
         return f"EXPLAIN PLAN FOR {sql}"
+
+    @classmethod
+    def build_connect_args(cls, source: Any) -> dict[str, Any]:
+        """Map ``ssl_mode`` onto the wire protocol."""
+        return tls.oracledb_protocol_args(tls.normalized_ssl_mode(source))
 
     @classmethod
     def _url_database(cls, source: Any) -> Optional[str]:

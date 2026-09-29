@@ -19,6 +19,7 @@ from sqlalchemy.exc import OperationalError
 from mcpgateway.adapters.database import (
     DB_COMPATIBILITY_MODE_MISMATCH,
     ConnectionPool,
+    DatabaseAdapterError,
     DatabaseCompatModeMismatchError,
     PoolConfig,
     PoolIdentity,
@@ -326,6 +327,27 @@ def test_mysql_url_without_tenant():
     source.tenant_name = None
 
     assert OceanBaseAdapter.build_url(source).username == "user"
+
+
+def test_mysql_connect_args_forward_charset_and_tls():
+    """MySQL mode passes the charset and the configured TLS mode to the driver."""
+    source = _source("mysql")
+    source.charset = "utf8mb4"
+    source.ssl_mode = "disabled"
+
+    assert OceanBaseAdapter.build_connect_args(source) == {"charset": "utf8mb4", "ssl_disabled": True}
+
+
+def test_oracle_connect_args_map_tls_to_the_protocol():
+    """Oracle mode expresses TLS as TCPS and refuses the verifying modes."""
+    source = _source("oracle")
+    source.ssl_mode = "required"
+
+    assert OceanBaseAdapter.build_connect_args(source) == {"protocol": "tcps"}
+
+    source.ssl_mode = "verify_full"
+    with pytest.raises(DatabaseAdapterError):
+        OceanBaseAdapter.build_connect_args(source)
 
 
 @pytest.mark.parametrize("compat_mode", ["mysql", "oracle"])
