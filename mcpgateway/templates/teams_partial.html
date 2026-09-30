@@ -12,7 +12,7 @@
     <div class="flex justify-between items-start mb-3">
         <div class="flex-1">
             <div class="flex items-center gap-3 mb-2 flex-wrap">
-                <h4 class="team-name text-lg font-medium text-gray-900 dark:text-white">🏢 {{ team.name|escape }}</h4>
+                <h4 class="team-name text-lg font-medium text-gray-900 dark:text-white"><i class="fa-solid fa-building" aria-hidden="true"></i> {{ team.name|escape }}</h4>
 
                 <!-- Relationship badge -->
                 {% if team.relationship == 'personal' %}

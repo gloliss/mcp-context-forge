@@ -22911,17 +22911,17 @@ class TestTemplateButtonGating:
         """Annotation hint icons render when set to True."""
         tool_data["annotations"] = {"readOnlyHint": True, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True}
         html = self._render_tools_partial(jinja_env, tool_data, current_user_email="owner@example.com")
-        assert "\U0001f4d6" in html  # readOnlyHint icon
-        assert "\u26a0\ufe0f" in html  # destructiveHint icon
-        assert "\U0001f504" in html  # idempotentHint icon
-        assert "\U0001f30d" in html  # openWorldHint icon
+        assert "fa-book-open" in html  # readOnlyHint icon
+        assert "fa-triangle-exclamation" in html  # destructiveHint icon
+        assert "fa-rotate" in html  # idempotentHint icon
+        assert "fa-globe" in html  # openWorldHint icon
 
     def test_tools_no_annotation_icons_when_false(self, jinja_env, tool_data):
         """Annotation icons are absent when hints are False."""
         tool_data["annotations"] = {"readOnlyHint": False, "destructiveHint": False}
         html = self._render_tools_partial(jinja_env, tool_data, current_user_email="owner@example.com")
-        assert "\U0001f4d6" not in html
-        assert "\u26a0\ufe0f" not in html
+        assert "fa-book-open" not in html
+        assert "fa-triangle-exclamation" not in html
 
     def test_tools_hides_buttons_for_non_owner(self, jinja_env, tool_data):
         """Non-owner: HTML has no editTool onclick."""

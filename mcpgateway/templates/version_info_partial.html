@@ -283,7 +283,7 @@
           <span
             class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if payload.database.reachable %}bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200{% else %}bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200{% endif %}"
           >
-            {% if payload.database.reachable %}✅ Reachable{% else %}❌
+            {% if payload.database.reachable %}<i class="fa-solid fa-circle-check text-green-600" aria-hidden="true"></i> Reachable{% else %}<i class="fa-solid fa-circle-xmark text-red-500" aria-hidden="true"></i>
             Unreachable{% endif %}
           </span>
         </div>
@@ -359,9 +359,9 @@
             class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if payload.settings.cache_type == 'redis' and payload.redis.reachable %} bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200 {% elif payload.settings.cache_type == 'redis' and not payload.redis.reachable %} bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200 {% else %} bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 {% endif %}"
           >
             {% if payload.settings.cache_type == 'redis' and
-            payload.redis.reachable %} ✅ Connected {% elif
+            payload.redis.reachable %} <i class="fa-solid fa-circle-check text-green-600" aria-hidden="true"></i> Connected {% elif
             payload.settings.cache_type == 'redis' and not
-            payload.redis.reachable %} ❌ Connection Failed {% else %} ⚙️ Redis
+            payload.redis.reachable %} <i class="fa-solid fa-circle-xmark text-red-500" aria-hidden="true"></i> Connection Failed {% else %} <i class="fa-solid fa-gears" aria-hidden="true"></i> Redis
             Not Configured {% endif %}
           </span>
         </div>

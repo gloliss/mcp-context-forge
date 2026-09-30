@@ -10,7 +10,7 @@
   data-action="select-team"
 >
   <span>
-    {% if team.is_personal %}👤{% else %}🏢{% endif %} {{ team.name }}
+    {% if team.is_personal %}<i class="fa-solid fa-user" aria-hidden="true"></i>{% else %}<i class="fa-solid fa-building" aria-hidden="true"></i>{% endif %} {{ team.name }}
   </span>
   <span class="text-xs text-gray-500 dark:text-gray-400">{{ team.member_count|default(0) }} members</span>
 </button>

@@ -645,7 +645,8 @@
               class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               :title="darkMode ? 'Switch to light mode' : 'Switch to dark mode'"
             >
-              <span x-text="darkMode ? '☀️' : '🌙'" class="text-lg"></span>
+              <span x-cloak x-show="darkMode" class="text-lg" aria-hidden="true"><i class="fa-solid fa-sun"></i></span>
+              <span x-cloak x-show="!darkMode" class="text-lg" aria-hidden="true"><i class="fa-solid fa-moon"></i></span>
             </button>
             {% endif %}
             <!-- Links (hidden when collapsed) -->
@@ -749,7 +750,7 @@
                       class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                       role="menuitem"
                     >
-                      🌐 All Teams
+                      <i class="fa-solid fa-globe" aria-hidden="true"></i> All Teams
                     </button>
                   </div>
 
@@ -801,7 +802,7 @@
                 <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
               </svg>
               <p class="text-sm font-semibold text-red-800 dark:text-red-200">
-                ⚠ Since you are not a member of this team, team content won't be visible. Defaulting to All Teams.
+                <i class="fa-solid fa-triangle-exclamation text-amber-500" aria-hidden="true"></i> Since you are not a member of this team, team content won't be visible. Defaulting to All Teams.
               </p>
             </div>
           </div>
@@ -847,7 +848,7 @@
               <h2
                 class="text-lg font-medium text-gray-900 dark:text-white mb-4"
               >
-                📋 System Logs
+                <i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> System Logs
               </h2>
 
               <!-- Quick Actions -->
@@ -856,31 +857,31 @@
                   data-action-click="searchStructuredLogs"
                   class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
-                  🔍 Search Logs
+                  <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Search Logs
                 </button>
                 <button
                   data-action-click="showCorrelationTrace"
                   class="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
                 >
-                  🔗 Trace Correlation ID
+                  <i class="fa-solid fa-link" aria-hidden="true"></i> Trace Correlation ID
                 </button>
                 <button
                   data-action-click="showSecurityEvents"
                   class="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                 >
-                  🛡️ Security Events
+                  <i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Security Events
                 </button>
                 <button
                   data-action-click="showAuditTrail"
                   class="px-3 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
                 >
-                  📝 Audit Trail
+                  <i class="fa-solid fa-file-pen" aria-hidden="true"></i> Audit Trail
                 </button>
                 <button
                   data-action-click="showPerformanceMetrics"
                   class="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700"
                 >
-                  ⚡ Performance
+                  <i class="fa-solid fa-bolt" aria-hidden="true"></i> Performance
                 </button>
               </div>
 
@@ -1076,7 +1077,7 @@
                 <h3
                   class="text-md font-medium text-gray-900 dark:text-white mb-4"
                 >
-                  📤 Export Configuration
+                  <i class="fa-solid fa-upload" aria-hidden="true"></i> Export Configuration
                 </h3>
 
                 <!-- Export Options -->
@@ -1221,13 +1222,13 @@
                           id="export-all-btn"
                           class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium"
                         >
-                          📥 Export All Configuration
+                          <i class="fa-solid fa-download" aria-hidden="true"></i> Export All Configuration
                         </button>
                         <button
                           id="export-selected-btn"
                           class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium"
                         >
-                          📋 Export Selected Types
+                          <i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> Export Selected Types
                         </button>
                       </div>
 
@@ -1259,7 +1260,7 @@
                 <h3
                   class="text-md font-medium text-gray-900 dark:text-white mb-4"
                 >
-                  📥 Import Configuration
+                  <i class="fa-solid fa-download" aria-hidden="true"></i> Import Configuration
                 </h3>
 
                 <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
@@ -1371,21 +1372,21 @@
                       disabled
                       data-action-click="previewImport"
                     >
-                      📋 Selective Import
+                      <i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> Selective Import
                     </button>
                     <button
                       id="import-validate-btn"
                       class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
                       disabled
                     >
-                      🔍 Validate Import
+                      <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Validate Import
                     </button>
                     <button
                       id="import-execute-btn"
                       class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
                       disabled
                     >
-                      ⚡ Execute Import
+                      <i class="fa-solid fa-bolt" aria-hidden="true"></i> Execute Import
                     </button>
                   </div>
                 </div>
@@ -1396,7 +1397,7 @@
                 <h3
                   class="text-md font-medium text-gray-900 dark:text-white mb-4"
                 >
-                  📊 Import Status
+                  <i class="fa-solid fa-square-poll-vertical" aria-hidden="true"></i> Import Status
                 </h3>
 
                 <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
@@ -1475,7 +1476,7 @@
                 <h3
                   class="text-md font-medium text-gray-900 dark:text-white mb-4"
                 >
-                  📋 Recent Import Operations
+                  <i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> Recent Import Operations
                 </h3>
 
                 <div
@@ -2614,14 +2615,14 @@
                       <button
                         data-action-click="viewServer" data-arg0="{{ server.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
-                        x-tooltip="'💡View server details and configuration'"
+                        x-tooltip="'View server details and configuration'"
                       >
                         View
                       </button>
                       <button
                         data-action-click="editServer" data-arg0="{{ server.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
-                        x-tooltip="'💡Edit server settings and configuration'"
+                        x-tooltip="'Edit server settings and configuration'"
                       >
                         Edit
                       </button>
@@ -2630,7 +2631,7 @@
                       <button
                         data-action-click="showConfigSelectionModal" data-arg0="{{ server.id|tojson_attr }}" data-arg1="{{ server.name|tojson_attr }}"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
-                        x-tooltip="'💡Generate client configuration files for this server'"
+                        x-tooltip="'Generate client configuration files for this server'"
                       >
                         Export Config
                       </button>
@@ -2647,7 +2648,7 @@
                           <input type="hidden" name="activate" value="false" />
                           <button
                             type="submit"
-                            x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
+                            x-tooltip="'Temporarily disable this item (can be re-activated)'"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
                           >
                             Deactivate
@@ -2663,7 +2664,7 @@
                           <input type="hidden" name="activate" value="true" />
                           <button
                             type="submit"
-                            x-tooltip="'💡Re-enable an inactive item'"
+                            x-tooltip="'Re-enable an inactive item'"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
                           >
                             Activate
@@ -2678,7 +2679,7 @@
                         >
                           <button
                             type="submit"
-                            x-tooltip="'💡Permanently delete this item – cannot be undone'"
+                            x-tooltip="'Permanently delete this item – cannot be undone'"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
                           >
                             Delete
@@ -3095,7 +3096,7 @@
                   <label
                     for="server-visibility-public"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >🌍Public</label
+                    ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                   >
                 </div>
 
@@ -3110,7 +3111,7 @@
                   <label
                     for="server-visibility-team"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >👥Team</label
+                    ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                   >
                 </div>
                 <div class="flex items-center">
@@ -3124,7 +3125,7 @@
                   <label
                     for="server-visibility-private"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >🔒Private</label
+                    ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                   >
                 </div>
               </div>
@@ -3230,7 +3231,7 @@
             <div class="mt-6">
               <button
                 type="submit"
-                x-tooltip="'💡Creates a new Virtual Server by combining Tools, Resources & Prompts from global catalogs.'"
+                x-tooltip="'Creates a new Virtual Server by combining Tools, Resources & Prompts from global catalogs.'"
                 class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 Add Server
@@ -3259,19 +3260,19 @@
               <strong>Annotation badges:</strong>
               <span
                 class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 ml-1"
-                >📖 Read-Only</span
+                ><i class="fa-solid fa-book-open" aria-hidden="true"></i> Read-Only</span
               >
               <span
                 class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 ml-1"
-                >⚠️ Destructive</span
+                ><i class="fa-solid fa-triangle-exclamation text-amber-500" aria-hidden="true"></i> Destructive</span
               >
               <span
                 class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 ml-1"
-                >🔄 Idempotent</span
+                ><i class="fa-solid fa-rotate" aria-hidden="true"></i> Idempotent</span
               >
               <span
                 class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 ml-1"
-                >🌐 External Access</span
+                ><i class="fa-solid fa-globe" aria-hidden="true"></i> External Access</span
               >
             </div>
           </div>
@@ -3497,7 +3498,7 @@
                             data-action-click="downloadSampleJSON"
                             class="text-blue-600 hover:text-blue-800 dark:text-blue-400 text-xs underline"
                           >
-                            📥 Download Sample
+                            <i class="fa-solid fa-download" aria-hidden="true"></i> Download Sample
                           </button>
                         </div>
                         <pre
@@ -3668,7 +3669,7 @@
                     <h5
                       class="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2"
                     >
-                      📊 Import Results
+                      <i class="fa-solid fa-square-poll-vertical" aria-hidden="true"></i> Import Results
                     </h5>
                     <div class="grid grid-cols-3 gap-2 mb-2">
                       <div class="bg-white dark:bg-gray-800 rounded p-2 text-center border">
@@ -4035,7 +4036,7 @@
                   <label
                     for="tool-visibility-public"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >🌍Public</label
+                    ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                   >
                 </div>
 
@@ -4050,7 +4051,7 @@
                   <label
                     for="tool-visibility-team"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >👥Team</label
+                    ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                   >
                 </div>
                 <div class="flex items-center">
@@ -4064,7 +4065,7 @@
                   <label
                     for="tool-visibility-private"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >🔒Private</label
+                    ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                   >
                 </div>
               </div>
@@ -4072,7 +4073,7 @@
             <div class="mt-6">
               <button
                 type="submit"
-                x-tooltip="'💡  Registers a new Tool from an existing REST endpoint. Use Gateways to add MCP servers.'"
+                x-tooltip="'Registers a new Tool from an existing REST endpoint. Use Gateways to add MCP servers.'"
                 class="inline-flex justify-center py-2 px-4 border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 Add Tool
@@ -4219,7 +4220,7 @@
               class="rounded p-1 text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
               aria-label="Close"
             >
-              ✕
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
             </button>
           </div>
 
@@ -4304,7 +4305,7 @@
             <div id="import-statistics" class="hidden pt-4">
               <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
                 <h4 class="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
-                  📊 Import Summary
+                  <i class="fa-solid fa-square-poll-vertical" aria-hidden="true"></i> Import Summary
                 </h4>
                 <div class="grid grid-cols-3 gap-4 text-center">
                   <div class="bg-white dark:bg-gray-700 rounded-lg p-3 border">
@@ -4539,7 +4540,7 @@
                   <label
                     for="resource-visibility-public"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >🌍Public</label
+                    ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                   >
                 </div>
 
@@ -4554,7 +4555,7 @@
                   <label
                     for="resource-visibility-team"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >👥Team</label
+                    ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                   >
                 </div>
                 <div class="flex items-center">
@@ -4568,7 +4569,7 @@
                   <label
                     for="resource-visibility-private"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >🔒Private</label
+                    ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                   >
                 </div>
               </div>
@@ -4576,7 +4577,7 @@
             <div class="mt-6">
               <button
                 type="submit"
-                x-tooltip="'💡Uploads or links a reusable data asset (file, URI, or text).'"
+                x-tooltip="'Uploads or links a reusable data asset (file, URI, or text).'"
                 class="inline-flex justify-center py-2 px-4 border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 Add Resource
@@ -4812,7 +4813,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <label
                     for="prompt-visibility-public"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >🌍Public</label
+                    ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                   >
                 </div>
 
@@ -4827,7 +4828,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <label
                     for="prompt-visibility-team"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >👥Team</label
+                    ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                   >
                 </div>
                 <div class="flex items-center">
@@ -4841,7 +4842,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <label
                     for="prompt-visibility-private"
                     class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                    >🔒Private</label
+                    ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                   >
                 </div>
               </div>
@@ -4849,7 +4850,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="mt-6">
               <button
                 type="submit"
-                x-tooltip="'💡Creates a reusable message template with parameters.'"
+                x-tooltip="'Creates a reusable message template with parameters.'"
                 class="inline-flex justify-center py-2 px-4 border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 Add Prompt
@@ -5156,9 +5157,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div
                         class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow"
                       >
-                        {% if not enabled %} 💡Gateway is Manually Deactivated
-                        {% elif not reachable %} 💡Gateway is Not Reachable {%
-                        else %} 💡Everything stable. {% endif %}
+                        {% if not enabled %} <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Gateway is Manually Deactivated
+                        {% elif not reachable %} <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Gateway is Not Reachable {%
+                        else %} <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Everything stable. {% endif %}
                       </div>
                     </div>
                   </td>
@@ -5212,7 +5213,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <button
                         data-action-click="testGateway" data-arg0="{{ gateway.url|tojson_attr }}"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
-                        x-tooltip="'💡Test connection to this MCP Server'"
+                        x-tooltip="'Test connection to this MCP Server'"
                       >
                         Test
                       </button>
@@ -5223,27 +5224,27 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <a
                         href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
-                        x-tooltip="'🔐 Authorize Users for OAuth'"
+                        x-tooltip="'Authorize Users for OAuth'"
                       >
-                        🔐 Authorize
+                        <i class="fa-solid fa-user-shield" aria-hidden="true"></i> Authorize
                       </a>
                       <button
                         data-action-click="fetchToolsForGateway" data-arg0="{{ gateway.id|tojson_attr }}" data-arg1="{{ gateway.name|tojson_attr }}"
                         class="flex items-center justify-center px-1 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
-                        x-tooltip="'🔧 Fetch Tools from MCP Server'"
+                        x-tooltip="'Fetch Tools from MCP Server'"
                         id="fetch-tools-{{ gateway.id }}"
                       >
-                        🔧 Fetch Tools
+                        <i class="fa-solid fa-wrench" aria-hidden="true"></i> Fetch Tools
                       </button>
                       {% else %}
                       <!-- Row 2 (token-exchange): no consent flow to authorize — Fetch Tools spans both columns -->
                       <button
                         data-action-click="fetchToolsForGateway" data-arg0="{{ gateway.id|tojson_attr }}" data-arg1="{{ gateway.name|tojson_attr }}"
                         class="col-span-2 flex items-center justify-center px-1 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
-                        x-tooltip="'🔧 Fetch Tools from MCP Server'"
+                        x-tooltip="'Fetch Tools from MCP Server'"
                         id="fetch-tools-te-{{ gateway.id }}"
                       >
-                        🔧 Fetch Tools
+                        <i class="fa-solid fa-wrench" aria-hidden="true"></i> Fetch Tools
                       </button>
                       {% endif %}
 
@@ -5251,14 +5252,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <button
                         data-action-click="viewGateway" data-arg0="{{ gateway.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
-                        x-tooltip="'💡View gateway details and configuration'"
+                        x-tooltip="'View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
                         data-action-click="editGateway" data-arg0="{{ gateway.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
-                        x-tooltip="'💡Edit gateway settings and configuration'"
+                        x-tooltip="'Edit gateway settings and configuration'"
                       >
                         Edit
                       </button>
@@ -5267,14 +5268,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <button
                         data-action-click="viewGateway" data-arg0="{{ gateway.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
-                        x-tooltip="'💡View gateway details and configuration'"
+                        x-tooltip="'View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
                         data-action-click="editGateway" data-arg0="{{ gateway.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
-                        x-tooltip="'💡Edit gateway settings and configuration'"
+                        x-tooltip="'Edit gateway settings and configuration'"
                       >
                         Edit
                       </button>
@@ -5292,7 +5293,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           <input type="hidden" name="activate" value="false" />
                           <button
                             type="submit"
-                            x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
+                            x-tooltip="'Temporarily disable this item (can be re-activated)'"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
                           >
                             Deactivate
@@ -5308,7 +5309,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           <input type="hidden" name="activate" value="true" />
                           <button
                             type="submit"
-                            x-tooltip="'💡Re-enable an inactive item'"
+                            x-tooltip="'Re-enable an inactive item'"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
                           >
                             Activate
@@ -5323,7 +5324,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         >
                           <button
                             type="submit"
-                            x-tooltip="'💡Permanently delete this item – cannot be undone'"
+                            x-tooltip="'Permanently delete this item – cannot be undone'"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
                           >
                             Delete
@@ -5428,7 +5429,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       for="gateway-visibility-public"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🌍Public</label
+                      ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                     >
                   </div>
 
@@ -5443,7 +5444,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       for="gateway-visibility-team"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >👥Team</label
+                      ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                     >
                   </div>
                   <div class="flex items-center">
@@ -5457,7 +5458,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       for="gateway-visibility-private"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🔒Private</label
+                      ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                     >
                   </div>
                 </div>
@@ -5654,7 +5655,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         data-action-click="discoverOAuthEndpoints" data-arg0="this"
                         class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
                         title="Auto-discover token &amp; authorization endpoints from issuer metadata"
-                      >🔍 Discover</button>
+                      ><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Discover</button>
                     </div>
                     <p class="mt-1 text-sm text-gray-500">
                       The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
@@ -5696,7 +5697,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       placeholder="Leave empty for auto-registration via DCR"
                     />
                     <p class="mt-1 text-sm text-blue-600">
-                      💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                      <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Leave empty if the server supports DCR - credentials will be auto-registered
                     </p>
                   </div>
 
@@ -5714,7 +5715,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       placeholder="Leave empty for auto-registration via DCR"
                     />
                     <p class="mt-1 text-sm text-blue-600">
-                      💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                      <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Leave empty if the server supports DCR - credentials will be auto-registered
                     </p>
                   </div>
 
@@ -5805,7 +5806,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         OAuth application
                       </p>
                       <p class="mt-1 text-sm text-blue-600 font-medium">
-                        💡 Use:
+                        <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Use:
                         <code class="bg-blue-100 px-1 rounded"
                           >{{ request.base_url }}oauth/callback</code
                         >
@@ -5880,7 +5881,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             <p>After creating this gateway, you'll need to:</p>
                             <ol class="list-decimal list-inside mt-1 space-y-1">
                               <li>
-                                Click the "🔐 Authorize" button in the gateway
+                                <i class="fa-solid fa-user-shield" aria-hidden="true"></i> Click the "Authorize" button in the gateway
                                 list
                               </li>
                               <li>
@@ -5948,7 +5949,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     name="one_time_auth"
                     id="single-use-auth-gw"
                     class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
-                    x-tooltip="'💡This will not store the server credentials, Some features may not work.'"
+                    x-tooltip="'This will not store the server credentials, Some features may not work.'"
                     data-action-change="toggleOneTimeAuthHint" data-arg0="single-use-auth-hint-gw"
                   />
                   <span
@@ -5962,7 +5963,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   style="display: none"
                   class="mt-2 text-sm text-gray-700 dark:text-gray-300 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded-md p-2"
                 >
-                  ⚠️ NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
+                  <i class="fa-solid fa-triangle-exclamation text-amber-500" aria-hidden="true"></i> NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
                 </p>
               </div>
 
@@ -6038,7 +6039,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="mt-6">
               <button
                 type="submit"
-                x-tooltip="'💡Registers an external MCP server and imports its catalogs - Tools, Prompts, Resources, etc.'"
+                x-tooltip="'Registers an external MCP server and imports its catalogs - Tools, Prompts, Resources, etc.'"
                 class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 Add Gateway
@@ -6088,7 +6089,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="flex justify-between items-center mb-8">
             <div>
               <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-200">
-                👥 My Teams
+                <i class="fa-solid fa-users" aria-hidden="true"></i> My Teams
               </h2>
               <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
                 Teams you own, are a member of, and can join
@@ -6519,7 +6520,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             <div class="space-y-2">
                                 <div class="flex items-center">
                                     <h3 class="text-sm font-bold text-yellow-800 dark:text-yellow-200">
-                                        ⚠️ <span class="font-semibold">Token Scope</span>
+                                        <i class="fa-solid fa-triangle-exclamation text-amber-500" aria-hidden="true"></i> <span class="font-semibold">Token Scope</span>
                                     </h3>
                                 </div>
                                 <div class="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
@@ -6527,13 +6528,13 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                                         Tokens created without selecting a team are <span class="font-semibold">not scoped to any team</span>.
                                         Admin users retain full access; non-admin users can only see <span class="font-semibold">public resources</span>.
                                     </p>
-                                    <p class="mb-1"><span class="font-semibold">✅ This token CAN access:</span></p>
+                                    <p class="mb-1"><span class="font-semibold"><i class="fa-solid fa-circle-check text-green-600" aria-hidden="true"></i> This token CAN access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
                                         <li>Public servers (virtual servers marked as public)</li>
                                         <li>Public tools, resources, and prompts</li>
                                         <li>All resources (admin users only)</li>
                                     </ul>
-                                    <p class="mt-2 mb-1"><span class="font-semibold">❌ Non-admin tokens CANNOT access:</span></p>
+                                    <p class="mt-2 mb-1"><span class="font-semibold"><i class="fa-solid fa-circle-xmark text-red-500" aria-hidden="true"></i> Non-admin tokens CANNOT access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
                                         <li>Your own private or team-scoped resources</li>
                                         <li>Team-scoped servers, tools, resources, and prompts</li>
@@ -6543,7 +6544,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                             <!-- Tip Section  -->
                             <div class="mt-4 bg-yellow-50 dark:bg-yellow-900 p-2 rounded-md border border-yellow-200 dark:border-yellow-600 flex items-center">
-                                <span class="text-yellow-600 dark:text-yellow-400 text-lg">💡</span>
+                                <span class="text-yellow-600 dark:text-yellow-400 text-lg"><i class="fa-solid fa-lightbulb" aria-hidden="true"></i></span>
                                 <p class="ml-2 text-sm font-semibold text-yellow-700 dark:text-yellow-300">
                                     For team-level access, select a specific team from the header above before creating a token.
                                 </p>
@@ -7150,7 +7151,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         data-action-click="discoverOAuthEndpoints" data-arg0="this"
                         class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
                         title="Auto-discover token &amp; authorization endpoints from issuer metadata"
-                      >🔍 Discover</button>
+                      ><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Discover</button>
                     </div>
                     <p class="mt-1 text-sm text-gray-500">
                       The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
@@ -7171,7 +7172,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       placeholder="Leave empty for auto-registration via DCR"
                     />
                     <p class="mt-1 text-sm text-blue-600">
-                      💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                      <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Leave empty if the server supports DCR - credentials will be auto-registered
                     </p>
                   </div>
 
@@ -7189,7 +7190,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       placeholder="Leave empty for auto-registration via DCR"
                     />
                     <p class="mt-1 text-sm text-blue-600">
-                      💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                      <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Leave empty if the server supports DCR - credentials will be auto-registered
                     </p>
                   </div>
 
@@ -7280,7 +7281,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         OAuth application
                       </p>
                       <p class="mt-1 text-sm text-blue-600 font-medium">
-                        💡 Use:
+                        <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Use:
                         <code class="bg-blue-100 px-1 rounded"
                           >{{ request.base_url }}oauth/callback</code
                         >
@@ -7355,7 +7356,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             <p>After creating this gateway, you'll need to:</p>
                             <ol class="list-decimal list-inside mt-1 space-y-1">
                               <li>
-                                Click the "🔐 Authorize" button in the gateway
+                                <i class="fa-solid fa-user-shield" aria-hidden="true"></i> Click the "Authorize" button in the gateway
                                 list
                               </li>
                               <li>
@@ -7551,7 +7552,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <!-- Info Box -->
                   <div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
                     <p class="text-xs text-blue-700 dark:text-blue-300">
-                      <strong>ℹ️ About UAIDs:</strong> Universal Agent IDs enable cross-gateway routing without manual configuration.
+                      <strong><i class="fa-solid fa-circle-info" aria-hidden="true"></i> About UAIDs:</strong> Universal Agent IDs enable cross-gateway routing without manual configuration.
                       The UAID embeds the endpoint URL, protocol, and registry info for automatic discovery.
                       <br/><br/>
                       <strong>Domain Allowlist:</strong> Set <code class="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded">UAID_ALLOWED_DOMAINS</code> in .env to control which domains can be used.
@@ -7581,7 +7582,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       for="a2a-visibility-public"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🌍 Public</label
+                      ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                     >
                   </div>
 
@@ -7596,7 +7597,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       for="a2a-visibility-team"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >👥 Team</label
+                      ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                     >
                   </div>
                   <div class="flex items-center">
@@ -7610,7 +7611,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       for="a2a-visibility-private"
                       class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🔒 Private</label
+                      ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                     >
                   </div>
                 </div>
@@ -8145,7 +8146,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div class="grpc-sync-preview-panel hidden border border-teal-200 dark:border-teal-800 rounded-lg p-3 bg-teal-50 dark:bg-teal-900/20 space-y-2 text-xs text-gray-700 dark:text-gray-300">
                         <div class="flex items-center justify-between">
                           <span class="font-medium text-teal-800 dark:text-teal-300">Tool Sync Preview</span>
-                          <button type="button" class="grpc-sync-preview-close text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">✕</button>
+                          <button type="button" class="grpc-sync-preview-close text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
                         </div>
                         <div class="grpc-sync-preview-body">Loading…</div>
                       </div>
@@ -8403,7 +8404,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div class="http-sync-preview-panel hidden border border-teal-200 dark:border-teal-800 rounded-lg p-3 bg-teal-50 dark:bg-teal-900/20 space-y-2 text-xs text-gray-700 dark:text-gray-300">
                         <div class="flex items-center justify-between">
                           <span class="font-medium text-teal-800 dark:text-teal-300">Tool Sync Preview</span>
-                          <button type="button" class="http-sync-preview-close text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">✕</button>
+                          <button type="button" class="http-sync-preview-close text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
                         </div>
                         <div class="http-sync-preview-body">Loading…</div>
                       </div>
@@ -8514,7 +8515,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           tabindex="0"
                           @click="menuOpen = false; window.Admin?.viewRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-                          x-tooltip="'💡View root directory details and configuration'"
+                          x-tooltip="'View root directory details and configuration'"
                         >View</button>
                         <button
                           type="button"
@@ -8522,7 +8523,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           tabindex="0"
                           @click="menuOpen = false; window.Admin?.editRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-                          x-tooltip="'💡Edit root directory settings and configuration'"
+                          x-tooltip="'Edit root directory settings and configuration'"
                         >Edit</button>
                         <button
                           type="button"
@@ -8530,7 +8531,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           tabindex="0"
                           @click="menuOpen = false; window.Admin?.exportRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-                          x-tooltip="'💡Export root directory configuration'"
+                          x-tooltip="'Export root directory configuration'"
                         >Export</button>
                         <hr class="border-gray-200 dark:border-gray-600 my-1">
                         <form
@@ -8545,7 +8546,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             role="menuitem"
                             tabindex="0"
                             class="w-full flex items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
-                            x-tooltip="'💡Permanently delete this item – cannot be undone'"
+                            x-tooltip="'Permanently delete this item – cannot be undone'"
                           >Delete</button>
                         </form>
                       </div>
@@ -8614,7 +8615,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="mt-6">
               <button
                 type="submit"
-                x-tooltip="'💡Registers a base directory that MCP servers can browse for files.'"
+                x-tooltip="'Registers a base directory that MCP servers can browse for files.'"
                 class="inline-flex justify-center py-2 px-4 border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 Add Root
@@ -9176,7 +9177,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           data-action-click="closeModal" data-arg0="tool-validation-modal"
           class="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
         >
-          ✕
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
         </button>
       </div>
 
@@ -9609,7 +9610,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <label
                           for="edit-tool-visibility-public"
                           class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                          >🌍Public</label
+                          ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                         >
                       </div>
 
@@ -9624,7 +9625,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <label
                           for="edit-tool-visibility-team"
                           class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                          >👥Team</label
+                          ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                         >
                       </div>
                       <div class="flex items-center">
@@ -9638,7 +9639,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <label
                           for="edit-tool-visibility-private"
                           class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                          >🔒Private</label
+                          ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                         >
                       </div>
                     </div>
@@ -9929,7 +9930,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-resource-visibility-public"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >🌍Public</label
+                            ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                           >
                         </div>
 
@@ -9944,7 +9945,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-resource-visibility-team"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >👥Team</label
+                            ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                           >
                         </div>
                         <div class="flex items-center">
@@ -9958,7 +9959,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-resource-visibility-private"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >🔒Private</label
+                            ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                           >
                         </div>
                       </div>
@@ -10154,7 +10155,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-prompt-visibility-public"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >🌍Public</label
+                            ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                           >
                         </div>
 
@@ -10169,7 +10170,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-prompt-visibility-team"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >👥Team</label
+                            ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                           >
                         </div>
                         <div class="flex items-center">
@@ -10183,7 +10184,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-prompt-visibility-private"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >🔒Private</label
+                            ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                           >
                         </div>
                       </div>
@@ -10608,7 +10609,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-gateway-visibility-public"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >🌍Public</label
+                            ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                           >
                         </div>
 
@@ -10623,7 +10624,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-gateway-visibility-team"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >👥Team</label
+                            ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                           >
                         </div>
                         <div class="flex items-center">
@@ -10637,7 +10638,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-gateway-visibility-private"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >🔒Private</label
+                            ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                           >
                         </div>
                       </div>
@@ -10840,7 +10841,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               data-action-click="discoverOAuthEndpoints" data-arg0="this"
                               class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
                               title="Auto-discover token &amp; authorization endpoints from issuer metadata"
-                            >🔍 Discover</button>
+                            ><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Discover</button>
                           </div>
                           <p class="mt-1 text-sm text-gray-500">
                             The OAuth Authorization Server issuer URL. Required for DCR.
@@ -10888,7 +10889,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             placeholder="Leave empty for auto-registration via DCR"
                           />
                           <p class="mt-1 text-sm text-blue-600">
-                            💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                            <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Leave empty if the server supports DCR - credentials will be auto-registered
                           </p>
                         </div>
 
@@ -10910,7 +10911,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             Leave blank to retain the current secret (when editing).
                           </p>
                           <p class="mt-1 text-sm text-blue-600">
-                            💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                            <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Leave empty if the server supports DCR - credentials will be auto-registered
                           </p>
                         </div>
 
@@ -11006,7 +11007,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               your OAuth application
                             </p>
                             <p class="mt-1 text-sm text-blue-600 font-medium">
-                              💡 Use:
+                              <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Use:
                               <code class="bg-blue-100 px-1 rounded"
                                 >{{ request.base_url }}oauth/callback</code
                               >
@@ -11041,7 +11042,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           name="one_time_auth"
                           id="single-use-auth-gw-edit"
                           class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
-                          x-tooltip="'💡This will not store the server credentials, Some features may not work.'"
+                          x-tooltip="'This will not store the server credentials, Some features may not work.'"
                           data-action-change="toggleOneTimeAuthHint" data-arg0="single-use-auth-hint-gw-edit"
                         />
                         <span
@@ -11055,7 +11056,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         style="display: none"
                         class="mt-2 text-sm text-gray-700 dark:text-gray-300 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded-md p-2"
                       >
-                        ⚠️ NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
+                        <i class="fa-solid fa-triangle-exclamation text-amber-500" aria-hidden="true"></i> NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
                       </p>
                     </div>
                     <div>
@@ -11352,7 +11353,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                                 data-action-click="discoverOAuthEndpoints" data-arg0="this"
                                 class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
                                 title="Auto-discover token &amp; authorization endpoints from issuer metadata"
-                              >🔍 Discover</button>
+                              ><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Discover</button>
                             </div>
                             <div class="oauth-discover-status mt-1 hidden"></div>
                           </div>
@@ -11500,7 +11501,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               OAuth application
                               </p>
                               <p class="mt-1 text-sm text-blue-600 font-medium">
-                              💡 Use:
+                              <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Use:
                               <code class="bg-blue-100 px-1 rounded"
                                 >{{ request.base_url }}oauth/callback</code
                               >
@@ -11644,7 +11645,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <!-- Info Box -->
                           <div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
                             <p class="text-xs text-blue-700 dark:text-blue-300">
-                              <strong>ℹ️ About UAIDs:</strong> Universal Agent IDs enable cross-gateway routing without manual configuration.
+                              <strong><i class="fa-solid fa-circle-info" aria-hidden="true"></i> About UAIDs:</strong> Universal Agent IDs enable cross-gateway routing without manual configuration.
                               The UAID embeds the endpoint URL, protocol, and registry info for automatic discovery.
                               <br/><br/>
                               <strong>Domain Allowlist:</strong> Set <code class="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded">UAID_ALLOWED_DOMAINS</code> in .env to control which domains can be used.
@@ -11668,7 +11669,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                               checked
                             />
-                            <label for="edit-a2a-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</label>
+                            <label for="edit-a2a-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400"><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label>
                           </div>
 
                           <div class="flex items-center">
@@ -11679,7 +11680,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               id="edit-a2a-visibility-team"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                             />
-                            <label for="edit-a2a-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</label>
+                            <label for="edit-a2a-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400"><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label>
                           </div>
                           <div class="flex items-center">
                             <input
@@ -11689,7 +11690,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               id="edit-a2a-visibility-private"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                             />
-                            <label for="edit-a2a-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</label>
+                            <label for="edit-a2a-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400"><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label>
                           </div>
                         </div>
                       </div>
@@ -11899,7 +11900,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-server-visibility-public"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >🌍Public</label
+                            ><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</label
                           >
                         </div>
 
@@ -11914,7 +11915,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-server-visibility-team"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >👥Team</label
+                            ><i class="fa-solid fa-users" aria-hidden="true"></i> Team</label
                           >
                         </div>
                         <div class="flex items-center">
@@ -11928,7 +11929,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             for="edit-server-visibility-private"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                            >🔒Private</label
+                            ><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</label
                           >
                         </div>
                       </div>
@@ -12503,7 +12504,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   data-action-click="generateAndShowConfig" data-arg0="sse"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <span class="text-2xl mr-3">🌐</span>
+                  <span class="text-2xl mr-3"><i class="fa-solid fa-globe" aria-hidden="true"></i></span>
                   <div>
                     <div class="font-medium text-gray-900 dark:text-gray-100">
                       SSE (LangChain, LlamaIndex)
@@ -12519,7 +12520,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   data-action-click="generateAndShowConfig" data-arg0="http"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <span class="text-2xl mr-3">🔗</span>
+                  <span class="text-2xl mr-3"><i class="fa-solid fa-link" aria-hidden="true"></i></span>
                   <div>
                     <div class="font-medium text-gray-900 dark:text-gray-100">
                       HTTP (REST clients)
@@ -12573,7 +12574,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   data-action-click="copyConfigToClipboard"
                   class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
-                  📋 Copy to Clipboard
+                  <i class="fa-solid fa-clipboard" aria-hidden="true"></i> Copy to Clipboard
                 </button>
               </div>
 
@@ -12611,7 +12612,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 data-action-click="downloadConfig"
                 class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:ml-3 sm:w-auto sm:text-sm"
               >
-                💾 Download JSON
+                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Download JSON
               </button>
               <button
                 data-action-click="goBackToSelection"
@@ -14494,12 +14495,12 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <h5
                         class="font-semibold mb-2 text-blue-800 dark:text-blue-200"
                       >
-                        📋 JSON Validation Rules
+                        <i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> JSON Validation Rules
                       </h5>
                       <div class="space-y-2">
                         <div>
                           <strong class="text-green-700 dark:text-green-300"
-                            >✅ Required:</strong
+                            ><i class="fa-solid fa-circle-check text-green-600" aria-hidden="true"></i> Required:</strong
                           >
                           <code
                             class="bg-blue-100 dark:bg-blue-800 px-1 rounded"
@@ -14510,7 +14511,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         </div>
                         <div>
                           <strong class="text-blue-700 dark:text-blue-300"
-                            >🔹 Optional:</strong
+                            ><i class="fa-solid fa-circle-dot" aria-hidden="true"></i> Optional:</strong
                           >
                           <code
                             class="bg-blue-100 dark:bg-blue-800 px-1 rounded"
@@ -14529,7 +14530,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         </div>
                         <div>
                           <strong class="text-orange-700 dark:text-orange-300"
-                            >⚠️ Case Sensitive:</strong
+                            ><i class="fa-solid fa-triangle-exclamation text-amber-500" aria-hidden="true"></i> Case Sensitive:</strong
                           >
                           <code
                             class="bg-blue-100 dark:bg-blue-800 px-1 rounded"
@@ -14544,7 +14545,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         </div>
                         <div>
                           <strong class="text-red-700 dark:text-red-300"
-                            >❌ Not Allowed:</strong
+                            ><i class="fa-solid fa-circle-xmark text-red-500" aria-hidden="true"></i> Not Allowed:</strong
                           >
                           Names starting with numbers, FTP URLs, tag strings
                           "tag1,tag2" (use ["tag1","tag2"])
@@ -14553,7 +14554,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           class="pt-1 border-t border-blue-200 dark:border-blue-700"
                         >
                           <strong class="text-purple-700 dark:text-purple-300"
-                            >🔧 Auto-Fixed:</strong
+                            ><i class="fa-solid fa-wrench" aria-hidden="true"></i> Auto-Fixed:</strong
                           >
                           Spaces in names, tag strings → arrays, case
                           normalization

@@ -78,7 +78,7 @@
                 role="menuitem"
                 tabindex="0"
                 class="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-              >🔐 Authorize</a>
+              ><i class="fa-solid fa-user-shield" aria-hidden="true"></i> Authorize</a>
               {% endif %}
 
               {% if can_modify %}
@@ -174,11 +174,11 @@
         </td>
         <td class="px-6 py-4 whitespace-nowrap">
           {% if gateway.visibility == 'private' %}
-          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">🔒 Private</span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800"><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</span>
           {% elif gateway.visibility == 'team' %}
-          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">👥 Team</span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"><i class="fa-solid fa-users" aria-hidden="true"></i> Team</span>
           {% elif gateway.visibility == 'public' %}
-          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">🌍 Public</span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</span>
           {% else %}
           <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
           {% endif %}

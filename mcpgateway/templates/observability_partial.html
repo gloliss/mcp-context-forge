@@ -54,7 +54,7 @@ if (!window.getChartDefaults) {
         <!-- Title and Filters Row -->
         <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
             <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>🔍</span>
+                <span><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i></span>
                 Observability Dashboard
             </h2>
             <div class="flex gap-4 items-center" x-show="viewMode === 'traces'">
@@ -63,7 +63,7 @@ if (!window.getChartDefaults) {
                 class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
                 style="min-width: 200px;"
             >
-                <option value="">📋 Saved Queries</option>
+                <option value=""><i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> Saved Queries</option>
                 <template x-for="query in savedQueries" :key="query.id">
                     <option :value="query.id" x-text="query.name + (query.is_shared ? ' (shared)' : '')"></option>
                 </template>
@@ -73,7 +73,7 @@ if (!window.getChartDefaults) {
                 @click="showSaveQueryModal = true"
                 title="Save current filters as a query"
             >
-                💾 Save Query
+                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Query
             </button>
             <select
                 x-model="timeRange"
@@ -97,13 +97,13 @@ if (!window.getChartDefaults) {
                 :class="showAdvancedFilters ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100'"
                 @click="showAdvancedFilters = !showAdvancedFilters"
             >
-                ⚙️ Advanced Filters
+                <i class="fa-solid fa-gears" aria-hidden="true"></i> Advanced Filters
             </button>
             <button
                 class="px-4 py-2 text-sm bg-blue-500 text-white rounded-md cursor-pointer font-medium transition-colors hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500"
                 @click="refreshAll()"
             >
-                🔄 Refresh
+                <i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh
             </button>
             </div>
         </div>
@@ -115,35 +115,35 @@ if (!window.getChartDefaults) {
                 :class="viewMode === 'traces' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
                 class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
-                📋 Traces
+                <i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> Traces
             </button>
             <button
                 @click="setViewMode('metrics')"
                 :class="viewMode === 'metrics' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
                 class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
-                📊 Advanced Metrics
+                <i class="fa-solid fa-chart-pie" aria-hidden="true"></i> Advanced Metrics
             </button>
             <button
                 @click="setViewMode('tools')"
                 :class="viewMode === 'tools' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
                 class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
-                🔧 MCP Tools
+                <i class="fa-solid fa-wrench" aria-hidden="true"></i> MCP Tools
             </button>
             <button
                 @click="setViewMode('prompts')"
                 :class="viewMode === 'prompts' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
                 class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
-                💬 Prompts
+                <i class="fa-solid fa-comment" aria-hidden="true"></i> Prompts
             </button>
             <button
                 @click="setViewMode('resources')"
                 :class="viewMode === 'resources' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
                 class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
-                📦 Resources
+                <i class="fa-solid fa-box" aria-hidden="true"></i> Resources
             </button>
         </div>
     </div>
@@ -155,7 +155,7 @@ if (!window.getChartDefaults) {
          x-transition
          class="bg-white dark:bg-gray-800 rounded-lg p-6 mb-6 shadow-sm dark:shadow-gray-900/30">
         <h3 class="m-0 mb-4 text-lg font-semibold text-gray-700 dark:text-gray-200">
-            🔧 Advanced Filters
+            <i class="fa-solid fa-filter" aria-hidden="true"></i> Advanced Filters
         </h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
             <!-- Duration Range -->
@@ -248,7 +248,7 @@ if (!window.getChartDefaults) {
             <!-- Tool Name Filter -->
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    🔧 MCP Tool Name
+                    <i class="fa-solid fa-wrench" aria-hidden="true"></i> MCP Tool Name
                 </label>
                 <input
                     type="text"
@@ -266,7 +266,7 @@ if (!window.getChartDefaults) {
                 class="px-6 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
                 @click="clearFilters()"
             >
-                🗑️ Clear All Filters
+                <i class="fa-solid fa-trash" aria-hidden="true"></i> Clear All Filters
             </button>
         </div>
     </div>
@@ -321,7 +321,7 @@ if (!window.getChartDefaults) {
          @click.self="showSaveQueryModal = false">
         <div class="bg-white dark:bg-gray-800 rounded-lg max-w-2xl w-full mx-4 p-8 shadow-2xl">
             <div class="flex justify-between items-center mb-6 pb-4 border-b border-gray-200 dark:border-gray-700">
-                <h3 class="text-2xl font-bold text-gray-900 dark:text-gray-100 m-0">💾 Save Query</h3>
+                <h3 class="text-2xl font-bold text-gray-900 dark:text-gray-100 m-0"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Query</h3>
                 <button @click="showSaveQueryModal = false" class="bg-transparent border-0 text-2xl cursor-pointer text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100">×</button>
             </div>
 
@@ -389,6 +389,7 @@ if (!window.getChartDefaults) {
                         Cancel
                     </button>
                     <button
+                        data-testid="save-query-submit"
                         @click="saveCurrentQuery()"
                         class="px-6 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-md cursor-pointer font-medium hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
                     >

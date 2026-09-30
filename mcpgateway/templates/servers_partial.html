@@ -101,7 +101,7 @@
             tabindex="0"
             @click="dispatch('showConfigSelectionModal', {{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
             class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-            x-tooltip="'💡Generate client configuration files for this server'"
+            x-tooltip="'Generate client configuration files for this server'"
           >Export Config</button>
           {% if can_modify %}
           <hr class="border-gray-200 dark:border-gray-600 my-1">

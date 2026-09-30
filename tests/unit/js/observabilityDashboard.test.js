@@ -232,10 +232,10 @@ describe("Observability dashboard Alpine CSP integration", () => {
     "switches to and initializes the %s view",
     async (mode) => {
       const labels = {
-        metrics: "📊 Advanced Metrics",
-        tools: "🔧 MCP Tools",
-        prompts: "💬 Prompts",
-        resources: "📦 Resources",
+        metrics: "Advanced Metrics",
+        tools: "MCP Tools",
+        prompts: "Prompts",
+        resources: "Resources",
       };
       buttonWithText(labels[mode]).click();
 
@@ -252,7 +252,7 @@ describe("Observability dashboard Alpine CSP integration", () => {
   );
 
   it("destroys the previous sub-view tree when leaving and re-entering", async () => {
-    buttonWithText("📊 Advanced Metrics").click();
+    buttonWithText("Advanced Metrics").click();
 
     await vi.waitFor(() => {
       expect(
@@ -267,7 +267,7 @@ describe("Observability dashboard Alpine CSP integration", () => {
     await Alpine.nextTick();
     document.dispatchEvent(new CustomEvent("observability:enter"));
     await Alpine.nextTick();
-    buttonWithText("📊 Advanced Metrics").click();
+    buttonWithText("Advanced Metrics").click();
 
     await vi.waitFor(() => {
       const currentSubview = document.querySelector(
@@ -298,7 +298,9 @@ describe("Observability dashboard Alpine CSP integration", () => {
     name.value = "  My query  ";
     name.dispatchEvent(new Event("input", { bubbles: true }));
     document.getElementById("save-query-shared").click();
-    buttonWithText("Save Query").click();
+    document
+      .querySelector('[data-testid="save-query-submit"]')
+      .click();
 
     await vi.waitFor(() => {
       const saveCall = fetchMock.mock.calls.find(

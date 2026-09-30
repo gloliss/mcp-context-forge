@@ -6,7 +6,7 @@
             <code>{{ trace.trace_id }}</code>
         </p>
     </div>
-    <button @click="selectedTrace = null" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #6b7280;">✕</button>
+    <button @click="selectedTrace = null" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #6b7280;"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
 </div>
 
 <div class="trace-detail-body">
@@ -18,7 +18,7 @@
             <p style="margin: 0.25rem 0;"><strong>URL:</strong> <code>{{ trace.http_url }}</code></p>
             <p style="margin: 0.25rem 0;"><strong>Status:</strong>
                 <span class="status-badge status-{{ trace.status }}">
-                    {% if trace.status == 'ok' %}✓{% else %}✗{% endif %} {{ trace.http_status_code }}
+                    {% if trace.status == 'ok' %}<i class="fa-solid fa-check text-green-600" aria-hidden="true"></i>{% else %}<i class="fa-solid fa-xmark text-red-500" aria-hidden="true"></i>{% endif %} {{ trace.http_status_code }}
                 </span>
             </p>
         </div>
@@ -53,13 +53,13 @@
             <h3 style="font-size: 1.125rem; color: #1f2937; margin: 0;">Execution Timeline</h3>
             <div style="display: flex; gap: 0.5rem;">
                 <button @click="viewMode = 'gantt'" :class="viewMode === 'gantt' ? 'active' : ''" class="view-toggle-btn">
-                    📊 Gantt Chart
+                    <i class="fa-solid fa-chart-gantt" aria-hidden="true"></i> Gantt Chart
                 </button>
                 <button @click="viewMode = 'flame'" :class="viewMode === 'flame' ? 'active' : ''" class="view-toggle-btn">
-                    🔥 Flame Graph
+                    <i class="fa-solid fa-fire" aria-hidden="true"></i> Flame Graph
                 </button>
                 <button @click="viewMode = 'waterfall'" :class="viewMode === 'waterfall' ? 'active' : ''" class="view-toggle-btn">
-                    📋 Simple View
+                    <i class="fa-solid fa-clipboard-list" aria-hidden="true"></i> Simple View
                 </button>
             </div>
         </div>

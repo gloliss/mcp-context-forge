@@ -10,7 +10,7 @@
         <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700"><code>{{ trace.name }}</code></td>
         <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
             <span class="status-badge status-{{ trace.status }}">
-                {% if trace.status == 'ok' %}✓ {{ trace.http_status_code or 'OK' }}{% else %}✗ {{ trace.http_status_code or 'ERROR' }}{% endif %}
+                {% if trace.status == 'ok' %}<i class="fa-solid fa-check text-green-600" aria-hidden="true"></i> {{ trace.http_status_code or 'OK' }}{% else %}<i class="fa-solid fa-xmark text-red-500" aria-hidden="true"></i> {{ trace.http_status_code or 'ERROR' }}{% endif %}
             </span>
         </td>
         <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
@@ -30,7 +30,7 @@
     <tr>
         <td colspan="7">
             <div class="empty-state">
-                <div class="empty-state-icon">📊</div>
+                <div class="empty-state-icon"><i class="fa-solid fa-chart-pie" aria-hidden="true"></i></div>
                 <h3>No traces found</h3>
                 <p>Make some API requests to see observability data</p>
             </div>

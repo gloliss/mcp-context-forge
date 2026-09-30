@@ -67,7 +67,7 @@
             <div class="text-2xl font-bold text-blue-900 dark:text-blue-100">{{ "%.1f"|format(dashboard.system.cpu_percent) }}%</div>
             <div class="text-sm text-blue-700 dark:text-blue-300 mt-1">CPU Usage</div>
           </div>
-          <div class="text-3xl">💻</div>
+          <div class="text-3xl"><i class="fa-solid fa-microchip" aria-hidden="true"></i></div>
         </div>
         <div class="mt-2 w-full bg-blue-200 dark:bg-blue-700 rounded-full h-2">
           <div class="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all" style="width: {{ dashboard.system.cpu_percent }}%"></div>
@@ -82,7 +82,7 @@
             <div class="text-2xl font-bold text-green-900 dark:text-green-100">{{ "%.1f"|format(dashboard.system.memory_percent) }}%</div>
             <div class="text-sm text-green-700 dark:text-green-300 mt-1">Memory</div>
           </div>
-          <div class="text-3xl">🧠</div>
+          <div class="text-3xl"><i class="fa-solid fa-brain" aria-hidden="true"></i></div>
         </div>
         <div class="mt-2 w-full bg-green-200 dark:bg-green-700 rounded-full h-2">
           <div class="bg-green-600 dark:bg-green-400 h-2 rounded-full transition-all" style="width: {{ dashboard.system.memory_percent }}%"></div>
@@ -97,7 +97,7 @@
             <div class="text-2xl font-bold text-purple-900 dark:text-purple-100">{{ dashboard.gunicorn.workers_active }}/{{ dashboard.gunicorn.workers_total }}</div>
             <div class="text-sm text-purple-700 dark:text-purple-300 mt-1">Workers</div>
           </div>
-          <div class="text-3xl">👷</div>
+          <div class="text-3xl"><i class="fa-solid fa-helmet-safety" aria-hidden="true"></i></div>
         </div>
         <div class="mt-2 w-full bg-purple-200 dark:bg-purple-700 rounded-full h-2">
           {% set worker_pct = (dashboard.gunicorn.workers_active / dashboard.gunicorn.workers_total * 100) if dashboard.gunicorn.workers_total > 0 else 0 %}
@@ -113,7 +113,7 @@
             <div class="text-2xl font-bold text-orange-900 dark:text-orange-100">{{ "%.1f"|format(dashboard.requests.requests_per_second) }}</div>
             <div class="text-sm text-orange-700 dark:text-orange-300 mt-1">Req/sec</div>
           </div>
-          <div class="text-3xl">🚀</div>
+          <div class="text-3xl"><i class="fa-solid fa-rocket" aria-hidden="true"></i></div>
         </div>
         <div class="text-xs text-orange-600 dark:text-orange-400 mt-4">{{ "{:,}".format(dashboard.requests.requests_total) }} total requests</div>
       </div>
@@ -216,7 +216,7 @@
       <!-- CPU Details -->
       <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
-          <span class="text-2xl mr-2">💻</span> CPU
+          <span class="text-2xl mr-2"><i class="fa-solid fa-microchip" aria-hidden="true"></i></span> CPU
         </h4>
         <div class="space-y-3">
           <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
@@ -253,7 +253,7 @@
       <!-- Memory Details -->
       <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
-          <span class="text-2xl mr-2">🧠</span> Memory
+          <span class="text-2xl mr-2"><i class="fa-solid fa-brain" aria-hidden="true"></i></span> Memory
         </h4>
         <div class="space-y-3">
           <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
@@ -284,7 +284,7 @@
       <!-- Disk Details -->
       <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
-          <span class="text-2xl mr-2">💾</span> Disk
+          <span class="text-2xl mr-2"><i class="fa-solid fa-hard-drive" aria-hidden="true"></i></span> Disk
         </h4>
         <div class="space-y-3">
           <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
@@ -308,7 +308,7 @@
       <!-- Network Details -->
       <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
-          <span class="text-2xl mr-2">🌐</span> Network
+          <span class="text-2xl mr-2"><i class="fa-solid fa-globe" aria-hidden="true"></i></span> Network
         </h4>
         <div class="space-y-3">
           <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
@@ -333,7 +333,7 @@
     <!-- Gunicorn Summary -->
     <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 mb-4">
       <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
-        <span class="text-2xl mr-2">👷</span> Gunicorn Status
+        <span class="text-2xl mr-2"><i class="fa-solid fa-helmet-safety" aria-hidden="true"></i></span> Gunicorn Status
       </h4>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div class="text-center">
@@ -417,7 +417,7 @@
       <!-- Request Statistics -->
       <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
-          <span class="text-2xl mr-2">📈</span> Request Statistics
+          <span class="text-2xl mr-2"><i class="fa-solid fa-chart-line" aria-hidden="true"></i></span> Request Statistics
         </h4>
         <div class="space-y-3">
           <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
@@ -472,7 +472,7 @@
   <div x-show="activeTab === 'database'" x-transition>
     <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
       <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
-        <span class="text-2xl mr-2">🗄️</span> Database Connection Pool
+        <span class="text-2xl mr-2"><i class="fa-solid fa-database" aria-hidden="true"></i></span> Database Connection Pool
       </h4>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
@@ -509,7 +509,7 @@
   <div x-show="activeTab === 'cache'" x-transition>
     <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
       <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
-        <span class="text-2xl mr-2">🔴</span> Redis Cache
+        <span class="text-2xl mr-2"><i class="fa-solid fa-circle text-red-500" aria-hidden="true"></i></span> Redis Cache
       </h4>
 
       {% if dashboard.cache.connected %}

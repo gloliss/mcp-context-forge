@@ -18,15 +18,15 @@
         {% set rank = (pagination.page - 1) * pagination.per_page + loop.index %}
         {% if rank == 1 %}
           <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">
-            🥇 {{ rank }}
+            <i class="fa-solid fa-trophy text-amber-500" aria-hidden="true"></i> {{ rank }}
           </span>
         {% elif rank == 2 %}
           <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-200 text-gray-800">
-            🥈 {{ rank }}
+            <i class="fa-solid fa-medal text-gray-400" aria-hidden="true"></i> {{ rank }}
           </span>
         {% elif rank == 3 %}
           <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-800">
-            🥉 {{ rank }}
+            <i class="fa-solid fa-medal text-amber-700" aria-hidden="true"></i> {{ rank }}
           </span>
         {% else %}
           <span class="text-gray-900 dark:text-gray-100">{{ rank }}</span>

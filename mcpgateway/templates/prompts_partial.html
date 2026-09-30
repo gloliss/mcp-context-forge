@@ -65,7 +65,7 @@
                 data-test-prompt-id="{{ prompt.id }}"
                 @click="dispatch('testPrompt', {{ prompt.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-                x-tooltip="'💡Test this Prompt with sample arguments'"
+                x-tooltip="'Test this Prompt with sample arguments'"
               >Test</button>
               <button
                 type="button"
@@ -124,11 +124,11 @@
           <div class="flex flex-col gap-1">
             <!-- Visibility badge -->
             {% if prompt.visibility == 'public' %}
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 w-fit">🌍 Public</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 w-fit"><i class="fa-solid fa-earth-americas" aria-hidden="true"></i> Public</span>
             {% elif prompt.visibility == 'team' %}
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 w-fit">👥 Team</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 w-fit"><i class="fa-solid fa-users" aria-hidden="true"></i> Team</span>
             {% else %}
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 w-fit">🔒 Private</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 w-fit"><i class="fa-solid fa-lock" aria-hidden="true"></i> Private</span>
             {% endif %}
             <!-- Status badge -->
             {% set enabled = prompt.enabled %}

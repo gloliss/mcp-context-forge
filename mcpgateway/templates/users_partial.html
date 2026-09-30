@@ -39,11 +39,11 @@
             </span>
             {% endif %}
           </div>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {{ user.email }}</p>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {{ user.auth_provider }}</p>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">⚠️ Failed attempts: {{ user.failed_login_attempts }}</p>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔒 Locked until: {{ user.locked_until.strftime("%Y-%m-%d %H:%M") if user.locked_until else "N/A" }}</p>
-          <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {{ user.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2"><i class="fa-solid fa-envelope" aria-hidden="true"></i> {{ user.email }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2"><i class="fa-solid fa-user-shield" aria-hidden="true"></i> Provider: {{ user.auth_provider }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2"><i class="fa-solid fa-triangle-exclamation text-amber-500" aria-hidden="true"></i> Failed attempts: {{ user.failed_login_attempts }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2"><i class="fa-solid fa-lock" aria-hidden="true"></i> Locked until: {{ user.locked_until.strftime("%Y-%m-%d %H:%M") if user.locked_until else "N/A" }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400"><i class="fa-solid fa-calendar" aria-hidden="true"></i> Created: {{ user.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
         </div>
         <div class="flex gap-2 ml-4">
           <button
