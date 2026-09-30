@@ -297,7 +297,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="overview">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-chart-pie"></i></span>
               <span x-show="!sidebarCollapsed">Overview</span>
             </a>
             {% endif %}
@@ -313,7 +313,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="gateways">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-server"></i></span>
               <span x-show="!sidebarCollapsed">MCP Servers</span>
             </a>
             {% endif %}
@@ -322,7 +322,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="catalog">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-diagram-project"></i></span>
               <span x-show="!sidebarCollapsed">Virtual Servers</span>
             </a>
             {% endif %}
@@ -331,7 +331,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="tools">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🛠️</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-screwdriver-wrench"></i></span>
               <span x-show="!sidebarCollapsed">Tools</span>
             </a>
             {% if toolops_enabled %}
@@ -339,7 +339,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="tool-ops">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-gears"></i></span>
               <span x-show="!sidebarCollapsed">ToolOps</span>
             </a>
             {% endif %}
@@ -349,7 +349,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="prompts">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">💬</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-message"></i></span>
               <span x-show="!sidebarCollapsed">Prompts</span>
             </a>
             {% endif %}
@@ -358,7 +358,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="resources">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📁</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-folder-open"></i></span>
               <span x-show="!sidebarCollapsed">Resources</span>
             </a>
             {% endif %}
@@ -367,7 +367,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="roots">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌳</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-folder-tree"></i></span>
               <span x-show="!sidebarCollapsed">Roots</span>
             </a>
             {% endif %}
@@ -376,7 +376,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="mcp-registry">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📦</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-boxes-stacked"></i></span>
               <span x-show="!sidebarCollapsed">MCP Registry</span>
             </a>
             {% endif %}
@@ -393,7 +393,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="a2a-agents">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🤖</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-robot"></i></span>
               <span x-show="!sidebarCollapsed">Agents (A2A)</span>
             </a>
             {% endif %}
@@ -402,7 +402,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="grpc-services">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔌</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-plug"></i></span>
               <span x-show="!sidebarCollapsed">gRPC Services</span>
             </a>
             {% endif %}
@@ -411,7 +411,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="http-services">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌐</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-globe"></i></span>
               <span x-show="!sidebarCollapsed">HTTP Services</span>
             </a>
             {% endif %}
@@ -425,13 +425,13 @@
           <div class="space-y-1 px-2">
             {% if sql_api_enabled and ('sql.tables.read' in user_permissions or is_admin) %}
             <a href="#sql-data" id="tab-sql-data" data-testid="sql-data-tab" class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors" :class="{ 'justify-center': sidebarCollapsed }" data-action-click="showTab" data-arg0="sql-data">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🗄️</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-table"></i></span>
               <span x-show="!sidebarCollapsed">SQL Data</span>
             </a>
             {% endif %}
             {% if api_debug_enabled and ('tools.read' in user_permissions or is_admin) %}
             <a href="#api-debug" id="tab-api-debug" data-testid="api-debug-tab" class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors" :class="{ 'justify-center': sidebarCollapsed }" data-action-click="showTab" data-arg0="api-debug">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧪</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-flask"></i></span>
               <span x-show="!sidebarCollapsed">API Debugger</span>
             </a>
             {% endif %}
@@ -449,7 +449,7 @@
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="llm-chat">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👨‍💻</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-comments"></i></span>
               <span x-show="!sidebarCollapsed">LLM Chat</span>
             </a>
             {% endif %}
@@ -458,7 +458,7 @@
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="llm-settings">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-sliders"></i></span>
               <span x-show="!sidebarCollapsed">LLM Settings</span>
             </a>
             {% endif %}
@@ -476,7 +476,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="metrics">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-chart-column"></i></span>
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
             {% endif %}
@@ -485,7 +485,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="performance">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚡</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-bolt"></i></span>
               <span x-show="!sidebarCollapsed">Performance</span>
             </a>
             {% endif %}
@@ -494,7 +494,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="observability">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔍</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-wave-square"></i></span>
               <span x-show="!sidebarCollapsed">Observability</span>
             </a>
             {% endif %}
@@ -503,7 +503,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="api-metrics">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📈</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-chart-line"></i></span>
               <span x-show="!sidebarCollapsed">API Metrics</span>
             </a>
             {% endif %}
@@ -521,7 +521,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="plugins">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-puzzle-piece"></i></span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
             {% endif %}
@@ -530,7 +530,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="a2a-plugin-bindings">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-link"></i></span>
               <span x-show="!sidebarCollapsed">A2A Plugin Bindings</span>
             </a>
             {% endif %}
@@ -547,7 +547,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="database-sources">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🗃️</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-database"></i></span>
               <span x-show="!sidebarCollapsed">Database Sources</span>
             </a>
           </div>
@@ -564,7 +564,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="teams">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-users"></i></span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
             {% endif %}
@@ -573,7 +573,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="users">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👤</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-user-group"></i></span>
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
             {% endif %}
@@ -582,7 +582,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="tokens">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🎫</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-key"></i></span>
               <span x-show="!sidebarCollapsed">API Tokens</span>
             </a>
             {% endif %}
@@ -600,7 +600,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="export-import">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📤</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-arrow-right-arrow-left"></i></span>
               <span x-show="!sidebarCollapsed">Export/Import</span>
             </a>
             {% endif %}
@@ -609,7 +609,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="logs">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-file-lines"></i></span>
               <span x-show="!sidebarCollapsed">System Logs</span>
             </a>
             {% endif %}
@@ -618,7 +618,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="version-info">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-circle-info"></i></span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
             {% endif %}
@@ -627,7 +627,7 @@
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                data-action-click="showTab" data-arg0="maintenance">
-              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
+              <span class="sidebar-icon" :class="{ 'mr-3': !sidebarCollapsed }" aria-hidden="true"><i class="fa-solid fa-screwdriver-wrench"></i></span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
             {% endif %}
@@ -6056,7 +6056,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       <div id="database-sources-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-8">
           <div>
-            <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-200">🗃️ Database Sources</h2>
+            <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-200 flex items-center gap-3">
+              <span class="feature-heading-icon" aria-hidden="true"><i class="fa-solid fa-database"></i></span>
+              Database Sources
+            </h2>
             <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
               Register and manage database connections for MCP tools
             </p>

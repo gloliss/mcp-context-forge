@@ -108,8 +108,8 @@
     <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
       <div>
         <h3 class="text-lg font-medium mb-1 dark:text-gray-200 flex items-center">
-          <span class="text-2xl mr-2" aria-hidden="true">
-            {% if payload.mcp_runtime.mounted == 'rust' %}🦀{% else %}🐍{% endif %}
+          <span class="runtime-brand-mark runtime-brand-mark--title {% if payload.mcp_runtime.mounted == 'rust' %}runtime-brand-rust{% else %}runtime-brand-python{% endif %}" aria-hidden="true">
+            {% if payload.mcp_runtime.mounted == 'rust' %}<i class="fa-brands fa-rust"></i>{% else %}<i class="fa-brands fa-python"></i>{% endif %}
           </span>
           MCP Runtime
         </h3>
@@ -120,9 +120,9 @@
       <div class="flex flex-wrap gap-2">
         <span
           id="version-mcp-core-badge"
-          class="px-3 py-1 rounded-full text-sm font-medium {% if payload.mcp_runtime.mounted == 'rust' %}bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200{% else %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200{% endif %}"
+          class="runtime-core-label px-3 py-1 rounded-full text-sm font-medium {% if payload.mcp_runtime.mounted == 'rust' %}bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200{% else %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200{% endif %}"
         >
-          {% if payload.mcp_runtime.mounted == 'rust' %}🦀 Rust MCP Core{% else %}🐍 Python MCP Core{% endif %}
+          {% if payload.mcp_runtime.mounted == 'rust' %}<span class="runtime-brand-mark runtime-brand-mark--hero runtime-brand-rust" aria-hidden="true"><i class="fa-brands fa-rust"></i></span> Rust MCP Core{% else %}<span class="runtime-brand-mark runtime-brand-mark--hero runtime-brand-python" aria-hidden="true"><i class="fa-brands fa-python"></i></span> Python MCP Core{% endif %}
         </span>
         <span
           id="version-mcp-runtime-mode-badge"
@@ -138,56 +138,56 @@
         <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
           Public Transport
         </div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.mounted == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+        <div class="runtime-value text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.mcp_runtime.mounted == 'rust' %}<span class="runtime-brand-mark runtime-brand-rust" aria-hidden="true"><i class="fa-brands fa-rust"></i></span> Rust{% else %}<span class="runtime-brand-mark runtime-brand-python" aria-hidden="true"><i class="fa-brands fa-python"></i></span> Python{% endif %}
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
         <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
           Session Core
         </div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.session_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+        <div class="runtime-value text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.mcp_runtime.session_core_mode == 'rust' %}<span class="runtime-brand-mark runtime-brand-rust" aria-hidden="true"><i class="fa-brands fa-rust"></i></span> Rust{% else %}<span class="runtime-brand-mark runtime-brand-python" aria-hidden="true"><i class="fa-brands fa-python"></i></span> Python{% endif %}
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
         <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
           Event Store
         </div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.event_store_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+        <div class="runtime-value text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.mcp_runtime.event_store_mode == 'rust' %}<span class="runtime-brand-mark runtime-brand-rust" aria-hidden="true"><i class="fa-brands fa-rust"></i></span> Rust{% else %}<span class="runtime-brand-mark runtime-brand-python" aria-hidden="true"><i class="fa-brands fa-python"></i></span> Python{% endif %}
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
         <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
           Replay / Resume
         </div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.resume_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+        <div class="runtime-value text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.mcp_runtime.resume_core_mode == 'rust' %}<span class="runtime-brand-mark runtime-brand-rust" aria-hidden="true"><i class="fa-brands fa-rust"></i></span> Rust{% else %}<span class="runtime-brand-mark runtime-brand-python" aria-hidden="true"><i class="fa-brands fa-python"></i></span> Python{% endif %}
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
         <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
           Live Stream
         </div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.live_stream_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+        <div class="runtime-value text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.mcp_runtime.live_stream_core_mode == 'rust' %}<span class="runtime-brand-mark runtime-brand-rust" aria-hidden="true"><i class="fa-brands fa-rust"></i></span> Rust{% else %}<span class="runtime-brand-mark runtime-brand-python" aria-hidden="true"><i class="fa-brands fa-python"></i></span> Python{% endif %}
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
         <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
           Affinity
         </div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.affinity_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+        <div class="runtime-value text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.mcp_runtime.affinity_core_mode == 'rust' %}<span class="runtime-brand-mark runtime-brand-rust" aria-hidden="true"><i class="fa-brands fa-rust"></i></span> Rust{% else %}<span class="runtime-brand-mark runtime-brand-python" aria-hidden="true"><i class="fa-brands fa-python"></i></span> Python{% endif %}
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
         <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
           Session Auth Reuse
         </div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.session_auth_reuse_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+        <div class="runtime-value text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.mcp_runtime.session_auth_reuse_mode == 'rust' %}<span class="runtime-brand-mark runtime-brand-rust" aria-hidden="true"><i class="fa-brands fa-rust"></i></span> Rust{% else %}<span class="runtime-brand-mark runtime-brand-python" aria-hidden="true"><i class="fa-brands fa-python"></i></span> Python{% endif %}
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
