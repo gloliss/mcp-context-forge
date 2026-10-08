@@ -20,9 +20,11 @@ import {
   fetchWithTimeout,
   getCurrentTeamId,
   handleFetchError,
+  ICONS,
   isInactiveChecked,
   makeCopyIdButton,
   safeGetElement,
+  setIconText,
   showErrorMessage,
   showNotification,
   showSuccessMessage,
@@ -904,25 +906,25 @@ export const viewTool = async function (toolId) {
       // Show behavior hints with appropriate colors
       if (annotations.readOnlyHint === true) {
         badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖 Read-Only</span>'
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1"><i class="fa-solid fa-book-open mr-1" aria-hidden="true"></i>Read-Only</span>'
         );
       }
 
       if (annotations.destructiveHint === true) {
         badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️ Destructive</span>'
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1"><i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>Destructive</span>'
         );
       }
 
       if (annotations.idempotentHint === true) {
         badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄 Idempotent</span>'
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1"><i class="fa-solid fa-rotate mr-1" aria-hidden="true"></i>Idempotent</span>'
         );
       }
 
       if (annotations.openWorldHint === true) {
         badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>'
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1"><i class="fa-solid fa-globe mr-1" aria-hidden="true"></i>External Access</span>'
         );
       }
 
@@ -2620,7 +2622,7 @@ export const testTool = async function (toolId) {
             delBtn.className =
               "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
             delBtn.title = "Delete";
-            delBtn.textContent = "×";
+            setIconText(delBtn, ICONS.xmark);
             delBtn.addEventListener("click", () => {
               arrayContainer.removeChild(wrapper);
             });
@@ -2833,7 +2835,7 @@ export const loadTools = async function () {
             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass}">
               ${statusText}
             </span>
-            ${deprecated ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 ml-1">⚠️ Deprecated</span>' : ''}
+            ${deprecated ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 ml-1"><i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>Deprecated</span>' : ''}
           `;
 
           return `
@@ -3513,7 +3515,7 @@ export const validateTool = async function (toolId) {
                     delBtn.className =
                       "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
                     delBtn.title = "Delete";
-                    delBtn.textContent = "×";
+                    setIconText(delBtn, ICONS.xmark);
                     delBtn.addEventListener("click", () => {
                       arrayContainer.removeChild(wrapper);
                     });
@@ -3749,7 +3751,7 @@ export const validateTool = async function (toolId) {
             .getElementById("run-all-tests-btn")
             ?.addEventListener("click", async () => {
               showSuccessMessage(
-                "🔍 Validation in progress; View results by expanding each test case."
+                "Validation in progress; View results by expanding each test case."
               );
               const total = testCases.length;
               document

@@ -146,6 +146,9 @@ module.exports = {
                 "pulse-soft": "pulse-soft 2s ease-in-out infinite",
                 "slide-up": "slide-up 0.8s ease-out",
                 "fade-in": "fade-in 1s ease-out",
+                // Toast entrance: quick enough not to delay reading, and short
+                // enough that a stack of toasts does not feel like a queue.
+                "toast-in": "toast-in 0.25s ease-out",
             },
             keyframes: {
                 float: {
@@ -163,6 +166,10 @@ module.exports = {
                 "fade-in": {
                     "0%": { opacity: "0" },
                     "100%": { opacity: "1" },
+                },
+                "toast-in": {
+                    "0%": { transform: "translateX(1rem)", opacity: "0" },
+                    "100%": { transform: "translateX(0)", opacity: "1" },
                 },
             },
         },

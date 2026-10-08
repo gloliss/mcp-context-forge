@@ -7,7 +7,9 @@ import { fetchWithAuth, getAuthToken } from "./tokens.js";
 import { performUserSearch } from "./users.js";
 import {
   fetchWithTimeout,
+  ICONS,
   safeGetElement,
+  setIconText,
   showErrorMessage,
   showSuccessMessage,
 } from "./utils.js";
@@ -581,11 +583,11 @@ const updateRequirementIcon = function (elementId, isValid) {
   if (isValid) {
     icon.className =
       "inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2";
-    icon.textContent = "✓";
+    setIconText(icon, ICONS.check);
   } else {
     icon.className =
       "inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2";
-    icon.textContent = "✗";
+    setIconText(icon, ICONS.xmark);
   }
 };
 

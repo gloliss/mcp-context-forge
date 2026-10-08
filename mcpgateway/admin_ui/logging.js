@@ -152,7 +152,7 @@ export const searchStructuredLogs = async function () {
     showToast("Failed to search logs: " + error.message, "error");
     safeGetElement("logs-tbody").innerHTML = `
 <tr><td colspan="7" class="px-4 py-4 text-center text-red-600 dark:text-red-400">
-❌ Error: ${escapeHtml(error.message)}
+<i class="fa-solid fa-circle-xmark mr-1" aria-hidden="true"></i>Error: ${escapeHtml(error.message)}
 </td></tr>
 `;
   }
@@ -174,7 +174,7 @@ export const displayLogResults = function (data) {
   if (!data.results || data.results.length === 0) {
     tbody.innerHTML = `
       <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-        📭 No logs found matching your criteria
+        <i class="fa-solid fa-inbox mr-1" aria-hidden="true"></i>No logs found matching your criteria
       </td></tr>
     `;
     logCount.textContent = "0 logs";
@@ -222,7 +222,7 @@ export const displayLogResults = function (data) {
         </td>
         <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
           ${escapeHtml(truncateText(log.message, 80))}
-          ${log.error_details ? '<span class="text-red-600">⚠️</span>' : ""}
+          ${log.error_details ? '<span class="text-red-600"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i></span>' : ""}
         </td>
         <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
           ${escapeHtml(userDisplay)}
@@ -393,7 +393,7 @@ export const generateStatusBadgeHtml = function (
               Inactive
               <svg class="ml-1 h-4 w-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
           </span>
-          <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded px-2 py-1 z-30 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
+          <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded px-2 py-1 z-30 whitespace-nowrap shadow"><i class="fa-solid fa-lightbulb mr-1" aria-hidden="true"></i>${label} is Manually Deactivated</div>
       </div>`;
   } else if (!reachable) {
     // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
@@ -403,7 +403,7 @@ export const generateStatusBadgeHtml = function (
               Offline
               <svg class="ml-1 h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
           </span>
-          <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded px-2 py-1 z-30 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
+          <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded px-2 py-1 z-30 whitespace-nowrap shadow"><i class="fa-solid fa-lightbulb mr-1" aria-hidden="true"></i>${label} is Not Reachable (Health Check Failed)</div>
       </div>`;
   } else {
     // CASE 3: Active (Enabled and Reachable) -> GREEN
@@ -413,7 +413,7 @@ export const generateStatusBadgeHtml = function (
               Active
               <svg class="ml-1 h-4 w-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
           </span>
-          <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded px-2 py-1 z-30 whitespace-nowrap shadow">💡${label} is Active</div>
+          <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded px-2 py-1 z-30 whitespace-nowrap shadow"><i class="fa-solid fa-lightbulb mr-1" aria-hidden="true"></i>${label} is Active</div>
       </div>`;
   }
 };
@@ -435,7 +435,7 @@ export const updateEntityActionButtons = function (cell, type, id, isEnabled) {
     // If Enabled -> Show Deactivate Button
     form.innerHTML = `
       <input type="hidden" name="activate" value="false" />
-      <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors" x-tooltip="'💡Temporarily disable this item'">
+      <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors" x-tooltip="'Temporarily disable this item'">
           Deactivate
       </button>
     `;
@@ -443,7 +443,7 @@ export const updateEntityActionButtons = function (cell, type, id, isEnabled) {
     // If Disabled -> Show Activate Button
     form.innerHTML = `
       <input type="hidden" name="activate" value="true" />
-      <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors" x-tooltip="'💡Re-enable this item'">
+      <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors" x-tooltip="'Re-enable this item'">
           Activate
       </button>
     `;
@@ -596,7 +596,7 @@ export const displayCorrelationTrace = function (trace) {
   if (totalEvents === 0) {
     tbody.innerHTML = `
         <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-            📭 No events found for this correlation ID
+            <i class="fa-solid fa-inbox mr-1" aria-hidden="true"></i>No events found for this correlation ID
         </td></tr>
     `;
     return;
@@ -617,7 +617,7 @@ export const displayCorrelationTrace = function (trace) {
               </td>
               <td class="px-4 py-3">
                   <span class="px-2 py-1 text-xs font-semibold rounded bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200">
-                      📝 Log
+                      <i class="fa-solid fa-pen mr-1" aria-hidden="true"></i>Log
                   </span>
               </td>
               <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
@@ -625,7 +625,7 @@ export const displayCorrelationTrace = function (trace) {
               </td>
               <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                   ${escapeHtml(log.message)}
-                  ${log.error_details ? `<br><small class="text-red-600">⚠️ ${escapeHtml(log.error_details.error_message || JSON.stringify(log.error_details))}</small>` : ""}
+                  ${log.error_details ? `<br><small class="text-red-600"><i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>${escapeHtml(log.error_details.error_message || JSON.stringify(log.error_details))}</small>` : ""}
               </td>
               <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                   ${escapeHtml(log.user_email || log.user_id || "-")}
@@ -658,7 +658,7 @@ export const displayCorrelationTrace = function (trace) {
               </td>
               <td class="px-4 py-3">
                   <span class="px-2 py-1 text-xs font-semibold rounded bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200">
-                      🛡️ Security
+                      <i class="fa-solid fa-shield-halved mr-1" aria-hidden="true"></i>Security
                   </span>
               </td>
               <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
@@ -703,7 +703,9 @@ export const displayCorrelationTrace = function (trace) {
     const actionBadge =
       actionBadgeColors[audit.action?.toLowerCase()] ||
       "bg-purple-200 text-purple-800";
-    const statusIcon = audit.success ? "✓" : "✗";
+    const statusIcon = audit.success
+      ? '<i class="fa-solid fa-check" aria-hidden="true"></i>'
+      : '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
     const statusClass = audit.success ? "text-green-600" : "text-red-600";
     const statusBg = audit.success
       ? "bg-green-100 dark:bg-green-900"
@@ -718,7 +720,7 @@ export const displayCorrelationTrace = function (trace) {
             </td>
             <td class="px-4 py-3">
                 <span class="px-2 py-1 text-xs font-semibold rounded ${actionBadge}">
-                    📋 ${audit.action?.toUpperCase()}
+                    <i class="fa-solid fa-clipboard-list mr-1" aria-hidden="true"></i>${audit.action?.toUpperCase()}
                 </span>
             </td>
             <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
@@ -820,14 +822,14 @@ export const displaySecurityEvents = function (events) {
   logCount.textContent = `${events.length} security events`;
   logStats.innerHTML = `
       <span class="text-sm text-red-600 dark:text-red-400">
-          🛡️ Unresolved Security Events
+          <i class="fa-solid fa-shield-halved mr-1" aria-hidden="true"></i>Unresolved Security Events
       </span>
   `;
 
   if (events.length === 0) {
     tbody.innerHTML = `
         <tr><td colspan="7" class="px-4 py-8 text-center text-green-600 dark:text-green-400">
-            ✅ No unresolved security events
+            <i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>No unresolved security events
         </td></tr>
     `;
     return;
@@ -974,14 +976,14 @@ export const displayAuditTrail = function (trails) {
   logCount.textContent = `${trails.length} audit entries`;
   logStats.innerHTML = `
     <span class="text-sm text-yellow-600 dark:text-yellow-400">
-        📝 Audit Trail Entries Requiring Review
+        <i class="fa-solid fa-pen mr-1" aria-hidden="true"></i>Audit Trail Entries Requiring Review
     </span>
   `;
 
   if (trails.length === 0) {
     tbody.innerHTML = `
         <tr><td colspan="7" class="px-4 py-8 text-center text-green-600 dark:text-green-400">
-            ✅ No audit entries require review
+            <i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>No audit entries require review
         </td></tr>
     `;
     return;
@@ -990,7 +992,9 @@ export const displayAuditTrail = function (trails) {
   tbody.innerHTML = trails
     .map((trail) => {
       const actionClass = trail.success ? "text-green-600" : "text-red-600";
-      const actionIcon = trail.success ? "✓" : "✗";
+      const actionIcon = trail.success
+        ? '<i class="fa-solid fa-check" aria-hidden="true"></i>'
+        : '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
 
       // Determine action badge color
       const actionBadgeColors = {
@@ -1013,7 +1017,7 @@ export const displayAuditTrail = function (trails) {
       const resourceDisplay = `
         <div class="font-medium">${escapeHtml(resourceName)}</div>
         ${trail.resource_id && trail.resource_name ? `<div class="text-xs text-gray-500">UUID: ${escapeHtml(trail.resource_id)}</div>` : ""}
-        ${trail.data_classification ? `<div class="text-xs text-orange-600 mt-1">🔒 ${escapeHtml(trail.data_classification)}</div>` : ""}
+        ${trail.data_classification ? `<div class="text-xs text-orange-600 mt-1"><i class="fa-solid fa-lock mr-1" aria-hidden="true"></i>${escapeHtml(trail.data_classification)}</div>` : ""}
     `;
 
       return `
@@ -1151,14 +1155,14 @@ export const displayPerformanceMetrics = function (metrics) {
   logCount.textContent = `${metrics.length} metrics`;
   logStats.innerHTML = `
       <span class="text-sm text-green-600 dark:text-green-400">
-          ⚡ Performance Metrics (${aggregationLabel})
+          <i class="fa-solid fa-bolt mr-1" aria-hidden="true"></i>Performance Metrics (${aggregationLabel})
       </span>
   `;
 
   if (metrics.length === 0) {
     tbody.innerHTML = `
         <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-            📊 No performance metrics available for ${aggregationLabel.toLowerCase()}
+            <i class="fa-solid fa-chart-line mr-1" aria-hidden="true"></i>No performance metrics available for ${aggregationLabel.toLowerCase()}
         </td></tr>
     `;
     return;
@@ -1192,7 +1196,7 @@ export const displayPerformanceMetrics = function (metrics) {
             </td>
             <td class="px-4 py-3 text-sm ${errorClass}">
                 ${errorRatePercent}%
-                ${metric.error_rate > 0.1 ? "⚠️" : ""}
+                ${metric.error_rate > 0.1 ? '<i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>' : ""}
             </td>
             <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                 <div class="text-xs">

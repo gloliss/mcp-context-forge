@@ -1,5 +1,5 @@
 import { escapeHtml } from "./security.js";
-import { fetchWithTimeout, handleFetchError, safeGetElement } from "./utils.js";
+import { fetchWithTimeout, handleFetchError, ICONS, safeGetElement, setIconText } from "./utils.js";
 
 // ===================================================================
 // ENHANCED METRICS LOADING with Retry Logic and Request Deduplication
@@ -591,22 +591,22 @@ export const createKPISection = function (kpiData) {
       {
         key: "totalExecutions",
         label: "Total Executions",
-        icon: "🎯",
+        icon: ICONS.target,
         color: "blue",
       },
       {
         key: "successRate",
         label: "Success Rate",
-        icon: "✅",
+        icon: ICONS.success,
         color: "green",
       },
       {
         key: "avgResponseTime",
         label: "Avg Response Time",
-        icon: "⚡",
+        icon: ICONS.lightning,
         color: "yellow",
       },
-      { key: "errorRate", label: "Error Rate", icon: "❌", color: "red" },
+      { key: "errorRate", label: "Error Rate", icon: ICONS.error, color: "red" },
     ];
 
     kpis.forEach((kpi) => {
@@ -634,7 +634,7 @@ export const createKPISection = function (kpiData) {
 
       const iconSpan = document.createElement("span");
       iconSpan.className = "text-2xl";
-      iconSpan.textContent = kpi.icon;
+      setIconText(iconSpan, kpi.icon);
 
       const valueDiv = document.createElement("div");
       valueDiv.className = "text-right";
@@ -1333,7 +1333,7 @@ export const createStandardPaginationControls = function (
                 class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
                 title="First Page"
             >
-                ⏮️
+                <i class="fa-solid fa-backward-step" aria-hidden="true"></i>
             </button>
 
             <!-- Previous Page Button -->
@@ -1344,7 +1344,7 @@ export const createStandardPaginationControls = function (
                 class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
                 title="Previous Page"
             >
-                ◀️ Prev
+                <i class="fa-solid fa-chevron-left" aria-hidden="true"></i>
             </button>
 
             <!-- Page Number Display -->
@@ -1414,7 +1414,7 @@ export const createStandardPaginationControls = function (
                 class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
                 title="Next Page"
             >
-                Next ▶️
+                <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
             </button>
 
             <!-- Last Page Button -->
@@ -1425,7 +1425,7 @@ export const createStandardPaginationControls = function (
                 class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
                 title="Last Page"
             >
-                ⏭️
+                <i class="fa-solid fa-forward-step" aria-hidden="true"></i>
             </button>
         </div>
     `;

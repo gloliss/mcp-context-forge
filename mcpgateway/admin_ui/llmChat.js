@@ -6,7 +6,9 @@ import {
 import {
   fetchWithTimeout,
   getCookie,
+  ICONS,
   safeGetElement,
+  setIconText,
   showErrorMessage,
   showNotification,
 } from "./utils.js";
@@ -1413,13 +1415,16 @@ export const sendChatMessage = async function (event) {
                 const isRecoverable = payload.recoverable !== false;
 
                 // Display error in the assistant message
-                updateChatMessage(assistantMsgId, `❌ Error: ${errorMsg}`);
+                updateChatMessage(
+                  assistantMsgId,
+                  `<i class="fa-solid fa-circle-xmark mr-1" aria-hidden="true"></i>Error: ${escapeHtmlChat(errorMsg)}`
+                );
 
                 if (!isRecoverable) {
                   // For non-recoverable errors, suggest reconnection
                   appendChatMessage(
                     "system",
-                    "⚠️ Connection lost. Please reconnect to continue."
+                    '<i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>Connection lost. Please reconnect to continue.'
                   );
                   llmChatState.isConnected = false;
 
@@ -1464,7 +1469,10 @@ export const sendChatMessage = async function (event) {
 
     // Display backend error message to user
     const errorMsg = error.message || "An unexpected error occurred";
-    appendChatMessage("system", `❌ ${errorMsg}`);
+    appendChatMessage(
+      "system",
+      `<i class="fa-solid fa-circle-xmark mr-1" aria-hidden="true"></i>${escapeHtmlChat(errorMsg)}`
+    );
 
     // If we have a partial assistant message, mark it as complete
     if (assistantMsgId) {
@@ -1956,7 +1964,7 @@ const setToolUsedSummary = function (messageId, used, toolsList) {
   if (used && toolsList && toolsList.length > 0) {
     badge.className =
       "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium text-green-700 dark:text-green-400";
-    badge.textContent = `✓ Tools used: ${toolsList.join(", ")}`;
+    setIconText(badge, ICONS.check, `Tools used: ${toolsList.join(", ")}`);
   } else {
     badge.className =
       "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium text-gray-600 dark:text-gray-400";

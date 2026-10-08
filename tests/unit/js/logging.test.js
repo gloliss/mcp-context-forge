@@ -745,7 +745,7 @@ describe("displayPerformanceMetrics", () => {
     ]);
 
     expect(tbody.innerHTML).toContain("text-red-600");
-    expect(tbody.innerHTML).toContain("⚠️");
+    expect(tbody.innerHTML).toContain("fa-triangle-exclamation");
   });
 });
 

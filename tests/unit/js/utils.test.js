@@ -736,9 +736,10 @@ describe("showToast", () => {
   test("maps error type to danger for showNotification", () => {
     // showToast calls showNotification which creates a DOM element
     showToast("error toast", "error");
-    // showToast maps "error" → "danger", which hits the default case in showNotification (blue)
-    const toasts = document.querySelectorAll(".bg-blue-100");
-    expect(toasts.length).toBe(1);
+    // "error" maps to "danger", which used to miss both the success and error
+    // branches and render a failure as a blue info toast. It is red now.
+    expect(document.querySelectorAll(".bg-red-100").length).toBe(1);
+    expect(document.querySelectorAll(".bg-blue-100").length).toBe(0);
   });
 
   test("passes through non-error types directly", () => {
@@ -1462,7 +1463,10 @@ describe("makeCopyIdButton", () => {
     expect(btn.tagName).toBe("BUTTON");
     expect(btn.type).toBe("button");
     expect(btn.title).toBe("Copy ID to clipboard");
-    expect(btn.textContent).toBe("📋 Copy");
+    expect(btn.textContent).toBe("Copy");
+    expect(btn.querySelector("i").className).toBe(
+      "fa-solid fa-clipboard mr-1"
+    );
   });
 
   test("copies id string using clipboard API on click", async () => {
@@ -1497,9 +1501,12 @@ describe("makeCopyIdButton", () => {
     // Let the clipboard promise resolve (microtasks)
     await Promise.resolve();
     await Promise.resolve();
-    expect(btn.textContent).toBe("✅ Copied!");
+    expect(btn.textContent).toBe("Copied!");
+    expect(btn.querySelector("i").className).toBe(
+      "fa-solid fa-circle-check mr-1"
+    );
     vi.advanceTimersByTime(2000);
-    expect(btn.textContent).toBe("📋 Copy");
+    expect(btn.textContent).toBe("Copy");
     vi.useRealTimers();
   });
 
@@ -1512,9 +1519,12 @@ describe("makeCopyIdButton", () => {
     btn.click();
     await Promise.resolve();
     await Promise.resolve();
-    expect(btn.textContent).toBe("❌ Failed");
+    expect(btn.textContent).toBe("Failed");
+    expect(btn.querySelector("i").className).toBe(
+      "fa-solid fa-circle-xmark mr-1"
+    );
     vi.advanceTimersByTime(2000);
-    expect(btn.textContent).toBe("📋 Copy");
+    expect(btn.textContent).toBe("Copy");
     vi.useRealTimers();
   });
 
@@ -1539,7 +1549,10 @@ describe("makeCopyIdButton", () => {
     document.body.appendChild(btn);
     btn.click();
     await Promise.resolve();
-    expect(btn.textContent).toBe("❌ Failed");
+    expect(btn.textContent).toBe("Failed");
+    expect(btn.querySelector("i").className).toBe(
+      "fa-solid fa-circle-xmark mr-1"
+    );
     vi.useRealTimers();
   });
 });

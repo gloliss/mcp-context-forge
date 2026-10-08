@@ -216,7 +216,7 @@ import {
     // Generic API call for Enrich/Validate
     const callEnrichment = async function () {
       if (selectedTools.length === 0) {
-        showErrorMessage("⚠️ Please select at least one tool.");
+        showErrorMessage("Please select at least one tool.");
         return;
       }
       try {
@@ -247,7 +247,7 @@ import {
         updateSelectedList();
       } catch (err) {
         //   responseDiv.textContent = `❌ Error: ${err.message}`;
-        showErrorMessage(`❌ Error: ${err.message}`);
+        showErrorMessage(`Error: ${err.message}`);
       }
     };
 
@@ -261,7 +261,7 @@ import {
 
       if (!testCases || !variations || testCases < 1 || variations < 1) {
         showErrorMessage(
-          "⚠️ Please enter valid numbers for test cases and variations."
+          "Please enter valid numbers for test cases and variations."
         );
         return;
       }
@@ -295,14 +295,14 @@ import {
         // Close modal immediately after clicking Generate
         closeModal("bulk-testcase-gen-modal");
       } catch (err) {
-        showErrorMessage(`❌ Error: ${err.message}`);
+        showErrorMessage(`Error: ${err.message}`);
       }
     };
     Admin.generateBulkTestCases = generateBulkTestCases;
 
     const openTestCaseModal = function () {
       if (selectedToolIds.length === 0) {
-        showErrorMessage("⚠️ Please select at least one tool.");
+        showErrorMessage("Please select at least one tool.");
         return;
       }
 

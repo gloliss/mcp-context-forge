@@ -46,7 +46,7 @@ export default {
   "Plugin Chain Post (optional, override defaults)": "Plugin Chain 后置（可选，覆盖默认值）",
   "Click to see all selected gateways": "点击查看所有已选 Gateway",
   "Selecting all gateways...": "正在选择所有 Gateway…",
-  "⏳ Refreshing...": "⏳ 刷新中…",
+  "Refreshing...": "刷新中…",
   "Status Code:": "状态码：",
   "Response Time:": "响应时间：",
   "Network response was not ok": "网络响应异常",
@@ -120,7 +120,7 @@ export default {
   "Cancel your join request?": "确定要取消加入请求吗？",
   "Approve this join request?": "确定要批准该加入请求吗？",
   "Reject this join request?": "确定要拒绝该加入请求吗？",
-  "⏳ Discovering…": "⏳ 发现中…",
+  "Discovering…": "发现中…",
   "Auto-discovered — clear the Issuer URL field to edit manually": "已自动发现 — 清空 Issuer URL 字段即可手动编辑",
   "Testing connection…": "测试连接中…"
 };

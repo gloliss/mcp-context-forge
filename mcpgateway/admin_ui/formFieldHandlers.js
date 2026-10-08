@@ -4,7 +4,7 @@
 
 import { AppState } from "./appState.js";
 import { validateInputName } from "./security.js";
-import { safeGetElement } from "./utils.js";
+import { ICONS, safeGetElement, setIconText } from "./utils.js";
 
 
 export const generateSchema = function () {
@@ -100,7 +100,7 @@ export const createParameterForm = function (parameterCount) {
   deleteBtn.className =
   "delete-param text-red-600 hover:text-red-800 focus:outline-none text-xl";
   deleteBtn.title = "Delete Parameter";
-  deleteBtn.textContent = "×";
+  setIconText(deleteBtn, ICONS.xmark);
 
   header.appendChild(title);
   header.appendChild(deleteBtn);
@@ -542,7 +542,8 @@ export const selectTeamFromSelector = function (button) {
   if (selectorContainer && selectorContainer.__x) {
     const alpineData = selectorContainer.__x.$data;
     alpineData.selectedTeam = teamId;
-    alpineData.selectedTeamName = (isPersonal ? "👤 " : "🏢 ") + teamName;
+    alpineData.selectedTeamName = teamName;
+    alpineData.selectedTeamIsPersonal = isPersonal;
     alpineData.open = false;
   }
 

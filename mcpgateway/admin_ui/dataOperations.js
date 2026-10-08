@@ -667,7 +667,7 @@ const showGrpcSyncPreview = async (box) => {
       )
       .join("");
     const warning = preview.warning
-      ? `<p class="text-amber-700 dark:text-amber-400 mt-1">⚠️ ${escapeHtml(preview.warning)}</p>`
+      ? `<p class="text-amber-700 dark:text-amber-400 mt-1"><i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>${escapeHtml(preview.warning)}</p>`
       : "";
     body.innerHTML = `<div class="space-y-2">${rendered}${warning}</div>`;
   } catch (error) {
@@ -1008,7 +1008,7 @@ const showHttpSyncPreview = async (box) => {
       )
       .join("");
     const warning = preview.warning
-      ? `<p class="text-amber-700 dark:text-amber-400 mt-1">⚠️ ${escapeHtml(preview.warning)}</p>`
+      ? `<p class="text-amber-700 dark:text-amber-400 mt-1"><i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>${escapeHtml(preview.warning)}</p>`
       : "";
     body.innerHTML = `<div class="space-y-2">${rendered}${warning}</div>`;
   } catch (error) {

@@ -30,7 +30,8 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
     return { valid: true, value: name.trim() };
   }),
 }));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
 
@@ -288,7 +289,7 @@ describe("createParameterForm", () => {
     const form = createParameterForm(1);
     const deleteBtn = form.querySelector(".delete-param");
     expect(deleteBtn).not.toBeNull();
-    expect(deleteBtn.textContent).toBe("×");
+    expect(deleteBtn.querySelector("i").className).toBe("fa-solid fa-xmark");
   });
 
   test("includes all type options", () => {
@@ -979,11 +980,12 @@ describe("selectTeamFromSelector", () => {
     selectTeamFromSelector(btn);
 
     expect(alpineData.selectedTeam).toBe("t2");
-    expect(alpineData.selectedTeamName).toBe("🏢 Squad");
+    expect(alpineData.selectedTeamName).toBe("Squad");
+    expect(alpineData.selectedTeamIsPersonal).toBe(false);
     expect(alpineData.open).toBe(false);
   });
 
-  test("sets personal team name with 👤 prefix", () => {
+  test("records that the selected team is personal", () => {
     const container = document.createElement("div");
     container.setAttribute("x-data", "");
     const alpineData = { selectedTeam: null, selectedTeamName: null, open: true };
@@ -995,7 +997,8 @@ describe("selectTeamFromSelector", () => {
 
     selectTeamFromSelector(btn);
 
-    expect(alpineData.selectedTeamName).toBe("👤 John");
+    expect(alpineData.selectedTeamName).toBe("John");
+    expect(alpineData.selectedTeamIsPersonal).toBe(true);
   });
 
   test("does not throw when no Alpine.js __x present", () => {

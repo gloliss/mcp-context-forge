@@ -74,7 +74,8 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   validatePassthroughHeader: vi.fn(() => ({ valid: true })),
   validateUrl: vi.fn(() => ({ valid: true })),
 }));
-vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils", async (importOriginal) => ({
+  ...(await importOriginal()),
   decodeHtml: vi.fn((s) => s || ""),
   fetchWithTimeout: vi.fn(),
   getCurrentTeamId: vi.fn(() => null),

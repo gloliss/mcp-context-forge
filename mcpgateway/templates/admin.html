@@ -708,6 +708,12 @@
                   aria-haspopup="true"
                   class="inline-flex justify-center items-center px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
+                  <i
+                    class="fa-solid mr-2"
+                    :class="selectedTeamIsPersonal ? 'fa-user' : 'fa-building'"
+                    x-show="selectedTeamName !== 'All Teams'"
+                    aria-hidden="true"
+                  ></i>
                   <span x-text="selectedTeamName" class="mr-2">All Teams</span>
                   <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
@@ -12486,7 +12492,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   data-action-click="generateAndShowConfig" data-arg0="stdio"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <span class="text-2xl mr-3">▶️</span>
+                  <span class="text-2xl mr-3"><i class="fa-solid fa-terminal" aria-hidden="true"></i></span>
                   <div>
                     <div class="font-medium text-gray-900 dark:text-gray-100">
                       Stdio (Claude Desktop, CLI)
@@ -12755,7 +12761,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const messagesDiv = document.getElementById('user-creation-messages');
             if (event.detail.successful) {
               this.reset();
-              messagesDiv.innerHTML = '<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200">✅ User created successfully!</div>';
+              messagesDiv.innerHTML = '<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200"><i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>User created successfully!</div>';
               setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
             } else {
               // Extract error message from response body if available
@@ -12774,7 +12780,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               // Backend already escapes via html.escape(), but this prevents XSS if error flow changes
               const errorContainer = document.createElement('div');
               errorContainer.className = 'bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200';
-              errorContainer.textContent = `❌ ${errorMsg}`;
+              window.Admin.setIconText(errorContainer, 'fa-circle-xmark', errorMsg);
               messagesDiv.innerHTML = '';
               messagesDiv.appendChild(errorContainer);
               setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
@@ -12824,9 +12830,9 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         if (error || success) {
           let messageHtml = '';
           if (error) {
-            messageHtml = `<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ ${decodeURIComponent(error)}</div>`;
+            messageHtml = `<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200"><i class="fa-solid fa-circle-xmark mr-1" aria-hidden="true"></i>${decodeURIComponent(error)}</div>`;
           } else if (success) {
-            messageHtml = `<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200">✅ ${decodeURIComponent(success)}</div>`;
+            messageHtml = `<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200"><i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>${decodeURIComponent(success)}</div>`;
           }
 
           notificationDiv.innerHTML = messageHtml;
@@ -13632,8 +13638,11 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
             // Validate structure with helpful messages
             if (!Array.isArray(jsonData)) {
-              statusElement.textContent =
-                "✗ JSON must be an array of tool objects [{}], not a single object {}";
+              window.Admin.setIconText(
+                statusElement,
+                'fa-xmark',
+                "JSON must be an array of tool objects [{}], not a single object {}"
+              );
               statusElement.className =
                 "text-sm text-red-600 dark:text-red-400";
               document.getElementById("import-preview").classList.add("hidden");
@@ -13643,8 +13652,11 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             }
 
             if (jsonData.length === 0) {
-              statusElement.textContent =
-                "✗ Array cannot be empty - add at least one tool";
+              window.Admin.setIconText(
+                statusElement,
+                'fa-xmark',
+                "Array cannot be empty - add at least one tool"
+              );
               statusElement.className =
                 "text-sm text-red-600 dark:text-red-400";
               document.getElementById("import-preview").classList.add("hidden");
@@ -13658,11 +13670,19 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const toolsWithNames = jsonData.filter((tool) => tool && tool.name);
 
             if (toolsWithNames.length === toolCount) {
-              statusElement.textContent = `✓ Valid JSON array with ${toolCount} tool(s) - names will be auto-fixed for compatibility`;
+              window.Admin.setIconText(
+                statusElement,
+                'fa-check',
+                `Valid JSON array with ${toolCount} tool(s) - names will be auto-fixed for compatibility`
+              );
               statusElement.className =
                 "text-sm text-green-600 dark:text-green-400";
             } else {
-              statusElement.textContent = `⚠ Valid JSON but ${toolCount - toolsWithNames.length} tool(s) missing required name field`;
+              window.Admin.setIconText(
+                statusElement,
+                'fa-triangle-exclamation',
+                `Valid JSON but ${toolCount - toolsWithNames.length} tool(s) missing required name field`
+              );
               statusElement.className =
                 "text-sm text-yellow-600 dark:text-yellow-400";
             }
@@ -13673,7 +13693,11 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             if (error.message.includes("Unexpected")) {
               helpText = " (Check for missing commas, quotes, or brackets)";
             }
-            statusElement.textContent = `✗ Invalid JSON: ${error.message}${helpText}`;
+            window.Admin.setIconText(
+              statusElement,
+              'fa-xmark',
+              `Invalid JSON: ${error.message}${helpText}`
+            );
             statusElement.className = "text-sm text-red-600 dark:text-red-400";
             document.getElementById("import-preview").classList.add("hidden");
             document.getElementById("import-submit-btn").disabled = true;
@@ -14011,7 +14035,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         ? `
                       <details class="mt-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
                         <summary class="cursor-pointer font-medium text-red-800 dark:text-red-200 hover:text-red-600 dark:hover:text-red-300">
-                          📋 View Failed Tools (${result.errors.length})
+                          <i class="fa-solid fa-clipboard-list mr-1" aria-hidden="true"></i>View Failed Tools (${result.errors.length})
                         </summary>
                         <div class="mt-3 max-h-64 overflow-y-auto">
                           <div class="space-y-2">
@@ -14023,7 +14047,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                                     <div class="font-medium text-red-800 dark:text-red-200">
                                       ${index + 1}. ${escapeHtml(error.name || error.tool_name || "Unnamed Tool")}
                                     </div>
-                                    <span class="text-red-600 dark:text-red-400 text-xs">❌</span>
+                                    <span class="text-red-600 dark:text-red-400 text-xs"><i class="fa-solid fa-circle-xmark" aria-hidden="true"></i></span>
                                   </div>
                                   <div class="mt-1 text-red-700 dark:text-red-300">
                                     <strong>Error:</strong> ${escapeHtml(error.error?.message || error.message || "Unknown error")}
@@ -14204,10 +14228,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           try {
             const data = JSON.parse(textarea.value);
             status.innerHTML =
-              '<span class="text-green-600">✓ Valid JSON</span>';
+              '<span class="text-green-600"><i class="fa-solid fa-check mr-1" aria-hidden="true"></i>Valid JSON</span>';
             validateDropdownData(data);
           } catch (error) {
-            status.innerHTML = `<span class="text-red-600">✗ Invalid JSON: ${escapeHtml(error.message)}</span>`;
+            status.innerHTML = `<span class="text-red-600"><i class="fa-solid fa-xmark mr-1" aria-hidden="true"></i>Invalid JSON: ${escapeHtml(error.message)}</span>`;
             document.getElementById("dropdown-import-btn").disabled = true;
             document.getElementById("dropdown-preview").classList.add("hidden");
           }
@@ -14277,7 +14301,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               Discard
             </button>
             <button data-action-click="executeBulkImportAndReload" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
-              🔄 Execute Import
+              <i class="fa-solid fa-rotate mr-1" aria-hidden="true"></i>Execute Import
             </button>
           </div>`;
 
@@ -14357,9 +14381,9 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               // Show statistics
               showDropdownResults(totalTools, successCount, failedCount);
 
-              let statusMessage = `✅ Import completed: ${successCount}/${totalTools} tools imported successfully`;
+              let statusMessage = `Import completed: ${successCount}/${totalTools} tools imported successfully`;
               if (failedCount > 0) {
-                statusMessage = `⚠️ Partial success: ${successCount}/${totalTools} tools imported, ${failedCount} failed`;
+                statusMessage = `Partial success: ${successCount}/${totalTools} tools imported, ${failedCount} failed`;
               }
 
               showDropdownStatus("success", statusMessage);
@@ -14374,11 +14398,11 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             } else {
               showDropdownStatus(
                 "error",
-                `❌ Import failed: ${result.detail || result.message || "Unknown error"}`,
+                `Import failed: ${result.detail || result.message || "Unknown error"}`,
               );
             }
           } catch (error) {
-            showDropdownStatus("error", `❌ Network error: ${error.message}`);
+            showDropdownStatus("error", `Network error: ${error.message}`);
           } finally {
             importBtn.disabled = false;
             importBtn.textContent = "Import Tools";
@@ -15649,7 +15673,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
 
         btn.disabled    = true;
-        btn.textContent = '⏳ Discovering…';
+        window.Admin.setIconText(btn, 'fa-spinner', 'Discovering…', 'fa-spin');
         _oauthDiscoverStatus(statusEl, 'info', 'Contacting issuer metadata endpoint…');
 
         try {
@@ -15699,14 +15723,14 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             : '<span class="ml-2 inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 rounded">No DCR</span>';
 
           _oauthDiscoverStatus(statusEl, 'success',
-            `✅ Discovered ${populated} endpoint${populated !== 1 ? 's' : ''} from ` +
+            `<i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>Discovered ${populated} endpoint${populated !== 1 ? 's' : ''} from ` +
             `<code class="font-mono text-xs">${_escHtml(issuer)}</code>${dcrBadge}`);
 
         } catch (err) {
           _oauthDiscoverStatus(statusEl, 'error', `Network error: ${_escHtml(err.message)}`);
         } finally {
           btn.disabled    = false;
-          btn.textContent = '🔍 Discover';
+          window.Admin.setIconText(btn, 'fa-magnifying-glass', 'Discover');
         }
       }
 

@@ -37,7 +37,8 @@ vi.mock("../../../mcpgateway/admin_ui/teams.js", () => ({
   applyVisibilityRestrictions: vi.fn(),
   isTeamScopedView: vi.fn(() => false),
 }));
-vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils", async (importOriginal) => ({
+  ...(await importOriginal()),
   decodeHtml: vi.fn((s) => s || ""),
   fetchWithTimeout: vi.fn(),
   getCurrentTeamId: vi.fn(() => null),

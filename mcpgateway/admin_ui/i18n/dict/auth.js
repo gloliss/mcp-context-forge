@@ -87,7 +87,7 @@ export default {
   "If the link does not work, use this invitation token:": "如果链接无法打开，请使用以下邀请令牌：",
   "Disabled": "已禁用",
   "Stored secrets cannot be revealed. Enter a new value to replace.": "已存储的密钥无法查看。请输入新值以替换。",
-  "⏳ Fetching...": "⏳ 获取中…",
+  "Fetching...": "获取中…",
   "Tools Fetched": "已获取 Tool",
   "Retry": "重试",
   "Changing Password...": "正在修改密码…",

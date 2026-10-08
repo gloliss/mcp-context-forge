@@ -51,7 +51,8 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/tools", () => ({
   initToolSelect: vi.fn(),
 }));
-vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils", async (importOriginal) => ({
+  ...(await importOriginal()),
   buildTableUrl: vi.fn((table, baseUrl, params) => {
     const url = new URL(baseUrl, "http://localhost");
     Object.entries(params).forEach(([key, value]) => {
@@ -1631,7 +1632,10 @@ describe("refreshGatewayTools", () => {
     const promise = refreshGatewayTools("gw-1", "GW", button);
 
     expect(button.disabled).toBe(true);
-    expect(button.textContent).toBe("⏳ Refreshing...");
+    expect(button.textContent).toBe("Refreshing...");
+    expect(button.querySelector("i").className).toBe(
+      "fa-solid fa-spinner fa-spin mr-1"
+    );
 
     await promise;
 
@@ -2046,7 +2050,10 @@ describe("refreshToolsForSelectedGateways", () => {
 
     // Button should be disabled during operation
     expect(button.disabled).toBe(true);
-    expect(button.textContent).toBe("⏳ Refreshing...");
+    expect(button.textContent).toBe("Refreshing...");
+    expect(button.querySelector("i").className).toBe(
+      "fa-solid fa-spinner fa-spin mr-1"
+    );
 
     await promise;
 

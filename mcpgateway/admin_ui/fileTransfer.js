@@ -3,7 +3,7 @@ import { escapeHtml } from "./security.js";
 import { displayImportPreview } from "./selectiveImport.js";
 import { getAuthToken } from "./tokens.js";
 import { loadTools } from "./tools.js";
-import { showNotification, safeGetElement } from "./utils.js";
+import { ICONS, safeGetElement, showNotification } from "./utils.js";
 
 // ===================================================================
 // EXPORT/IMPORT FUNCTIONALITY
@@ -59,10 +59,10 @@ export const handleExportAll = async function () {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
 
-    showNotification("✅ Export completed successfully!", "success");
+    showNotification("Export completed successfully!", "success");
   } catch (error) {
     console.error("Export error:", error);
-    showNotification(`❌ Export failed: ${error.message}`, "error");
+    showNotification(`Export failed: ${error.message}`, "error");
   } finally {
     showExportProgress(false);
   }
@@ -81,7 +81,7 @@ export const handleExportSelected = async function () {
     await handleExportAll(); // Simplified implementation
   } catch (error) {
     console.error("Selective export error:", error);
-    showNotification(`❌ Selective export failed: ${error.message}`, "error");
+    showNotification(`Selective export failed: ${error.message}`, "error");
   } finally {
     showExportProgress(false);
   }
@@ -204,7 +204,7 @@ export const processImportJSONFile = function (file) {
   console.log("📁 Processing import file:", file.name);
 
   if (!file.type.includes("json")) {
-    showNotification("❌ Please select a JSON file", "error");
+    showNotification("Please select a JSON file", "error");
     return;
   }
 
@@ -238,10 +238,10 @@ export const processImportJSONFile = function (file) {
       // Update drop zone to show file loaded
       updateDropZoneStatus(file.name, importData);
 
-      showNotification(`✅ Import file loaded: ${file.name}`, "success");
+      showNotification(`Import file loaded: ${file.name}`, "success");
     } catch (error) {
       console.error("File processing error:", error);
-      showNotification(`❌ Invalid JSON file: ${error.message}`, "error");
+      showNotification(`Invalid JSON file: ${error.message}`, "error");
     }
   };
 
@@ -266,7 +266,7 @@ export const updateDropZoneStatus = function (fileName, importData) {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                     </svg>
                     <div class="text-sm text-gray-900 dark:text-white font-medium">
-                        📁 ${escapeHtml(fileName)}
+                        <i class="fa-solid fa-file-import mr-1" aria-hidden="true"></i>${escapeHtml(fileName)}
                     </div>
                     <div class="text-xs text-gray-500 dark:text-gray-400">
                         ${totalEntities} entities • Version ${escapeHtml(importData.version || "unknown")}
@@ -333,7 +333,7 @@ export const previewImport = async function () {
   console.log("🔍 Generating import preview...");
 
   if (!window.currentImportData) {
-    showNotification("❌ Please select an import file first", "error");
+    showNotification("Please select an import file first", "error");
     return;
   }
 
@@ -359,10 +359,10 @@ export const previewImport = async function () {
     const result = await response.json();
     displayImportPreview(result.preview);
 
-    showNotification("✅ Import preview generated successfully", "success");
+    showNotification("Import preview generated successfully", "success");
   } catch (error) {
     console.error("Import preview error:", error);
-    showNotification(`❌ Preview failed: ${error.message}`, "error");
+    showNotification(`Preview failed: ${error.message}`, "error");
   } finally {
     showImportProgress(false);
   }
@@ -375,7 +375,7 @@ export const handleImport = async function (dryRun = false) {
   console.log(`🔄 Starting import (dry_run=${dryRun})`);
 
   if (!window.currentImportData) {
-    showNotification("❌ Please select an import file first", "error");
+    showNotification("Please select an import file first", "error");
     return;
   }
 
@@ -418,7 +418,7 @@ export const handleImport = async function (dryRun = false) {
     }
   } catch (error) {
     console.error("Import error:", error);
-    showNotification(`❌ Import failed: ${error.message}`, "error");
+    showNotification(`Import failed: ${error.message}`, "error");
   } finally {
     showImportProgress(false);
   }
@@ -443,7 +443,7 @@ export const displayImportResults = function (result, isDryRun) {
 
   const action = isDryRun ? "validation" : "import";
   const statusText = result.status || "completed";
-  showNotification(`✅ ${action} ${statusText}!`, "success");
+  showNotification(`${action} ${statusText}!`, "success");
 };
 
 /**
@@ -489,7 +489,7 @@ const displayImportMessages = function (errors, warnings, isDryRun) {
     errorDiv.className =
       "bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-300 px-4 py-3 rounded";
     errorDiv.innerHTML = `
-                <div class="font-bold">❌ Errors (${errors.length})</div>
+                <div class="font-bold"><i class="fa-solid fa-circle-xmark mr-1" aria-hidden="true"></i>Errors (${errors.length})</div>
                 <ul class="mt-2 text-sm list-disc list-inside">
                     ${errors
     .slice(0, 5)
@@ -506,9 +506,10 @@ const displayImportMessages = function (errors, warnings, isDryRun) {
     const warningDiv = document.createElement("div");
     warningDiv.className =
       "bg-yellow-100 dark:bg-yellow-900 border border-yellow-400 dark:border-yellow-600 text-yellow-700 dark:text-yellow-300 px-4 py-3 rounded";
-    const warningTitle = isDryRun ? "🔍 Would Import" : "⚠️ Warnings";
+    const warningTitle = isDryRun ? "Would Import" : "Warnings";
+    const warningIcon = isDryRun ? ICONS.search : ICONS.warning;
     warningDiv.innerHTML = `
-                <div class="font-bold">${warningTitle} (${warnings.length})</div>
+                <div class="font-bold"><i class="fa-solid ${warningIcon} mr-1" aria-hidden="true"></i>${warningTitle} (${warnings.length})</div>
                 <ul class="mt-2 text-sm list-disc list-inside">
                     ${warnings
     .slice(0, 5)

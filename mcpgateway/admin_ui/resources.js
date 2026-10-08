@@ -4,6 +4,7 @@ import { validateInputName } from "./security.js";
 import { getEditSelections } from "./servers.js";
 import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
 import {
+  createIcon,
   decodeHtml,
   fetchWithTimeout,
   getCurrentTeamId,
@@ -157,8 +158,8 @@ export const runResourceTest = async function () {
 
   // Arrow icon
   const toggleIcon = document.createElement("span");
-  toggleIcon.innerHTML = "▶";
   toggleIcon.className = "transform transition-transform text-xs";
+  toggleIcon.appendChild(createIcon("fa-caret-right"));
   headerRight.appendChild(toggleIcon);
 
   // Copy button

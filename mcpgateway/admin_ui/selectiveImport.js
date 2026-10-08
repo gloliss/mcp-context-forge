@@ -32,7 +32,7 @@ export const displayImportPreview = function (preview) {
 
   previewContainer.innerHTML = `
             <h4 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
-                📋 Selective Import - Choose What to Import
+                <i class="fa-solid fa-clipboard-list mr-1" aria-hidden="true"></i>Selective Import - Choose What to Import
             </h4>
 
             <!-- Summary -->
@@ -79,7 +79,7 @@ export const displayImportPreview = function (preview) {
     ? `
                 <div class="mb-6">
                     <h5 class="text-md font-medium text-gray-900 dark:text-white mb-3">
-                        🌐 Gateway Bundles (Gateway + Auto-discovered Items)
+                        <i class="fa-solid fa-globe mr-1" aria-hidden="true"></i>Gateway Bundles (Gateway + Auto-discovered Items)
                     </h5>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         ${Object.entries(preview.bundles)
@@ -131,7 +131,7 @@ export const displayImportPreview = function (preview) {
         ? `
                     <div class="mb-6">
                         <h5 class="text-md font-medium text-gray-900 dark:text-white mb-3 capitalize">
-                            🛠️ Custom ${entityType}
+                            <i class="fa-solid fa-wrench mr-1" aria-hidden="true"></i>Custom ${entityType}
                         </h5>
                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                             ${customItems
@@ -149,7 +149,7 @@ export const displayImportPreview = function (preview) {
                                                 ${item.name}
                                                 ${
   item.conflicts_with
-    ? '<span class="text-orange-600 text-xs ml-1">⚠️ Conflict</span>'
+    ? '<span class="text-orange-600 text-xs ml-1"><i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>Conflict</span>'
     : ""
 }
                                             </div>
@@ -200,17 +200,17 @@ export const displayImportPreview = function (preview) {
             <div class="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
                 <button data-action="reset-selection"
                         class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
-                    🔄 Reset Selection
+                    <i class="fa-solid fa-rotate mr-1" aria-hidden="true"></i>Reset Selection
                 </button>
 
                 <div class="space-x-3">
                     <button data-action="preview-selected"
                             class="px-4 py-2 text-sm font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-800 rounded-md hover:bg-blue-100 dark:hover:bg-blue-800">
-                        🧪 Preview Selected
+                        <i class="fa-solid fa-flask mr-1" aria-hidden="true"></i>Preview Selected
                     </button>
                     <button data-action="import-selected"
                             class="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700">
-                        ✅ Import Selected Items
+                        <i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>Import Selected Items
                     </button>
                 </div>
             </div>
@@ -252,7 +252,7 @@ export const handleSelectiveImport = async function (dryRun = false) {
   console.log(`🎯 Starting selective import (dry_run=${dryRun})`);
 
   if (!window.Admin.currentImportData) {
-    showNotification("❌ Please select an import file first", "error");
+    showNotification("Please select an import file first", "error");
     return;
   }
 
@@ -264,7 +264,7 @@ export const handleSelectiveImport = async function (dryRun = false) {
 
     if (Object.keys(selectedEntities).length === 0) {
       showNotification(
-        "❌ Please select at least one item to import",
+        "Please select at least one item to import",
         "warning"
       );
       showImportProgress(false);
@@ -307,15 +307,15 @@ export const handleSelectiveImport = async function (dryRun = false) {
     if (!dryRun) {
       refreshCurrentTabData();
       showNotification(
-        "✅ Selective import completed successfully",
+        "Selective import completed successfully",
         "success"
       );
     } else {
-      showNotification("✅ Import preview completed", "success");
+      showNotification("Import preview completed", "success");
     }
   } catch (error) {
     console.error("Selective import error:", error);
-    showNotification(`❌ Import failed: ${error.message}`, "error");
+    showNotification(`Import failed: ${error.message}`, "error");
   } finally {
     showImportProgress(false);
   }

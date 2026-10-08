@@ -80,27 +80,30 @@ describe("init — team_id present in URL", () => {
     component.init();
 
     expect(component.selectedTeam).toBe("t1");
-    expect(component.selectedTeamName).toBe("🏢 Alpha");
+    expect(component.selectedTeamName).toBe("Alpha");
+    expect(component.selectedTeamIsPersonal).toBe(false);
   });
 
-  test("prefixes personal team name with person emoji", () => {
+  test("marks a personal team as personal", () => {
     window.location.search = "?team_id=t2";
     window.USER_TEAMS_DATA = [{ id: "t2", name: "My Team", is_personal: true }];
 
     const component = teamSelector();
     component.init();
 
-    expect(component.selectedTeamName).toBe("👤 My Team");
+    expect(component.selectedTeamName).toBe("My Team");
+    expect(component.selectedTeamIsPersonal).toBe(true);
   });
 
-  test("prefixes non-personal team name with building emoji", () => {
+  test("marks a non-personal team as not personal", () => {
     window.location.search = "?team_id=t3";
     window.USER_TEAMS_DATA = [{ id: "t3", name: "Corp", is_personal: false }];
 
     const component = teamSelector();
     component.init();
 
-    expect(component.selectedTeamName).toBe("🏢 Corp");
+    expect(component.selectedTeamName).toBe("Corp");
+    expect(component.selectedTeamIsPersonal).toBe(false);
   });
 
   test("falls back to USER_TEAMS when USER_TEAMS_DATA is empty", () => {
@@ -112,7 +115,8 @@ describe("init — team_id present in URL", () => {
     component.init();
 
     expect(component.selectedTeam).toBe("t3");
-    expect(component.selectedTeamName).toBe("🏢 Beta");
+    expect(component.selectedTeamName).toBe("Beta");
+    expect(component.selectedTeamIsPersonal).toBe(false);
   });
 
   test("falls back to USER_TEAMS when USER_TEAMS_DATA is not an array", () => {
@@ -218,9 +222,11 @@ describe("selectAllTeams", () => {
 
   test("resets selectedTeamName to 'All Teams'", () => {
     const component = teamSelector();
-    component.selectedTeamName = "🏢 Alpha";
+    component.selectedTeamName = "Alpha";
+    component.selectedTeamIsPersonal = true;
     component.selectAllTeams();
     expect(component.selectedTeamName).toBe("All Teams");
+    expect(component.selectedTeamIsPersonal).toBe(false);
   });
 
   test("closes the dropdown", () => {

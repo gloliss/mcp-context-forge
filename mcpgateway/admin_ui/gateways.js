@@ -21,10 +21,12 @@ import {
   decodeHtml,
   fetchWithTimeout,
   getCurrentTeamId,
+  ICONS,
   handleFetchError,
   isInactiveChecked,
   makeCopyIdButton,
   safeGetElement,
+  setIconText,
   showErrorMessage,
   showNotification,
   showSuccessMessage,
@@ -1810,7 +1812,7 @@ export const refreshGatewayTools = async function (gatewayId, gatewayName, butto
   const origText = buttonEl ? buttonEl.textContent : "";
   if (buttonEl) {
     buttonEl.disabled = true;
-    buttonEl.textContent = "⏳ Refreshing...";
+    setIconText(buttonEl, ICONS.spinner, "Refreshing...", "fa-spin");
   }
 
   try {
@@ -1896,7 +1898,7 @@ export const refreshToolsForSelectedGateways = async function(buttonEl) {
 
   const origText = buttonEl.textContent;
   buttonEl.disabled = true;
-  buttonEl.textContent = "⏳ Refreshing...";
+  setIconText(buttonEl, ICONS.spinner, "Refreshing...", "fa-spin");
 
   let added = 0;
   let updated = 0;

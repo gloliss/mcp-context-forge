@@ -3,11 +3,13 @@ export function teamSelector() {
     open: false,
     selectedTeam: '',
     selectedTeamName: 'All Teams',
+    selectedTeamIsPersonal: false,
     init: function () {
       const urlParams = new URLSearchParams(window.location.search);
       const requestedTeamId = urlParams.get('team_id') || '';
       this.selectedTeam = '';
       this.selectedTeamName = 'All Teams';
+      this.selectedTeamIsPersonal = false;
       if (requestedTeamId) {
         const teams =
           Array.isArray(window.USER_TEAMS_DATA) && window.USER_TEAMS_DATA.length > 0
@@ -20,7 +22,8 @@ export function teamSelector() {
         });
         if (team) {
           this.selectedTeam = requestedTeamId;
-          this.selectedTeamName = (team.is_personal ? '👤 ' : '🏢 ') + team.name;
+          this.selectedTeamName = team.name;
+          this.selectedTeamIsPersonal = !!team.is_personal;
         } else if (teams.length > 0) {
           // Cache is frozen at page load — verify with the server before
           // stripping a team_id that may be newer than the cache.
@@ -46,6 +49,7 @@ export function teamSelector() {
     selectAllTeams: function () {
       this.selectedTeam = '';
       this.selectedTeamName = 'All Teams';
+      this.selectedTeamIsPersonal = false;
       this.open = false;
       this.updateTeamContext('');
     },

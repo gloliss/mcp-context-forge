@@ -73,7 +73,8 @@ vi.mock("../../../mcpgateway/admin_ui/users.js", () => ({
   performUserSearch: vi.fn(),
 }));
 
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   fetchWithTimeout: vi.fn(),
   showErrorMessage: vi.fn(),
@@ -174,11 +175,17 @@ describe("validatePasswordRequirements", () => {
 
     validatePasswordRequirements();
 
-    expect(reqLength.querySelector("span").textContent).toBe("✓");
-    expect(reqUppercase.querySelector("span").textContent).toBe("✓");
-    expect(reqLowercase.querySelector("span").textContent).toBe("✓");
-    expect(reqNumbers.querySelector("span").textContent).toBe("✓");
-    expect(reqSpecial.querySelector("span").textContent).toBe("✓");
+    for (const id of [
+      "edit-req-length",
+      "edit-req-uppercase",
+      "edit-req-lowercase",
+      "edit-req-numbers",
+      "edit-req-special",
+    ]) {
+      expect(
+        document.getElementById(id).querySelector("i").className
+      ).toContain("fa-check");
+    }
     expect(submitButton.disabled).toBe(false);
   });
 

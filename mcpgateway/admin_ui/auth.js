@@ -2,9 +2,11 @@ import { MASKED_AUTH_VALUE } from "./constants.js";
 import { getAuthToken } from "./tokens.js";
 import {
   getCookie,
+  ICONS,
   safeGetElement,
-  showSuccessMessage,
+  setIconText,
   showErrorMessage,
+  showSuccessMessage,
 } from "./utils.js";
 
 // ===================================================================
@@ -404,7 +406,7 @@ export async function fetchToolsForGateway(gatewayId, gatewayName) {
 
   // Disable button and show loading state
   button.disabled = true;
-  button.textContent = "⏳ Fetching...";
+  setIconText(button, ICONS.spinner, "Fetching...", "fa-spin");
   button.className =
     "inline-block bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm mr-2";
 
@@ -419,7 +421,7 @@ export async function fetchToolsForGateway(gatewayId, gatewayName) {
 
     if (response.ok) {
       // Success
-      button.textContent = "✅ Tools Fetched";
+      setIconText(button, ICONS.success, "Tools Fetched");
       button.className =
         "inline-block bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm mr-2";
 
@@ -439,7 +441,7 @@ export async function fetchToolsForGateway(gatewayId, gatewayName) {
     console.error("Failed to fetch tools:", error);
 
     // Show error state
-    button.textContent = "❌ Retry";
+    setIconText(button, ICONS.error, "Retry");
     button.className =
       "inline-block bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm mr-2";
     button.disabled = false;

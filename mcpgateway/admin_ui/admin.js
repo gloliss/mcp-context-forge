@@ -54,12 +54,15 @@ const Admin = window.Admin;
 import {
   buildTableUrl,
   copyToClipboard,
+  ICONS,
+  createIcon,
   getPaginationParams,
   handleDeleteUserError,
   handleKeydown,
   isInactiveChecked,
   refreshLogs,
   safeGetElement,
+  setIconText,
   showErrorMessage,
   showNotification,
   showSuccessMessage,
@@ -68,12 +71,15 @@ import {
 
 Admin.buildTableUrl = buildTableUrl;
 Admin.copyToClipboard = copyToClipboard;
+Admin.ICONS = ICONS;
+Admin.createIcon = createIcon;
 Admin.getPaginationParams = getPaginationParams;
 Admin.isInactiveChecked = isInactiveChecked;
 Admin.handleDeleteUserError = handleDeleteUserError;
 Admin.handleKeydown = handleKeydown;
 Admin.refreshLogs = refreshLogs;
 Admin.safeGetElement = safeGetElement;
+Admin.setIconText = setIconText;
 Admin.showErrorMessage = showErrorMessage;
 Admin.showNotification = showNotification;
 Admin.showSuccessMessage = showSuccessMessage;

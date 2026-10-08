@@ -24,7 +24,8 @@ import { showErrorMessage, showSuccessMessage } from "../../../mcpgateway/admin_
 vi.mock("../../../mcpgateway/admin_ui/constants.js", () => ({
   MASKED_AUTH_VALUE: "*****",
 }));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showSuccessMessage: vi.fn(),
   showErrorMessage: vi.fn(),

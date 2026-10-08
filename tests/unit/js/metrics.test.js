@@ -33,7 +33,8 @@ import {
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
 }));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   fetchWithTimeout: vi.fn(),
   handleFetchError: vi.fn((e) => e.message),
   safeGetElement: vi.fn((id, silent) => document.getElementById(id)),

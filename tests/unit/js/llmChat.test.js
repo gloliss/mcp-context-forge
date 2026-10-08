@@ -38,7 +38,8 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   escapeHtmlChat: vi.fn((s) => (s != null ? String(s) : "")),
   logRestrictedContext: vi.fn(),
 }));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   fetchWithTimeout: vi.fn(),
   getCookie: vi.fn(() => "test-jwt"),
   getCurrentTeamId: vi.fn(() => null),

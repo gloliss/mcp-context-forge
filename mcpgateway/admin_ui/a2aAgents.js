@@ -6,10 +6,12 @@ import {
   decodeHtml,
   fetchWithTimeout,
   handleFetchError,
+  ICONS,
   isInactiveChecked,
   makeCopyIdButton,
   safeGetElement,
   safeSetValue,
+  setIconText,
   showErrorMessage,
 } from "./utils.js";
 
@@ -163,7 +165,7 @@ export const viewA2AAgent = async function (agentId) {
 
         const uaidTitle = document.createElement("strong");
         uaidTitle.className = "block mb-2 text-indigo-700 dark:text-indigo-300";
-        uaidTitle.textContent = "🆔 Universal Agent ID (UAID):";
+        setIconText(uaidTitle, ICONS.idCard, "Universal Agent ID (UAID):");
         uaidSection.appendChild(uaidTitle);
 
         const uaidFields = [
@@ -863,7 +865,9 @@ export const handleA2ATestSubmit = async function (e) {
 
     // Display result
     const isSuccess = result.success && !result.error;
-    const icon = isSuccess ? "✅" : "❌";
+    const icon = isSuccess
+      ? '<i class="fa-solid fa-circle-check mr-1" aria-hidden="true"></i>'
+      : '<i class="fa-solid fa-circle-xmark mr-1" aria-hidden="true"></i>';
     const title = isSuccess ? "Test Successful" : "Test Failed";
 
     let bodyHtml = "";
@@ -876,7 +880,7 @@ export const handleA2ATestSubmit = async function (e) {
 
     responseDiv.innerHTML = `
                   <div class="p-3 rounded ${isSuccess ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"}">
-                      <h4 class="font-bold ${isSuccess ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}">${icon} ${title}</h4>
+                      <h4 class="font-bold ${isSuccess ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}">${icon}${title}</h4>
                       ${result.error ? `<p class="text-red-600 dark:text-red-400 mt-2">Error: ${escapeHtml(result.error)}</p>` : ""}
                       ${bodyHtml}
                   </div>
@@ -884,7 +888,7 @@ export const handleA2ATestSubmit = async function (e) {
   } catch (error) {
     console.error("A2A test error:", error);
     if (responseDiv) {
-      responseDiv.innerHTML = `<div class="text-red-600 dark:text-red-400 p-4 bg-red-50 dark:bg-red-900/20 rounded">❌ Error: ${escapeHtml(error.message)}</div>`;
+      responseDiv.innerHTML = `<div class="text-red-600 dark:text-red-400 p-4 bg-red-50 dark:bg-red-900/20 rounded"><i class="fa-solid fa-circle-xmark mr-1" aria-hidden="true"></i>Error: ${escapeHtml(error.message)}</div>`;
     }
   } finally {
     if (loading) {

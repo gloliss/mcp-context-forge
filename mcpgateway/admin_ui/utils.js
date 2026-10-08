@@ -3,6 +3,103 @@
 // ===================================================================
 
 // ===================================================================
+// ICON VOCABULARY
+// ===================================================================
+// Font Awesome is bundled with the admin UI (see the CSS import in admin.js),
+// so an icon here is a class name rather than a glyph.  Keying the table by
+// meaning rather than by glyph keeps the vocabulary in one place: the same
+// warning is the same icon wherever it appears.
+
+export const ICONS = {
+  success: "fa-circle-check",
+  error: "fa-circle-xmark",
+  warning: "fa-triangle-exclamation",
+  info: "fa-circle-info",
+  check: "fa-check",
+  xmark: "fa-xmark",
+  search: "fa-magnifying-glass",
+  copy: "fa-clipboard",
+  clipboard: "fa-clipboard-list",
+  refresh: "fa-rotate",
+  lightning: "fa-bolt",
+  lock: "fa-lock",
+  shield: "fa-shield-halved",
+  download: "fa-download",
+  upload: "fa-upload",
+  lightbulb: "fa-lightbulb",
+  book: "fa-book-open",
+  chart: "fa-chart-line",
+  target: "fa-bullseye",
+  flask: "fa-flask",
+  wrench: "fa-wrench",
+  globe: "fa-globe",
+  user: "fa-user",
+  building: "fa-building",
+  idCard: "fa-id-card",
+  inbox: "fa-inbox",
+  pen: "fa-pen",
+  database: "fa-database",
+  fileImport: "fa-file-import",
+  spinner: "fa-spinner",
+  play: "fa-play",
+  first: "fa-backward-step",
+  previous: "fa-chevron-left",
+  next: "fa-chevron-right",
+  last: "fa-forward-step",
+};
+
+// Icon for each notification severity, so a toast's icon follows from its type
+// instead of being hand-typed into every message string.
+export const NOTIFICATION_ICONS = {
+  success: ICONS.success,
+  error: ICONS.error,
+  danger: ICONS.error,
+  warning: ICONS.warning,
+  info: ICONS.info,
+};
+
+/**
+ * Build an icon element.
+ *
+ * Use this wherever the surrounding code writes text with `textContent`: an
+ * `<i>` placed in a text node would be displayed literally.
+ *
+ * @param {string} name - A class name from ICONS.
+ * @param {string} extraClass - Optional extra classes (sizing, colour, spacing).
+ * @returns {HTMLElement} The icon element.
+ */
+export function createIcon(name, extraClass = "") {
+  const icon = document.createElement("i");
+  icon.className = `fa-solid ${name}${extraClass ? ` ${extraClass}` : ""}`;
+  // Decorative: the adjacent text always carries the meaning.
+  icon.setAttribute("aria-hidden", "true");
+  return icon;
+}
+
+/**
+ * Replace an element's content with an icon followed by optional text.
+ *
+ * @param {HTMLElement} element - Target element.
+ * @param {string} name - A class name from ICONS.
+ * @param {string} text - Text to place after the icon.
+ * @param {string} extraClass - Optional extra classes on the icon (e.g. `fa-spin`).
+ */
+export function setIconText(element, name, text = "", extraClass = "") {
+  if (!element) {
+    return;
+  }
+  element.textContent = "";
+  // `mr-1` rather than a text space: these call sites include flex containers,
+  // where the whitespace between two children is dropped.
+  element.appendChild(
+    createIcon(name, [extraClass, text ? "mr-1" : ""].filter(Boolean).join(" "))
+  );
+  if (text) {
+    element.appendChild(document.createTextNode(text));
+  }
+}
+
+// ===================================================================
 // MEMOIZATION UTILITY - Generic pattern for initialization functions
 // ===================================================================
 
@@ -236,6 +333,24 @@ export function handleFetchError(error, operation = "operation") {
   }
 }
 
+// Show a fixed-position toast with a severity icon.
+// Shared by the error and success helpers so both look and behave the same.
+function showFloatingMessage(message, iconName, colorClasses, timeoutMs) {
+  const container = document.createElement("div");
+  container.className = `fixed top-4 right-4 ${colorClasses} px-4 py-2 rounded shadow-lg z-50 flex items-center gap-2 animate-toast-in`;
+  container.appendChild(createIcon(iconName, "shrink-0"));
+  const text = document.createElement("span");
+  text.textContent = message;
+  container.appendChild(text);
+  document.body.appendChild(container);
+
+  setTimeout(() => {
+    if (container.parentNode) {
+      container.parentNode.removeChild(container);
+    }
+  }, timeoutMs);
+}
+
 // Show user-friendly error messages
 export function showErrorMessage(message, elementId = null) {
   console.error("Error:", message);
@@ -243,38 +358,22 @@ export function showErrorMessage(message, elementId = null) {
   if (elementId) {
     const element = safeGetElement(elementId);
     if (element) {
-      element.textContent = message;
+      setIconText(element, ICONS.warning, message);
       element.classList.add("error-message", "text-red-600", "mt-2");
     }
   } else {
-    // Show global error notification
-    const errorDiv = document.createElement("div");
-    errorDiv.className =
-      "fixed top-4 right-4 bg-red-600 text-white px-4 py-2 rounded shadow-lg z-50";
-    errorDiv.textContent = message;
-    document.body.appendChild(errorDiv);
-
-    setTimeout(() => {
-      if (errorDiv.parentNode) {
-        errorDiv.parentNode.removeChild(errorDiv);
-      }
-    }, 5000);
+    showFloatingMessage(
+      message,
+      ICONS.error,
+      "bg-red-600 text-white",
+      5000
+    );
   }
 }
 
 // Show success messages
 export function showSuccessMessage(message) {
-  const successDiv = document.createElement("div");
-  successDiv.className =
-    "fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded shadow-lg z-50";
-  successDiv.textContent = message;
-  document.body.appendChild(successDiv);
-
-  setTimeout(() => {
-    if (successDiv.parentNode) {
-      successDiv.parentNode.removeChild(successDiv);
-    }
-  }, 3000);
+  showFloatingMessage(message, ICONS.success, "bg-green-600 text-white", 3000);
 }
 
 // Show a persistent modal warning listing tools that were skipped during gateway import.
@@ -656,16 +755,24 @@ export const showToast = function (message, type = "info") {
 export const showNotification = function (message, type = "info") {
   console.log(`${type.toUpperCase()}: ${message}`);
 
-  // Create a simple toast notification
-  const toast = document.createElement("div");
-  toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-md text-sm font-medium max-w-sm ${
+  const colorClass =
     type === "success"
       ? "bg-green-100 text-green-800 border border-green-400"
-      : type === "error"
+      : type === "error" || type === "danger"
         ? "bg-red-100 text-red-800 border border-red-400"
-        : "bg-blue-100 text-blue-800 border border-blue-400"
-  }`;
-  toast.textContent = message;
+        : type === "warning"
+          ? "bg-yellow-100 text-yellow-800 border border-yellow-400"
+          : "bg-blue-100 text-blue-800 border border-blue-400";
+
+  // Create a simple toast notification
+  const toast = document.createElement("div");
+  toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-md text-sm font-medium max-w-sm flex items-start gap-2 animate-toast-in ${colorClass}`;
+  toast.appendChild(
+    createIcon(NOTIFICATION_ICONS[type] || ICONS.info, "mt-0.5 shrink-0")
+  );
+  const text = document.createElement("span");
+  text.textContent = message;
+  toast.appendChild(text);
 
   document.body.appendChild(toast);
 
@@ -820,19 +927,19 @@ export const makeCopyIdButton = function (id) {
   btn.title = "Copy ID to clipboard";
   btn.className =
     "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
-  btn.textContent = "📋 Copy";
+  setIconText(btn, ICONS.copy, "Copy");
   btn.addEventListener("click", () => {
     const idStr = String(id);
     const onSuccess = () => {
-      btn.textContent = "✅ Copied!";
+      setIconText(btn, ICONS.success, "Copied!");
       setTimeout(() => {
-        btn.textContent = "📋 Copy";
+        setIconText(btn, ICONS.copy, "Copy");
       }, 2000);
     };
     const onFailure = () => {
-      btn.textContent = "❌ Failed";
+      setIconText(btn, ICONS.error, "Failed");
       setTimeout(() => {
-        btn.textContent = "📋 Copy";
+        setIconText(btn, ICONS.copy, "Copy");
       }, 2000);
     };
     if (
