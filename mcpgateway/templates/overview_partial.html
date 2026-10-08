@@ -269,14 +269,16 @@
           <!-- Section Label -->
           <text x="450" y="345" class="fill-gray-500 dark:fill-gray-400 text-xs font-semibold" text-anchor="middle">INFRASTRUCTURE</text>
 
-          <!-- Database Status -->
-          <rect x="335" y="355" width="110" height="45" rx="6" class="{% if db_reachable %}fill-green-50 dark:fill-green-900/30 stroke-green-300 dark:stroke-green-700{% else %}fill-red-50 dark:fill-red-900/30 stroke-red-300 dark:stroke-red-700{% endif %}" stroke-width="2"/>
-          <text x="390" y="375" class="{% if db_reachable %}fill-green-700 dark:fill-green-300{% else %}fill-red-700 dark:fill-red-300{% endif %} text-xs font-semibold" text-anchor="middle">{{ db_dialect | capitalize }}</text>
-          <text x="390" y="392" class="{% if db_reachable %}fill-green-600 dark:fill-green-400{% else %}fill-red-600 dark:fill-red-400{% endif %} text-xs" text-anchor="middle">{% if db_reachable %}Connected{% else %}Disconnected{% endif %}</text>
+          <!-- Database Status. The two boxes are centred on x=450 as a unit; the
+               cache box is wider because "<type> Cache" is the longer label. -->
+          <rect x="325" y="355" width="110" height="45" rx="6" class="{% if db_reachable %}fill-green-50 dark:fill-green-900/30 stroke-green-300 dark:stroke-green-700{% else %}fill-red-50 dark:fill-red-900/30 stroke-red-300 dark:stroke-red-700{% endif %}" stroke-width="2"/>
+          <text x="380" y="375" class="{% if db_reachable %}fill-green-700 dark:fill-green-300{% else %}fill-red-700 dark:fill-red-300{% endif %} text-xs font-semibold" text-anchor="middle">{{ db_dialect | capitalize }}</text>
+          <text x="380" y="392" class="{% if db_reachable %}fill-green-600 dark:fill-green-400{% else %}fill-red-600 dark:fill-red-400{% endif %} text-xs" text-anchor="middle">{% if db_reachable %}Connected{% else %}Disconnected{% endif %}</text>
 
-          <!-- Cache Status -->
-          <rect x="455" y="355" width="110" height="45" rx="6" class="{% if cache_type == 'redis' %}{% if redis_reachable %}fill-green-50 dark:fill-green-900/30 stroke-green-300 dark:stroke-green-700{% else %}fill-red-50 dark:fill-red-900/30 stroke-red-300 dark:stroke-red-700{% endif %}{% else %}fill-gray-50 dark:fill-gray-700 stroke-gray-300 dark:stroke-gray-600{% endif %}" stroke-width="2"/>
-          <text x="510" y="375" class="{% if cache_type == 'redis' %}{% if redis_reachable %}fill-green-700 dark:fill-green-300{% else %}fill-red-700 dark:fill-red-300{% endif %}{% else %}fill-gray-700 dark:fill-gray-300{% endif %} text-xs font-semibold" text-anchor="middle">{{ cache_type | capitalize }}</text>
+          <!-- Cache Status. Labelled "<type> Cache" as on the version page: the raw
+               cache_type is "database", which read as a second database box here. -->
+          <rect x="445" y="355" width="130" height="45" rx="6" class="{% if cache_type == 'redis' %}{% if redis_reachable %}fill-green-50 dark:fill-green-900/30 stroke-green-300 dark:stroke-green-700{% else %}fill-red-50 dark:fill-red-900/30 stroke-red-300 dark:stroke-red-700{% endif %}{% else %}fill-gray-50 dark:fill-gray-700 stroke-gray-300 dark:stroke-gray-600{% endif %}" stroke-width="2"/>
+          <text x="510" y="375" class="{% if cache_type == 'redis' %}{% if redis_reachable %}fill-green-700 dark:fill-green-300{% else %}fill-red-700 dark:fill-red-300{% endif %}{% else %}fill-gray-700 dark:fill-gray-300{% endif %} text-xs font-semibold" text-anchor="middle">{{ cache_type | capitalize }} Cache</text>
           <text x="510" y="392" class="{% if cache_type == 'redis' %}{% if redis_reachable %}fill-green-600 dark:fill-green-400{% else %}fill-red-600 dark:fill-red-400{% endif %}{% else %}fill-gray-500 dark:fill-gray-400{% endif %} text-xs" text-anchor="middle">{% if cache_type == 'redis' %}{% if redis_reachable %}Connected{% else %}Disconnected{% endif %}{% else %}In-Memory{% endif %}</text>
 
           <!-- Connection line from ContextForge to Infrastructure -->
