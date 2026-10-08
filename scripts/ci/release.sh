@@ -28,7 +28,8 @@ usage() {
 用法：
   ./scripts/ci/release.sh                构建镜像并打出完整交付包（镜像 + 源码）
   ./scripts/ci/release.sh --no-source    只打镜像（目标机走 deploy.sh）
-  ./scripts/ci/release.sh --no-image     只打源码（目标机走 deploy.sh --build）
+  ./scripts/ci/release.sh --no-image     只打源码，不在本机构建
+                                         （目标机走 deploy.sh --build 现场构建）
   ./scripts/ci/release.sh --skip-build   复用本机同名镜像，不重新构建
   ./scripts/ci/release.sh --allow-dirty  允许有未提交改动（镜像将不等于 commit）
   ./scripts/ci/release.sh --force        覆盖已存在的同名交付包
@@ -39,6 +40,10 @@ usage() {
 输出目录：${RELEASES_DIR}/<tag>/（可用 CONTEXTFORGE_RELEASES_DIR 覆盖）
 包内容：manifest.json、SHA256SUMS、image/、source/、
         deploy.sh、rollback.sh、preflight-check.sh、common.sh
+
+--no-image 产出的包不含镜像，因此不需要 docker：构建、身份校验与冒烟测试都留给
+目标机的 deploy.sh --build 去做（它会带 GIT_REVISION 构建参数并回校 revision 标签，
+接线不对同样会在那边被拦下）。
 EOF
 }
 
@@ -257,12 +262,14 @@ main() {
     (( WITH_IMAGE || WITH_SOURCE )) || die "--no-image 与 --no-source 不能同时用，那样包里没有东西可部署"
 
     require_command git
-    require_command docker
     require_command sha256sum
     require_command python3
-    require_command gzip
     require_command install
-    docker info >/dev/null 2>&1 || die "无法访问 Docker daemon"
+    if (( WITH_IMAGE )); then
+        require_command docker
+        require_command gzip
+        docker info >/dev/null 2>&1 || die "无法访问 Docker daemon"
+    fi
 
     cd "${REPO_ROOT}"
     REVISION="$(git rev-parse HEAD)"
@@ -283,9 +290,17 @@ main() {
     info "  ${SUBJECT}"
     info "交付包 ${OUT_DIR}"
 
-    build_image
-    verify_image
-    smoke_test
+    # 不打镜像包就完全不碰本地镜像：构建、身份校验、冒烟测试都是镜像的事，
+    # 留给目标机的 deploy.sh --build 去做 —— 它在那边会用同样的 GIT_REVISION
+    # 构建参数并回校 revision 标签，接线不对同样会被拦下。
+    IMAGE_ID=""
+    if (( WITH_IMAGE )); then
+        build_image
+        verify_image
+        smoke_test
+    else
+        info "只打源码包：跳过构建、身份校验与冒烟测试"
+    fi
 
     prepare_output_dir
     STAGING="${OUT_DIR}/.staging-$$"
@@ -315,18 +330,30 @@ main() {
     install_scripts
     verify_package
 
-    local size
+    local size deploy_cmd preflight_cmd
     size="$(du -sh "${OUT_DIR}" | awk '{print $1}')"
+    if (( WITH_IMAGE )); then
+        deploy_cmd="./deploy.sh"
+        preflight_cmd="./preflight-check.sh"
+    else
+        deploy_cmd="./deploy.sh --build"
+        preflight_cmd="./preflight-check.sh --build"
+    fi
+
     printf '\n交付包已就绪：%s（%s）\n' "${OUT_DIR}" "${size}"
-    printf '  镜像：%s\n' "${IMAGE_REF}"
-    printf '  镜像 ID：%s\n' "${IMAGE_ID}"
     printf '  commit：%s  %s\n' "${SHORT}" "${SUBJECT}"
-    printf '  镜像 revision 标签与 commit 一致，目标机可以据此确认部署的是哪一版。\n'
+    if (( WITH_IMAGE )); then
+        printf '  镜像：%s（%s）\n' "${IMAGE_REF}" "${IMAGE_ID}"
+        printf '  镜像 revision 标签与 commit 一致，目标机可以据此确认部署的是哪一版。\n'
+    else
+        printf '  镜像：不含。目标机现场构建 %s\n' "${IMAGE_REF}"
+        printf '  构建前提（UBI / npm / PyPI 可达）由 preflight-check.sh --build 先行确认。\n'
+    fi
     printf '\n发到目标机后：\n'
     printf '  cd %s\n' "${OUT_DIR}"
-    printf '  ./preflight-check.sh      # 先体检\n'
-    printf '  ./deploy.sh --dry-run     # 再演练（会备份、快照，但不换容器）\n'
-    printf '  ./deploy.sh               # 真正替换\n'
+    printf '  %s      # 先体检\n' "${preflight_cmd}"
+    printf '  %s --dry-run     # 再演练（会备份、快照，但不换容器）\n' "${deploy_cmd}"
+    printf '  %s               # 真正替换\n' "${deploy_cmd}"
 }
 
 main "$@"
