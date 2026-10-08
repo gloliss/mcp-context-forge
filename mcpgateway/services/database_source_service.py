@@ -227,6 +227,7 @@ class DatabaseSourceService:
         if source is None:
             raise DatabaseSourceNotFoundError(f"Database source with ID '{source_id}' not found")
 
+        previous_slug = source.slug
         new_password = data.password
         values = data.model_dump(exclude_unset=True, exclude={"password"})
 
@@ -255,6 +256,14 @@ class DatabaseSourceService:
             source.modified_by = user_email
         source.version += 1
 
+        if source.slug != previous_slug:
+            # Template tool names embed the source slug, so a rename has to move
+            # them in the same transaction; a failure here rolls the rename back
+            # rather than leaving tools orphaned under the old name.
+            from mcpgateway.services.database_tool_service import DatabaseToolService  # pylint: disable=import-outside-toplevel
+
+            DatabaseToolService.resync_source_templates(db, source, previous_slug=previous_slug)
+
         db.commit()
         db.refresh(source)
         cls._invalidate_runtime(source_id)
@@ -275,6 +284,11 @@ class DatabaseSourceService:
         source = db.get(DatabaseSource, source_id)
         if source is None:
             raise DatabaseSourceNotFoundError(f"Database source with ID '{source_id}' not found")
+        # Template rows cascade with the source, but their materialized tools do
+        # not, so the tools are retired explicitly to avoid orphans.
+        from mcpgateway.services.database_tool_service import DatabaseToolService  # pylint: disable=import-outside-toplevel
+
+        DatabaseToolService.remove_source_templates(db, source)
         db.delete(source)
         db.commit()
         cls._invalidate_runtime(source_id)

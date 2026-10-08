@@ -9165,6 +9165,111 @@ class DatabaseSourceRead(BaseModel):
     updated_at: datetime
 
 
+def _validate_parameter_schema_shape(parameter_schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Check a query template's parameter schema is a usable object schema.
+
+    The schema is what a materialized template tool exposes as its input, so a
+    malformed one would produce a tool that can never be called correctly.
+
+    Args:
+        parameter_schema: The schema document to check.
+
+    Returns:
+        Dict[str, Any]: The schema, unchanged.
+
+    Raises:
+        ValueError: If the document is not an object schema whose ``properties``
+            and optional ``required`` are shaped as expected.
+    """
+    if not parameter_schema:
+        return parameter_schema
+    if parameter_schema.get("type") not in (None, "object"):
+        raise ValueError("parameter_schema must describe an object")
+    properties = parameter_schema.get("properties") or {}
+    if not isinstance(properties, dict):
+        raise ValueError("parameter_schema.properties must be a JSON object")
+    for key, value in properties.items():
+        if not isinstance(value, dict):
+            raise ValueError(f"parameter_schema.properties['{key}'] must be a JSON schema object")
+    required = parameter_schema.get("required") or []
+    if not isinstance(required, list):
+        raise ValueError("parameter_schema.required must be an array of property names")
+    undeclared = sorted(set(required) - set(properties))
+    if undeclared:
+        raise ValueError("parameter_schema.required names undeclared propert(y/ies): " + ", ".join(undeclared))
+    return parameter_schema
+
+
+class DatabaseQueryTemplateCreate(BaseModel):
+    """Create a parameter-bound query template on a database source (Phase 2).
+
+    ``statement`` is fixed at registration time — the caller of the resulting
+    tool supplies only ``parameter_schema``'s parameters, never SQL.  Every
+    ``:name`` placeholder in the statement must be declared in
+    ``parameter_schema``; that pairing is enforced by the template service,
+    which is also where the merged state of an update is checked.
+    """
+
+    name: str = Field(..., min_length=1, max_length=255)
+    statement: str = Field(..., min_length=1)
+    parameter_schema: Dict[str, Any] = Field(default_factory=dict)
+    result_schema: Dict[str, Any] = Field(default_factory=dict)
+    max_rows: int = Field(1000, ge=1, le=100000)
+    timeout_seconds: float = Field(15.0, gt=0, le=3600)
+    enabled: bool = True
+
+    @field_validator("parameter_schema")
+    @classmethod
+    def validate_parameter_schema(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject a parameter schema that could not drive a tool input schema."""
+        return _validate_parameter_schema_shape(value)
+
+
+class DatabaseQueryTemplateUpdate(BaseModel):
+    """Update a query template; omitted fields are left untouched."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    statement: Optional[str] = Field(None, min_length=1)
+    parameter_schema: Optional[Dict[str, Any]] = None
+    result_schema: Optional[Dict[str, Any]] = None
+    max_rows: Optional[int] = Field(None, ge=1, le=100000)
+    timeout_seconds: Optional[float] = Field(None, gt=0, le=3600)
+    enabled: Optional[bool] = None
+
+    @field_validator("parameter_schema")
+    @classmethod
+    def validate_parameter_schema(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject a parameter schema that could not drive a tool input schema."""
+        return None if value is None else _validate_parameter_schema_shape(value)
+
+
+class DatabaseQueryTemplateRead(BaseModel):
+    """Query template response, naming the tool it materializes to.
+
+    ``tool_name`` is derived from the owning source's slug and the template's
+    slug, so it is only populated for an enabled template — a disabled template
+    has no tool.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_id: str
+    name: str
+    slug: str
+    statement: str
+    parameter_schema: Dict[str, Any] = Field(default_factory=dict)
+    result_schema: Dict[str, Any] = Field(default_factory=dict)
+    max_rows: int
+    timeout_seconds: float
+    enabled: bool
+    version: int
+    tool_name: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class SQLTableUpdate(BaseModel):
     """Update table assignment and per-operation exposure policy."""
 
