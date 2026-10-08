@@ -147,7 +147,7 @@ class FlameGraph {
                         <span>Error</span>
                     </div>
                     <div class="legend-item" style="font-size: 0.75rem; color: #6b7280; margin-left: 1rem;">
-                        💡 Click on any span to zoom in
+                        <i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Click on any span to zoom in
                     </div>
                 </div>
             </div>

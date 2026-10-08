@@ -232,6 +232,25 @@ function listFiles(dir, extension) {
   return found;
 }
 
+/**
+ * Vite output, rebuilt from the sources these tests already scan. Skipped so the
+ * guard does not depend on a build having run, and does not double-report.
+ */
+function isGeneratedBundle(file) {
+  return /^(?:bundle|chunk|i18n)-/.test(path.basename(file));
+}
+
+function offendersAcross(directory, extension) {
+  const offenders = [];
+  for (const file of listFiles(path.join(repoRoot, directory), extension)) {
+    if (isGeneratedBundle(file)) continue;
+    const source = fs.readFileSync(file, "utf8");
+    const text = extension === ".html" ? stripHtml(source) : source;
+    offenders.push(...offendersIn(text, path.relative(repoRoot, file)));
+  }
+  return offenders;
+}
+
 describe("Admin UI vector icon system", () => {
   test("every sidebar link has one decorative Font Awesome icon", () => {
     const sidebar = adminHtml.match(
@@ -278,20 +297,17 @@ describe("Admin UI has no emoji in rendered copy", () => {
   });
 
   test("no emoji in any admin_ui module outside comments and console output", () => {
-    const offenders = [];
-    for (const file of listFiles(
-      path.join(repoRoot, "mcpgateway/admin_ui"),
-      ".js"
-    )) {
-      offenders.push(
-        ...offendersIn(fs.readFileSync(file, "utf8"), path.relative(repoRoot, file))
-      );
-    }
-    expect(offenders).toEqual([]);
+    expect(offendersAcross("mcpgateway/admin_ui", ".js")).toEqual([]);
   });
 
-  test("no emoji in admin.html outside comments, scripts and console output", () => {
-    expect(offendersIn(stripHtml(adminHtml), "admin.html")).toEqual([]);
+  test("no emoji in any template outside comments and console output", () => {
+    // Every server-rendered partial, not just admin.html: the panels those
+    // partials fill are reachable from the sidebar like any other page.
+    expect(offendersAcross("mcpgateway/templates", ".html")).toEqual([]);
+  });
+
+  test("no emoji in any hand-written static script", () => {
+    expect(offendersAcross("mcpgateway/static", ".js")).toEqual([]);
   });
 
   test("message helpers derive their icon from the notification type", () => {

@@ -72,6 +72,7 @@ export default {
   "Audit & Events": "审计与事件",
   "Auth Events": "认证事件",
   "Audit Logs": "审计日志",
+  "Pending Approvals": "待审批",
   "SSO Providers": "SSO 提供方",
   "Workflow State": "工作流状态",
   "Team Invitations": "团队邀请",

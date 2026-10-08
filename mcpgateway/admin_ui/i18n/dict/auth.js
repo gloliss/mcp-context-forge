@@ -15,6 +15,7 @@ export default {
   "Observability": "可观测性",
   "Password": "密码",
   "Password Requirements": "密码要求",
+  "Requirements met": "已满足要求",
   "Password Change Required - ContextForge": "需要修改密码 - ContextForge",
   "Password Change Required": "需要修改密码",
   "Your password has expired and must be changed to continue.": "您的密码已过期，必须修改后才能继续。",

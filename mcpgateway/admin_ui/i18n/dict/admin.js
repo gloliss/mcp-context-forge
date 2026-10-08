@@ -208,6 +208,7 @@ export default {
   "Leave Team": "退出团队",
   "Cancel Request": "取消申请",
   "Request to Join": "申请加入",
+  "Requested to Join": "已申请加入",
   "No teams found. Create your first team using the button above.": "未找到团队。请使用上方按钮创建第一个团队。",
   "No teams found": "未找到团队",
   "Loading more teams...": "正在加载更多团队…",

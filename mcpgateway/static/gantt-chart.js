@@ -129,11 +129,11 @@ class GanttChart {
                         </span>
                     </div>
                     <div class="gantt-controls">
-                        <button onclick="ganttChart.zoomIn()" class="gantt-btn" title="Zoom In (=)">🔍+</button>
-                        <button onclick="ganttChart.zoomOut()" class="gantt-btn" title="Zoom Out (-)">🔍−</button>
-                        <button onclick="ganttChart.resetZoom()" class="gantt-btn" title="Reset (0)">⟲</button>
-                        <button onclick="ganttChart.expandAll()" class="gantt-btn" title="Expand All">▼</button>
-                        <button onclick="ganttChart.collapseAll()" class="gantt-btn" title="Collapse All">▶</button>
+                        <button onclick="ganttChart.zoomIn()" class="gantt-btn" title="Zoom In (=)"><i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i></button>
+                        <button onclick="ganttChart.zoomOut()" class="gantt-btn" title="Zoom Out (-)"><i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i></button>
+                        <button onclick="ganttChart.resetZoom()" class="gantt-btn" title="Reset (0)"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i></button>
+                        <button onclick="ganttChart.expandAll()" class="gantt-btn" title="Expand All"><i class="fa-solid fa-angles-down" aria-hidden="true"></i></button>
+                        <button onclick="ganttChart.collapseAll()" class="gantt-btn" title="Collapse All"><i class="fa-solid fa-angles-up" aria-hidden="true"></i></button>
                     </div>
                 </div>
 
@@ -256,7 +256,7 @@ class GanttChart {
   hasChildren
     ? `
                         <button class="span-toggle" onclick="ganttChart.toggleSpan('${span.span_id}')">
-                            ${isCollapsed ? "▶" : "▼"}
+                            ${isCollapsed ? '<i class="fa-solid fa-caret-right" aria-hidden="true"></i>' : '<i class="fa-solid fa-caret-down" aria-hidden="true"></i>'}
                         </button>
                     `
     : '<span class="span-spacer"></span>'

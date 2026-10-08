@@ -519,7 +519,13 @@ window.createToolsController = function() {
           parent.textContent = '';
           const p = document.createElement('p');
           p.className = 'text-center text-emerald-500 p-8';
-          p.textContent = '✓ No errors found - all tools operating normally!';
+          const checkIcon = document.createElement('i');
+          checkIcon.className = 'fa-solid fa-circle-check mr-1';
+          checkIcon.setAttribute('aria-hidden', 'true');
+          p.appendChild(checkIcon);
+          p.appendChild(
+            document.createTextNode('No errors found - all tools operating normally!')
+          );
           parent.appendChild(p);
         }
         return;
