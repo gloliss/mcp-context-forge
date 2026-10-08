@@ -1,0 +1,81 @@
+<!-- htmlhint doctype-first:false -->
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+      {{ 'Add Query Template' if mode == 'create' else 'Edit Query Template' }}
+    </h3>
+    <p class="text-xs text-gray-500 dark:text-gray-400">on source <strong class="text-gray-700 dark:text-gray-300">{{ source_name|escape }}</strong></p>
+  </div>
+  <div id="database-template-form-error"></div>
+  <form id="{{ form_id }}" {{ hx_attr }}="{{ form_action }}" hx-target="#database-template-form-error" hx-swap="innerHTML" class="space-y-4">
+    <input type="hidden" name="source_id" value="{{ source_id }}">
+
+    <!-- Definition -->
+    <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend class="px-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Definition</legend>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name *</label>
+        <input type="text" name="name" value="{{ f.name|escape }}" required maxlength="255"
+               class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">The slug derived from this name becomes part of the exposed tool name.</p>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Statement *</label>
+        <textarea name="statement" rows="4" required spellcheck="false"
+                  class="mt-1 block w-full px-3 py-2 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">{{ f.statement|escape }}</textarea>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Exactly one SQL statement. Bind values with <code class="font-mono">:name</code> and declare every placeholder below.</p>
+      </div>
+    </fieldset>
+
+    <!-- Parameters -->
+    <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend class="px-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Parameters</legend>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Parameter Schema (JSON)</label>
+        <textarea name="parameter_schema" rows="8" spellcheck="false"
+                  class="mt-1 block w-full px-3 py-2 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">{{ f.parameter_schema|escape }}</textarea>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">A JSON Schema object. Each <code class="font-mono">:name</code> in the statement must appear under <code class="font-mono">properties</code>; list the mandatory ones in <code class="font-mono">required</code>.</p>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Result Schema (JSON)</label>
+        <textarea name="result_schema" rows="4" spellcheck="false"
+                  class="mt-1 block w-full px-3 py-2 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">{{ f.result_schema|escape }}</textarea>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Optional documentation of the rows this query returns.</p>
+      </div>
+    </fieldset>
+
+    <!-- Limits -->
+    <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend class="px-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Limits</legend>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Max Rows</label>
+          <input type="number" name="max_rows" value="{{ f.max_rows }}" min="1"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Timeout (s)</label>
+          <input type="number" name="timeout_seconds" value="{{ f.timeout_seconds }}" min="0" step="0.1"
+                 class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+        </div>
+      </div>
+      <div class="flex items-center">
+        <input type="checkbox" name="enabled" id="database-template-enabled" {{ 'checked' if f.enabled else '' }}
+               class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+        <label for="database-template-enabled" class="ml-2 text-sm text-gray-700 dark:text-gray-300">Expose this template as a tool</label>
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400">A disabled template keeps its definition but is not registered as a tool.</p>
+    </fieldset>
+
+    <div class="flex justify-end space-x-3 pt-2">
+      <button type="button" onclick="closeDatabaseTemplateForm()"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+        Cancel
+      </button>
+      <button type="submit"
+              class="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+        {{ submit_label }}
+      </button>
+    </div>
+  </form>
+</div>

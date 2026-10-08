@@ -126,6 +126,9 @@ from mcpgateway.schemas import (
     CatalogServerRegisterRequest,
     CatalogServerRegisterResponse,
     CatalogServerStatusResponse,
+    DatabaseQueryTemplateCreate,
+    DatabaseQueryTemplateRead,
+    DatabaseQueryTemplateUpdate,
     DatabaseSourceCreate,
     DatabaseSourceRead,
     DatabaseSourceUpdate,
@@ -174,6 +177,12 @@ from mcpgateway.services.database_source_service import (
     DatabaseSourceNameConflictError,
     DatabaseSourceNotFoundError,
     DatabaseSourceService,
+)
+from mcpgateway.services.database_template_service import (
+    DatabaseTemplateError,
+    DatabaseTemplateNameConflictError,
+    DatabaseTemplateNotFoundError,
+    DatabaseTemplateService,
 )
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -21842,3 +21851,248 @@ async def admin_database_sources_test_connection(
     except ValueError as exc:
         return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=400)
     return HTMLResponse(content=_database_source_test_result_html(result))
+
+
+# ---------------------------------------------------------------------------
+# Query templates (Phase 2)
+# ---------------------------------------------------------------------------
+#: Prefilled parameter schema for a new template.  It is the smallest valid
+#: shape, so the admin sees the contract to fill in instead of a blank textarea.
+_DATABASE_TEMPLATE_PARAMETER_SCHEMA_DEFAULT = '{\n  "type": "object",\n  "properties": {}\n}'
+
+
+def _database_template_raw_fields(form) -> Dict[str, Any]:
+    """Normalize flat admin form fields into typed DatabaseQueryTemplate values."""
+
+    def _json_object(field: str, default: Dict[str, Any]) -> Dict[str, Any]:
+        raw = _database_source_opt_text(form.get(field))
+        if raw is None:
+            return default
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field} is not valid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{field} must be a JSON object")
+        return parsed
+
+    return {
+        "name": _database_source_opt_text(form.get("name")),
+        "statement": _database_source_opt_text(form.get("statement")),
+        "parameter_schema": _json_object("parameter_schema", {}),
+        "result_schema": _json_object("result_schema", {}),
+        "max_rows": _database_source_opt_int(form.get("max_rows"), 1000),
+        "timeout_seconds": _database_source_opt_float(form.get("timeout_seconds"), 15.0),
+        # Checkbox semantics: an absent checkbox means "unchecked" (False).
+        "enabled": _database_source_opt_bool(form.get("enabled"), False),
+    }
+
+
+def _database_template_form_context(read: Optional[DatabaseQueryTemplateRead] = None) -> Dict[str, Any]:
+    """Build the flat ``f`` dict consumed by ``database_template_form.html``."""
+    if read is None:
+        return {
+            "name": "", "statement": "",
+            "parameter_schema": _DATABASE_TEMPLATE_PARAMETER_SCHEMA_DEFAULT,
+            "result_schema": "{}",
+            "max_rows": 1000, "timeout_seconds": 15.0, "enabled": True,
+        }
+    return {
+        "name": read.name or "", "statement": read.statement or "",
+        "parameter_schema": json.dumps(read.parameter_schema, indent=2),
+        "result_schema": json.dumps(read.result_schema, indent=2),
+        "max_rows": read.max_rows, "timeout_seconds": read.timeout_seconds, "enabled": read.enabled,
+    }
+
+
+def _database_template_error_response(content: str, status_code: int) -> HTMLResponse:
+    """Render a failed template form submission inline.
+
+    htmx only swaps 2xx responses by default.  ``HX-Retarget`` opts a 4xx into the
+    admin's ``htmx:beforeSwap`` handler, which is what lets the admin actually read
+    why a template was refused — an undeclared placeholder or a second statement is
+    a 422 whose whole point is to be seen.
+    """
+    return HTMLResponse(content=content, status_code=status_code, headers={"HX-Retarget": "#database-template-form-error"})
+
+
+@admin_router.get("/database-sources/{source_id}/templates/partial", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_templates_partial_html(
+    source_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Return the query templates HTML partial for one database source."""
+    try:
+        root_path = _resolve_root_path(request)
+        source = DatabaseSourceService.get_source(db, source_id)
+        templates = DatabaseTemplateService.list_templates(db, source_id, include_inactive=True)
+        return request.app.state.templates.TemplateResponse(
+            request,
+            "database_templates_partial.html",
+            {"request": request, "data": templates, "source": source, "root_path": root_path},
+        )
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+    except Exception as e:
+        LOGGER.error(f"Error loading query templates partial for admin {get_user_email(user)}: {e}")
+        return HTMLResponse(content=_database_source_error_html("Error loading query templates"), status_code=500)
+
+
+@admin_router.get("/database-sources/{source_id}/templates/new", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_templates_new_form(
+    source_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Render the create form for a new query template."""
+    try:
+        source = DatabaseSourceService.get_source(db, source_id)
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "database_template_form.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "mode": "create",
+            "form_id": "database-template-create-form",
+            "hx_attr": "hx-post",
+            "form_action": f"{root_path}/admin/database-sources/{source_id}/templates",
+            "submit_label": "Create Template",
+            "source_id": source_id,
+            "source_name": source.name,
+            "f": _database_template_form_context(),
+        },
+    )
+
+
+@admin_router.get("/database-sources/{source_id}/templates/{template_id}/edit", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_templates_edit_form(
+    source_id: str,
+    template_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Render the edit form for an existing query template."""
+    try:
+        source = DatabaseSourceService.get_source(db, source_id)
+        template = DatabaseTemplateService.get_template(db, source_id, template_id)
+    except DatabaseSourceNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+    except DatabaseTemplateNotFoundError as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "database_template_form.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "mode": "edit",
+            "form_id": "database-template-edit-form",
+            "hx_attr": "hx-put",
+            "form_action": f"{root_path}/admin/database-sources/{source_id}/templates/{template_id}",
+            "submit_label": "Save Changes",
+            "source_id": source_id,
+            "source_name": source.name,
+            "f": _database_template_form_context(template),
+        },
+    )
+
+
+@admin_router.post("/database-sources/{source_id}/templates", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_templates_create(
+    source_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Create a query template from an admin UI form submission."""
+    form = await request.form()
+    try:
+        fields = _database_template_raw_fields(form)
+        for required in ("name", "statement"):
+            if fields.get(required) in (None, ""):
+                return _database_template_error_response(_database_source_error_html(f"{required} is required"), 400)
+        data = DatabaseQueryTemplateCreate(**fields)
+        DatabaseTemplateService.create_template(db, source_id, data, get_user_email(user))
+    except DatabaseSourceNotFoundError as exc:
+        return _database_template_error_response(_database_source_error_html(str(exc)), 404)
+    except DatabaseTemplateNameConflictError as exc:
+        return _database_template_error_response(_database_source_error_html(str(exc)), 409)
+    except (ValidationError, CoreValidationError) as exc:
+        LOGGER.warning(f"Validation error creating query template: {exc}")
+        return _database_template_error_response(_database_source_validation_html(exc), 400)
+    except (DatabaseTemplateError, DatabaseSourceError) as exc:
+        return _database_template_error_response(_database_source_error_html(str(exc)), 422)
+    except ValueError as exc:
+        LOGGER.warning(f"Validation error creating query template: {exc}")
+        return _database_template_error_response(_database_source_error_html(str(exc)), 400)
+    except IntegrityError:
+        return _database_template_error_response(_database_source_error_html("A query template with this name already exists"), 409)
+    return HTMLResponse(content="", status_code=201)
+
+
+@admin_router.put("/database-sources/{source_id}/templates/{template_id}", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_templates_update(
+    source_id: str,
+    template_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Update a query template from an admin UI form submission."""
+    form = await request.form()
+    try:
+        fields = _database_template_raw_fields(form)
+        for required in ("name", "statement"):
+            if fields.get(required) in (None, ""):
+                return _database_template_error_response(_database_source_error_html(f"{required} is required"), 400)
+        data = DatabaseQueryTemplateUpdate(**fields)
+        DatabaseTemplateService.update_template(db, source_id, template_id, data, get_user_email(user))
+    except (DatabaseSourceNotFoundError, DatabaseTemplateNotFoundError) as exc:
+        return _database_template_error_response(_database_source_error_html(str(exc)), 404)
+    except DatabaseTemplateNameConflictError as exc:
+        return _database_template_error_response(_database_source_error_html(str(exc)), 409)
+    except (ValidationError, CoreValidationError) as exc:
+        LOGGER.warning(f"Validation error updating query template: {exc}")
+        return _database_template_error_response(_database_source_validation_html(exc), 400)
+    except (DatabaseTemplateError, DatabaseSourceError) as exc:
+        return _database_template_error_response(_database_source_error_html(str(exc)), 422)
+    except ValueError as exc:
+        LOGGER.warning(f"Validation error updating query template: {exc}")
+        return _database_template_error_response(_database_source_error_html(str(exc)), 400)
+    except IntegrityError:
+        return _database_template_error_response(_database_source_error_html("A query template with this name already exists"), 409)
+    return HTMLResponse(content="", status_code=200)
+
+
+@admin_router.delete("/database-sources/{source_id}/templates/{template_id}", response_class=HTMLResponse)
+@require_permission("admin.database_sources", allow_admin_bypass=False)
+async def admin_database_templates_delete(
+    source_id: str,
+    template_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+) -> HTMLResponse:
+    """Delete a query template from the admin UI."""
+    try:
+        DatabaseTemplateService.delete_template(db, source_id, template_id)
+    except (DatabaseSourceNotFoundError, DatabaseTemplateNotFoundError) as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=404)
+    except (DatabaseTemplateError, DatabaseSourceError) as exc:
+        return HTMLResponse(content=_database_source_error_html(str(exc)), status_code=422)
+    return HTMLResponse(content="", status_code=200)

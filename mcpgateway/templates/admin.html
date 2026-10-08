@@ -14840,6 +14840,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
     </div>
 
+    <!-- Query Template Modal -->
+    <div id="database-template-modal" class="fixed inset-0 z-50 hidden overflow-y-auto">
+      <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div
+          class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+          aria-hidden="true"
+          data-action-click="closeDatabaseTemplateForm"
+        ></div>
+        <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+        <div
+          class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
+        >
+          <div id="database-template-modal-content">
+            <!-- Content will be loaded here -->
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Create Team Modal -->
     <div id="create-team-modal" class="fixed inset-0 z-40 hidden overflow-y-auto">
       <div
@@ -15902,6 +15921,72 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       }
 
+      // ---- Query templates (Phase 2) ----
+      function reloadDatabaseTemplates() {
+        // The container owns its own hx-get; re-triggering the named event keeps
+        // that one declarative request path instead of a second ajax call.
+        htmx.trigger(document.body, 'refreshDatabaseTemplates');
+      }
+
+      function openDatabaseTemplateModal() {
+        document.getElementById('database-template-modal').classList.remove('hidden');
+      }
+
+      function closeDatabaseTemplateForm() {
+        document.getElementById('database-template-modal').classList.add('hidden');
+        const content = document.getElementById('database-template-modal-content');
+        if (content) content.innerHTML = '';
+      }
+
+      function openDatabaseTemplateForm(sourceId) {
+        const content = document.getElementById('database-template-modal-content');
+        if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Loading…</div>';
+        openDatabaseTemplateModal();
+        htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/' + sourceId + '/templates/new', {
+          source: content,  // own request element, not the shared document.body state
+          target: '#database-template-modal-content',
+          swap: 'innerHTML'
+        });
+      }
+
+      function openDatabaseTemplateEdit(sourceId, templateId) {
+        const content = document.getElementById('database-template-modal-content');
+        if (content) content.innerHTML = '<div class="text-gray-500 dark:text-gray-400 py-8 text-center">Loading…</div>';
+        openDatabaseTemplateModal();
+        htmx.ajax('GET', (window.ROOT_PATH || '') + '/admin/database-sources/' + sourceId + '/templates/' + templateId + '/edit', {
+          source: content,  // own request element, not the shared document.body state
+          target: '#database-template-modal-content',
+          swap: 'innerHTML'
+        });
+      }
+
+      function newDatabaseTemplate(button) {
+        openDatabaseTemplateForm(button.getAttribute('data-source-id'));
+      }
+
+      function editDatabaseTemplate(button) {
+        openDatabaseTemplateEdit(button.getAttribute('data-source-id'), button.getAttribute('data-template-id'));
+      }
+
+      async function deleteDatabaseTemplate(button) {
+        const sourceId = button.getAttribute('data-source-id');
+        const templateId = button.getAttribute('data-template-id');
+        const name = button.getAttribute('data-template-name') || 'this template';
+        if (!(await window.Admin.showConfirm('Delete query template "' + name + '"? Its tool will be removed.', { danger: true }))) return;
+        try {
+          const res = await fetch((window.ROOT_PATH || '') + '/admin/database-sources/' + sourceId + '/templates/' + templateId, { method: 'DELETE' });
+          if (res.ok) {
+            window.Admin.showSuccessMessage('Query template deleted');
+          } else {
+            const text = await res.text();
+            window.Admin.showErrorMessage(text || 'Failed to delete query template');
+          }
+        } catch (e) {
+          window.Admin.showErrorMessage(e.message || 'Failed to delete query template');
+        }
+        reloadDatabaseTemplates();
+      }
+
       // Wire the Database Sources tab to (re)load its list on activation.
       document.addEventListener('DOMContentLoaded', function () {
         const tab = document.getElementById('tab-database-sources');
@@ -15927,6 +16012,14 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           closeDatabaseSourceForm();
           window.Admin.showSuccessMessage('Database source updated');
           loadDatabaseSourceList();
+        } else if (evt.detail.xhr.status === 201 && id === 'database-template-create-form') {
+          closeDatabaseTemplateForm();
+          window.Admin.showSuccessMessage('Query template created');
+          reloadDatabaseTemplates();
+        } else if (evt.detail.xhr.status === 200 && id === 'database-template-edit-form') {
+          closeDatabaseTemplateForm();
+          window.Admin.showSuccessMessage('Query template updated');
+          reloadDatabaseTemplates();
         }
       });
 
@@ -15941,6 +16034,11 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.Admin.testDatabaseSource = testDatabaseSource;
       window.Admin.testDatabaseSourceForm = testDatabaseSourceForm;
       window.Admin.handleDatabaseSourceEngineChange = handleDatabaseSourceEngineChange;
+      window.Admin.newDatabaseTemplate = newDatabaseTemplate;
+      window.Admin.editDatabaseTemplate = editDatabaseTemplate;
+      window.Admin.deleteDatabaseTemplate = deleteDatabaseTemplate;
+      window.Admin.closeDatabaseTemplateForm = closeDatabaseTemplateForm;
+      window.Admin.reloadDatabaseTemplates = reloadDatabaseTemplates;
     </script>
         </main>
       </div>
