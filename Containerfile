@@ -520,3 +520,22 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # ----------------------------------------------------------------------------
 # HTTP server: Gunicorn with Uvicorn workers
 CMD ["./docker-entrypoint.sh"]
+
+# ----------------------------------------------------------------------------
+# Build provenance
+#
+# Deliberately the last instructions in the file. The runtime image otherwise
+# inherits org.opencontainers.image.revision from the UBI base image, which
+# points at a Red Hat commit unrelated to this repository — useless for telling
+# which commit a deployed image was built from. scripts/ci/release.sh passes the
+# real values in.
+#
+# Placement matters for more than tidiness: a LABEL sits in the layer chain, so
+# adding these next to the metadata block above would change the parent digest of
+# every layer below it and force the whole runtime stage — including a
+# multi-minute recursive chown — to rebuild on every release.
+# ----------------------------------------------------------------------------
+ARG GIT_REVISION=""
+ARG BUILD_DATE=""
+LABEL org.opencontainers.image.revision="${GIT_REVISION}" \
+    org.opencontainers.image.created="${BUILD_DATE}"
