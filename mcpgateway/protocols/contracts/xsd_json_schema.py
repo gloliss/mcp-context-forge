@@ -34,8 +34,10 @@ except ImportError:  # pragma: no cover - optional "xml" extra
     XsdAtomicBuiltin = XsdComplexType = XsdElement = None  # type: ignore[assignment]
     _XMLSCHEMA_AVAILABLE = False
 
-# xs: builtin local name → JSON Schema primitive.
-_BUILTIN_MAP: Dict[str, dict] = {
+# xs: builtin local name → JSON Schema primitive.  Shared with the zeep
+# type-tree mapper (``zeep_json_schema``) so a SOAP operation and a
+# standalone XSD artifact describe the same builtin the same way.
+XSD_BUILTIN_JSON_SCHEMA: Dict[str, dict] = {
     "string": {"type": "string"},
     "normalizedString": {"type": "string"},
     "token": {"type": "string"},
@@ -231,7 +233,7 @@ class XsdJsonSchemaMapper:
         local = self._builtin_local_name(xsd_type)
         if local is None:
             return None
-        base = _BUILTIN_MAP.get(local)
+        base = XSD_BUILTIN_JSON_SCHEMA.get(local)
         return dict(base) if base is not None else None
 
     def _apply_facets(self, schema: dict, xsd_type: Any) -> None:

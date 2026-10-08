@@ -11,6 +11,10 @@ type parser — the business runtime never calls ``zeep.Client(...).service``
 (design §32).  Each WSDL operation becomes an ``OperationDefinition`` with
 the stable key ``service:port:binding:operation`` (§5.3).
 
+Each operation's request and response body schema is derived from zeep's
+already-resolved type tree (``ZeepJsonSchemaMapper``), so the tools generated
+from a WSDL carry real parameter names, types and cardinality.
+
 The provider is offline-only: remote WSDL imports/XSD includes are not
 followed (design §66 defers external reference fetching to the shared
 ``SafeReferenceFetcher``/``ContractArtifactResolver``).  A transport that
@@ -39,12 +43,6 @@ except ImportError:  # pragma: no cover - optional "soap" extra
     ZEEP_AVAILABLE = False
 
 # First-Party
-from mcpgateway.protocols.http.models import (
-    HttpBodyVariant,
-    HttpRequestContract,
-    HttpResponseContract,
-    HttpResponseVariant,
-)
 from mcpgateway.protocols.contracts.models import (
     ContractArtifact,
     ContractDiagnostic,
@@ -52,6 +50,13 @@ from mcpgateway.protocols.contracts.models import (
     DiscoveryContext,
     OperationCatalog,
     OperationDefinition,
+)
+from mcpgateway.protocols.contracts.zeep_json_schema import ZeepJsonSchemaMapper
+from mcpgateway.protocols.http.models import (
+    HttpBodyVariant,
+    HttpRequestContract,
+    HttpResponseContract,
+    HttpResponseVariant,
 )
 
 
@@ -84,39 +89,25 @@ else:  # pragma: no cover - optional "soap" extra
     _LocalOnlyTransport = None  # type: ignore[assignment]
 
 
-def _input_schema(input_type: Any, operation: Any) -> Optional[dict[str, Any]]:
-    """Derive the request JSON Schema from a zeep input type.
+def _body_schema(xsd_type: Any) -> dict[str, Any]:
+    """Derive the JSON Schema of a SOAP body element from its zeep type.
 
     Args:
-        input_type: The zeep input body type.
-        operation: The zeep operation (used only for the fallback name).
+        xsd_type: A resolved zeep type — ``operation.input.body.type`` or
+            ``operation.output.body.type``.
 
     Returns:
-        A JSON Schema fragment, or ``None`` when no signature is available.
-        The derived schema is intentionally shallow — its job is to describe
-        the request body for a tool listing, not to re-implement XSD.
+        The JSON Schema describing the body, tagged with the element's local
+        name as its ``title`` so a tool listing names the wrapper a caller has
+        to send.  Deriving this from zeep's resolved type tree is what gives a
+        SOAP operation's parameters real names, types and cardinality instead
+        of an opaque signature string.
     """
-    signature = getattr(operation.input, "signature", None)
-    if callable(signature):
-        try:
-            return {"type": "object", "description": str(signature())}
-        except Exception:  # pylint: disable=broad-except
-            return None
-    name = getattr(input_type, "name", None)
-    return {"type": "object"} if name else None
-
-
-def _output_schema(output_type: Any) -> Optional[dict[str, Any]]:
-    """Derive the response JSON Schema from a zeep output type.
-
-    Args:
-        output_type: The zeep output body type.
-
-    Returns:
-        A JSON Schema fragment describing the response envelope body.
-    """
-    name = getattr(output_type, "name", None)
-    return {"type": "object"} if name else None
+    schema = ZeepJsonSchemaMapper().map_type(xsd_type)
+    name = getattr(xsd_type, "name", None)
+    if name:
+        schema["title"] = name
+    return schema
 
 
 class WsdlContractProvider:
@@ -242,7 +233,7 @@ class WsdlContractProvider:
         # OperationToolCompiler as an OpenAPI one (design §31).  The SOAP
         # specifics travel in typed fields: the body codec, the response
         # codec (SOAP 1.1 replies arrive as text/xml) and ``soap_binding``.
-        input_schema = _input_schema(input_type, operation)
+        input_schema = _body_schema(input_type)
         request = HttpRequestContract(
             method="POST",
             path_template=path,
@@ -261,7 +252,7 @@ class WsdlContractProvider:
                 HttpResponseVariant(
                     status_code="200",
                     media_type=content_type,
-                    schema=_output_schema(output_type),
+                    schema=_body_schema(output_type),
                     description="SOAP response envelope",
                 ),
             )

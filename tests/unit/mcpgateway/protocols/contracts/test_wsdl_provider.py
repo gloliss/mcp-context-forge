@@ -29,6 +29,8 @@ _WSDL = textwrap.dedent(
             <xsd:complexType><xsd:sequence>
               <xsd:element name="factory" type="xsd:string"/>
               <xsd:element name="date" type="xsd:string"/>
+              <xsd:element name="count" type="xsd:int" maxOccurs="unbounded"/>
+              <xsd:element name="note" type="xsd:string" minOccurs="0"/>
             </xsd:sequence></xsd:complexType>
           </xsd:element>
           <xsd:element name="QueryResponse">
@@ -94,6 +96,34 @@ class TestWsdlContractProvider:
         assert operation.soap_binding["version"] == "1.1"
         assert operation.soap_binding["soapAction"] == "urn:report#QueryReport"
         assert operation.extensions["service"] == "ReportService"
+
+    async def test_request_and_response_schemas_carry_real_parameters(self):
+        """The body schemas are compiled from the WSDL's own type definitions.
+
+        Without this the generated tool advertises an opaque signature string,
+        so a caller cannot tell which parameters the operation takes.
+        """
+        provider = WsdlContractProvider()
+        catalog = await provider.discover(_artifact(), DiscoveryContext())
+
+        operation = catalog.operations[0]
+        assert operation.request.bodies[0].schema == {
+            "type": "object",
+            "properties": {
+                "factory": {"type": "string"},
+                "date": {"type": "string"},
+                "count": {"type": "array", "items": {"type": "integer"}},
+                "note": {"type": "string"},
+            },
+            "required": ["factory", "date", "count"],
+            "title": "QueryRequest",
+        }
+        assert operation.response.variants[0].schema == {
+            "type": "object",
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+            "title": "QueryResponse",
+        }
 
     async def test_source_hash_is_content_hash(self):
         """The catalog source hash is the artifact payload SHA-256."""
