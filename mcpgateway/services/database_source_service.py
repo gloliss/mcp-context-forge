@@ -37,7 +37,7 @@ from mcpgateway.utils.create_slug import slugify
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-_VALID_ENGINES = {"oceanbase", "oracle", "mysql", "postgresql"}
+_VALID_ENGINES = {"oceanbase", "oracle", "mysql", "postgresql", "starrocks"}
 _VALID_COMPAT_MODES = {"mysql", "oracle"}
 
 

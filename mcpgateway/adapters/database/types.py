@@ -21,6 +21,7 @@ ENGINE_OCEANBASE = "oceanbase"
 ENGINE_ORACLE = "oracle"
 ENGINE_MYSQL = "mysql"
 ENGINE_POSTGRESQL = "postgresql"
+ENGINE_STARROCKS = "starrocks"
 
 COMPAT_MODE_MYSQL = "mysql"
 COMPAT_MODE_ORACLE = "oracle"
@@ -33,6 +34,7 @@ SUPPORTED_ADAPTER_KEYS = (
     (ENGINE_ORACLE, None),
     (ENGINE_MYSQL, None),
     (ENGINE_POSTGRESQL, None),
+    (ENGINE_STARROCKS, None),
 )
 
 

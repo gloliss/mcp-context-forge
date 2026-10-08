@@ -99,6 +99,7 @@ def _register_builtins(registry: AdapterRegistry) -> None:
         MySQLAdapter,
         OracleAdapter,
         PostgreSQLAdapter,
+        StarRocksAdapter,
     )
     from mcpgateway.adapters.database.oceanbase import (  # pylint: disable=import-outside-toplevel
         OceanBaseAdapter,
@@ -112,6 +113,7 @@ def _register_builtins(registry: AdapterRegistry) -> None:
     registry.register("oracle", None, OracleAdapter)
     registry.register("mysql", None, MySQLAdapter)
     registry.register("postgresql", None, PostgreSQLAdapter)
+    registry.register("starrocks", None, StarRocksAdapter)
 
 
 #: Process-local default registry, populated once at import time.

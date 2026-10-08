@@ -9032,7 +9032,7 @@ class DatabaseSourceCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
-    engine: Literal["oceanbase", "oracle", "mysql", "postgresql"] = Field(...)
+    engine: Literal["oceanbase", "oracle", "mysql", "postgresql", "starrocks"] = Field(...)
     compatibility_mode: Optional[Literal["mysql", "oracle"]] = None
     host: str = Field(..., min_length=1, max_length=255)
     port: int = Field(..., ge=1, le=65535)
@@ -9087,7 +9087,7 @@ class DatabaseSourceUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
-    engine: Optional[Literal["oceanbase", "oracle", "mysql", "postgresql"]] = None
+    engine: Optional[Literal["oceanbase", "oracle", "mysql", "postgresql", "starrocks"]] = None
     compatibility_mode: Optional[Literal["mysql", "oracle"]] = None
     host: Optional[str] = Field(None, min_length=1, max_length=255)
     port: Optional[int] = Field(None, ge=1, le=65535)

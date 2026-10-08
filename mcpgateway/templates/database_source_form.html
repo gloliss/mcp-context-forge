@@ -28,6 +28,7 @@
             <option value="mysql" {{ 'selected' if f.engine == 'mysql' else '' }}>MySQL</option>
             <option value="oracle" {{ 'selected' if f.engine == 'oracle' else '' }}>Oracle</option>
             <option value="postgresql" {{ 'selected' if f.engine == 'postgresql' else '' }}>PostgreSQL</option>
+            <option value="starrocks" {{ 'selected' if f.engine == 'starrocks' else '' }} title="Connect to the StarRocks FE query port (MySQL protocol, default 9030)">StarRocks</option>
           </select>
         </div>
         <div id="compatibility-mode-field">

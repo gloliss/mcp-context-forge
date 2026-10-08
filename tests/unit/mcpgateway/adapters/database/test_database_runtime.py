@@ -40,6 +40,7 @@ from mcpgateway.adapters.database.adapters import (
     MySQLAdapter,
     OracleAdapter,
     PostgreSQLAdapter,
+    StarRocksAdapter,
 )
 from mcpgateway.adapters.database.oceanbase import OceanBaseAdapter
 from mcpgateway.db import DatabaseSource
@@ -149,6 +150,7 @@ def test_adapter_creation_from_source():
         ({"engine": "oracle", "compatibility_mode": None}, OracleAdapter),
         ({"engine": "mysql", "compatibility_mode": None}, MySQLAdapter),
         ({"engine": "postgresql", "compatibility_mode": None}, PostgreSQLAdapter),
+        ({"engine": "starrocks", "compatibility_mode": None}, StarRocksAdapter),
     ]
     for overrides, expected_cls in cases:
         source = make_source(**overrides)
@@ -351,6 +353,9 @@ def _ca_bundle(monkeypatch, tmp_path) -> str:
         (MySQLAdapter, "preferred", {}),
         (MySQLAdapter, "disabled", {"ssl_disabled": True}),
         (MySQLAdapter, "required", {"ssl_verify_cert": False}),
+        (StarRocksAdapter, None, {}),
+        (StarRocksAdapter, "disabled", {"ssl_disabled": True}),
+        (StarRocksAdapter, "required", {"ssl_verify_cert": False}),
         (PostgreSQLAdapter, None, {}),
         (PostgreSQLAdapter, "disabled", {"sslmode": "disable"}),
         (PostgreSQLAdapter, "preferred", {"sslmode": "prefer"}),
@@ -366,14 +371,14 @@ def test_ssl_mode_reaches_the_driver(adapter_cls, ssl_mode, expected):
     assert adapter_cls.build_connect_args(make_source(ssl_mode=ssl_mode)) == expected
 
 
-@pytest.mark.parametrize("adapter_cls", [MySQLAdapter, PostgreSQLAdapter])
+@pytest.mark.parametrize("adapter_cls", [MySQLAdapter, PostgreSQLAdapter, StarRocksAdapter])
 @pytest.mark.parametrize("ssl_mode", ["verify_ca", "verify_full"])
 def test_verifying_ssl_modes_pin_the_system_ca_bundle(adapter_cls, ssl_mode, monkeypatch, tmp_path):
     """The verifying modes name the trust store rather than leaving it implicit."""
     bundle = _ca_bundle(monkeypatch, tmp_path)
     args = adapter_cls.build_connect_args(make_source(ssl_mode=ssl_mode))
 
-    if adapter_cls is MySQLAdapter:
+    if issubclass(adapter_cls, MySQLAdapter):
         assert args["ssl_ca"] == bundle
         assert args["ssl_verify_cert"] is True
         # PyMySQL only verifies the hostname when it was given a CA to verify with.
@@ -409,6 +414,54 @@ def test_oracle_refuses_unenforceable_ssl_modes(ssl_mode):
     """Oracle verification needs a wallet, so it is refused, not downgraded."""
     with pytest.raises(DatabaseAdapterError):
         OracleAdapter.build_connect_args(make_source(engine="oracle", ssl_mode=ssl_mode))
+
+
+# --------------------------------------------------------------------------
+# StarRocks: MySQL wire, distinct engine identity
+# --------------------------------------------------------------------------
+def test_starrocks_connects_over_the_mysql_wire_to_the_fe_port():
+    """StarRocks resolves to the PyMySQL driver and keeps the FE query port."""
+    source = make_source(engine="starrocks", host="fe.internal", port=9030, database_name="analytics")
+
+    url = StarRocksAdapter.build_url(source)
+
+    assert url.drivername == "mysql+pymysql"
+    assert (url.host, url.port, url.database) == ("fe.internal", 9030, "analytics")
+    assert url.username == "user"
+
+
+def test_starrocks_version_probe_reaches_the_engine():
+    """``VERSION()`` returns StarRocks' MySQL-compat string (``5.1.0``) rather
+    than the engine build, so the probe must read ``current_version()`` — and
+    that statement has to travel through the pool, not merely be spelled right.
+    """
+    source = make_source(engine="starrocks", port=9030)
+    engine = FakeEngine(columns=("current_version()",), rows=(("3.3.2-8f1e7c0",),))
+    adapter = StarRocksAdapter(source, pool=ConnectionPool(identity=PoolIdentity.from_source(source), engine=engine, pool_config=PoolConfig()))
+
+    assert "current_version()" in adapter._version_sql()  # pylint: disable=protected-access
+    assert adapter.detect_mode() == "mysql"
+    assert engine.connect_calls > 0
+
+
+def test_starrocks_is_not_a_multi_mode_engine():
+    """Engine identity is the whole key: StarRocks carries no compatibility mode."""
+    with pytest.raises(UnknownCompatibilityModeError):
+        get_default_registry().lookup("starrocks", "mysql")
+
+
+def test_pool_identity_separates_starrocks_from_mysql():
+    """Re-pointing a source from MySQL to StarRocks must not reuse the old pool."""
+    manager = PoolManager()
+    factory = CountingFactory()
+    source = make_source()
+
+    mysql_pool = manager.acquire(source, engine_factory=factory)
+    source.engine = "starrocks"
+    starrocks_pool = manager.acquire(source, engine_factory=factory)
+
+    assert starrocks_pool is not mysql_pool
+    assert factory.calls == 2
 
 
 # --------------------------------------------------------------------------

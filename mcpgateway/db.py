@@ -5740,12 +5740,14 @@ class HttpService(Base):
 class DatabaseSource(Base):
     """Unified database data source (OB-01).
 
-    A single domain model underpinning the OceanBase, Oracle, MySQL, and
-    PostgreSQL adapters.  OceanBase is modeled as ``engine="oceanbase"`` with
-    a ``compatibility_mode`` of ``mysql`` or ``oracle`` — never as a distinct
-    ``oceanbase_mysql``/``oceanbase_oracle`` engine.  The password is stored
-    encrypted at rest via :class:`EncryptedText` and is never returned by the
-    API (``DatabaseSourceRead`` omits ``password``).
+    A single domain model underpinning the OceanBase, Oracle, MySQL,
+    PostgreSQL, and StarRocks adapters.  OceanBase is modeled as
+    ``engine="oceanbase"`` with a ``compatibility_mode`` of ``mysql`` or
+    ``oracle`` — never as a distinct ``oceanbase_mysql``/``oceanbase_oracle``
+    engine.  StarRocks is a distinct ``engine="starrocks"`` because its FE
+    speaks MySQL wire but the engine is not a MySQL variant.  The password is
+    stored encrypted at rest via :class:`EncryptedText` and is never returned
+    by the API (``DatabaseSourceRead`` omits ``password``).
     """
 
     __tablename__ = "database_sources"

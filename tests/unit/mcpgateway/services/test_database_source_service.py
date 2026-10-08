@@ -235,6 +235,29 @@ def test_create_oracle_source(test_db):
     assert read.port == 1521
 
 
+def test_create_starrocks_source(test_db):
+    """A StarRocks source is created on its FE query port, with no compat mode."""
+    read = DatabaseSourceService.create_source(
+        test_db, _payload(engine="starrocks", compatibility_mode=None, port=9030), "owner@example.com"
+    )
+
+    assert read.engine == "starrocks"
+    assert read.compatibility_mode is None
+    assert read.port == 9030
+
+
+def test_starrocks_rejects_a_compatibility_mode(test_db):
+    """StarRocks is a single-mode engine, so a compat mode is a client error."""
+    with pytest.raises(ValidationError):
+        DatabaseSourceCreate(
+            name="starrocks-with-compat",
+            engine="starrocks",
+            compatibility_mode="mysql",
+            host="127.0.0.1",
+            port=9030,
+        )
+
+
 def test_toggle_enabled(test_db):
     """Updating ``enabled`` flips visibility without touching the credential."""
     created = DatabaseSourceService.create_source(test_db, _payload(password="s3cr3t"))

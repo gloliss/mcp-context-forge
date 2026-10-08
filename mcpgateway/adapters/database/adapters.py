@@ -57,6 +57,32 @@ class MySQLAdapter(SQLAlchemyDatabaseAdapter):
         return tls.pymysql_ssl_args(tls.normalized_ssl_mode(source))
 
 
+class StarRocksAdapter(MySQLAdapter):
+    """StarRocks engine over the MySQL-wire frontend and the PyMySQL driver.
+
+    StarRocks exposes a MySQL-protocol endpoint on its FE query port (default
+    9030) and accepts MySQL syntax for the metadata and ``EXPLAIN`` statements
+    this adapter issues, so the MySQL implementation is inherited wholesale.
+    Only the version probe differs: ``VERSION()`` reports StarRocks'
+    MySQL-compatibility string (``5.1.0``), which says nothing about the
+    engine build, while ``current_version()`` returns the real StarRocks
+    version.
+
+    ``information_schema.TABLES`` is queried without a catalog filter, so on a
+    deployment with external catalogs object search also returns their tables.
+    """
+
+    dialect_driver = "mysql+pymysql"
+
+    def _version_sql(self) -> str:
+        return "SELECT current_version()"
+
+    def _infer_mode(self, version: str) -> Optional[str]:
+        # The wire protocol is MySQL, but StarRocks has no OceanBase-style
+        # compatibility sub-modes: the engine name is the whole identity.
+        return "mysql"
+
+
 class PostgreSQLAdapter(SQLAlchemyDatabaseAdapter):
     """PostgreSQL engine over the psycopg3 driver."""
 
