@@ -203,11 +203,19 @@ check_build_prerequisites() {
 check_reachable() {
     local label="$1" url="$2" code
     code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 20 "${url}" 2>/dev/null || true)"
-    if [[ "${code}" =~ ^[23] ]]; then
+    case "${code}" in
+    ""|000)
+        fail "${label} 不可达（无应答）—— 没有外网就只能走 --load"
+        ;;
+    2*|3*)
         pass "${label} 可达（HTTP ${code}）"
-    else
-        fail "${label} 不可达（HTTP ${code:-无响应}）—— 没有外网就只能走 --load"
-    fi
+        ;;
+    *)
+        # 401/403 是主机在拒绝这个具体路径，不是网络不通。把 403 当成不可达会冤枉
+        # 一台真能拉包的机器 —— Red Hat CDN 的根路径对裸 GET 就返回 403。
+        pass "${label} 可达（HTTP ${code}，该路径拒绝匿名访问，属正常）"
+        ;;
+    esac
 }
 
 report_context() {

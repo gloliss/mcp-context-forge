@@ -27,7 +27,7 @@ usage() {
   ./check-deps.sh --build    按现场构建体检，逐项列出缺什么
   ./check-deps.sh --require  有缺项时退出码非零（给 deploy.sh --build 当闸门用）
 
-只做检查，不改动任何东西。缺什么都不影响 --load：镜像归档就在包里。
+只做检查，不改动任何东西。缺依赖只影响 --build，不影响 --load。
 EOF
 }
 
@@ -65,6 +65,11 @@ probe_url() {
         --write-out '%{http_code}' --max-time 15 "$1" 2>/dev/null || true)"
     printf '%s' "${code:-无响应}"
 }
+
+# 「主机有没有应答」。只要拿到了 HTTP 状态码，就说明这条网络路径是通的 ——
+# 401/403 是主机在拒绝这个具体路径，不是网络不通。把 403 当成「不可达」会冤枉
+# 一台真能拉包的机器：Red Hat CDN 的根路径对裸 GET 就是 403。
+answered() { [[ -n "$1" && "$1" != "000" && "$1" != "无响应" ]]; }
 
 src_archive() {
     manifest_value "${MANIFEST}" source_archive 2>/dev/null || true
@@ -125,8 +130,8 @@ report_build() {
         fi
         if image_present "${ref}"; then
             ok "${name}" "${ref}（本机已有）"
-        elif [[ "${redhat_code}" =~ ^[23] ]]; then
-            ok "${name}" "${ref}（本机没有，但 registry.access.redhat.com 可达，可拉取）"
+        elif answered "${redhat_code}"; then
+            ok "${name}" "${ref}（本机没有，但 registry.access.redhat.com 有应答 HTTP ${redhat_code}，可拉取）"
         else
             miss "${name}" "本机没有且拉不到：${ref}"
             MISSING_REFS+=("${ref}")
@@ -137,7 +142,7 @@ report_build() {
     # 把三个基础镜像都 docker load 进来也解决不了，因为它发生在镜像内部。
     local cdn_code
     cdn_code="$(probe_url https://cdn-ubi.redhat.com/)"
-    if [[ "${cdn_code}" =~ ^[23] ]] || [[ "${redhat_code}" =~ ^[23] ]]; then
+    if answered "${cdn_code}" || answered "${redhat_code}"; then
         ok "cdn-ubi" "Red Hat CDN 可达（HTTP ${cdn_code}）"
     else
         miss "cdn-ubi" "基础镜像内部的 dnf/microdnf 要访问 Red Hat CDN，本机探测为 ${cdn_code}"
@@ -145,7 +150,7 @@ report_build() {
         note "它发生在镜像内部，与基础镜像在不在本机是两回事"
     fi
 
-    if [[ "${pypi_code}" =~ ^[23] ]]; then
+    if answered "${pypi_code}"; then
         ok "pypi-index" "pypi.org 可达（HTTP ${pypi_code}）"
     else
         miss "pypi-index" "pypi.org 本机探测为 ${pypi_code}"
@@ -154,7 +159,7 @@ report_build() {
         note "另外 cpex-* 插件包在部分镜像源上缺失，换源不一定能解决"
     fi
 
-    if [[ "${npm_code}" =~ ^[23] ]]; then
+    if answered "${npm_code}"; then
         ok "npm-registry" "registry.npmjs.org 可达（HTTP ${npm_code}）"
     else
         miss "npm-registry" "registry.npmjs.org 本机探测为 ${npm_code}"
