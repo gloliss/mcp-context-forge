@@ -329,11 +329,13 @@ name = "xin.feng"
 email = "xin.feng@zetatech.com.cn"
 
 [project.urls]
-Homepage = "https://ibm.github.io/mcp-context-forge/"
-Documentation = "https://ibm.github.io/mcp-context-forge/"
-Repository = "https://github.com/IBM/mcp-context-forge"
-"Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
-Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/xinfeng/mcp-context-forge"
+Documentation = "https://github.com/xinfeng/mcp-context-forge/tree/main/docs"
+Repository = "https://github.com/xinfeng/mcp-context-forge"
+"Bug Tracker" = "https://github.com/xinfeng/mcp-context-forge/issues"
+Changelog = "https://github.com/xinfeng/mcp-context-forge/blob/main/CHANGELOG.md"
+# 上游项目。二次开发基于它，链接保留以便回溯来源。
+Upstream = "https://github.com/IBM/mcp-context-forge"
 
 # --------------------------------------------------------------------
 #  💻 Project scripts (cli entrypoint)

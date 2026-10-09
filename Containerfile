@@ -544,5 +544,9 @@ CMD ["./docker-entrypoint.sh"]
 # ----------------------------------------------------------------------------
 ARG GIT_REVISION=""
 ARG BUILD_DATE=""
+# 源码地址。默认指向本项目仓库；隔离网内构建时可以覆盖成内网 GitLab 的地址，
+# 让镜像里的 provenance 指向那台机器上真正点得开的仓库。
+ARG IMAGE_SOURCE="https://github.com/xinfeng/mcp-context-forge"
 LABEL org.opencontainers.image.revision="${GIT_REVISION}" \
-    org.opencontainers.image.created="${BUILD_DATE}"
+    org.opencontainers.image.created="${BUILD_DATE}" \
+    org.opencontainers.image.source="${IMAGE_SOURCE}"
