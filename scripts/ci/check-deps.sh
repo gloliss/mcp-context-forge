@@ -70,12 +70,28 @@ src_archive() {
     manifest_value "${MANIFEST}" source_archive 2>/dev/null || true
 }
 
+# 本包到底有没有镜像归档 —— --load 能不能走完全取决于它。
+# 纯源码包里还印一句「镜像归档在本包内」，比不给结论更糟：那是在骗看报告的人，
+# 而这份报告的全部价值就在于「看了就能决定下一步」。
+package_image_archive() {
+    local archive
+    archive="$(manifest_value "${MANIFEST}" image_archive 2>/dev/null || true)"
+    [[ -n "${archive}" ]] || return 1
+    [[ -f "${SCRIPT_DIR}/${archive}" ]] || return 1
+    printf '%s' "${archive}"
+}
+
 report_load() {
+    local archive
+    archive="$(package_image_archive || true)"
     info "取镜像方式：--load"
-    ok "package" "镜像归档在本包内，docker load 即可"
+    if [[ -z "${archive}" ]]; then
+        miss "package" "本包不含镜像归档（release.sh --no-image），--load 这条路走不了"
+        note "改用 ./check-deps.sh --build 看现场构建缺什么。"
+        return
+    fi
+    ok "package" "镜像归档在本包内：${archive}，docker load 即可"
     ok "外部依赖" "无。--load 不需要目标机有任何网络、基础镜像或包源"
-    printf '\n'
-    printf '结论：--load 路径零依赖，可以直接部署。\n'
 }
 
 report_build() {
@@ -148,13 +164,22 @@ report_build() {
 
 print_receipt() {
     printf '\n'
+    # 结论只有一处：按这次体检的**模式**给，别在 --load 的报告里说 --build 可以尝试。
     if (( ${#MISSING[@]} == 0 )); then
-        printf '结论：依赖齐全，--build 可以尝试。\n'
+        if [[ "${MODE}" == "load" ]]; then
+            printf '结论：--load 路径零依赖，可以直接部署。\n'
+        else
+            printf '结论：依赖齐全，--build 可以尝试。\n'
+        fi
         return
     fi
     printf '%s\n' "---------------------------------------------------------------"
     printf '下一包需要带的东西（把这一段原样发出去即可）：\n\n'
-    printf '  目标机缺少以下依赖，无法完成现场构建：\n'
+    if [[ "${MODE}" == "load" ]]; then
+        printf '  本包缺少以下内容，无法按 --load 部署：\n\n'
+    else
+        printf '  目标机缺少以下依赖，无法完成现场构建：\n\n'
+    fi
     printf '    - %s\n' "${MISSING[@]}"
     if (( ${#MISSING_REFS[@]} > 0 )); then
         printf '\n  基础镜像（在有外网的机器上执行，然后把 deps/ 目录发进来）：\n'
@@ -164,9 +189,14 @@ print_receipt() {
             printf '    docker save %s -o deps/%s.tar\n' "${ref}" "$(printf '%s' "${ref}" | tr '/:' '__')"
         done
     fi
-    printf '\n  注意：只补齐基础镜像并不够。dnf/microdnf 在基础镜像内部访问 Red Hat CDN，\n'
-    printf '  还需要一个 rpm 源方案（内网镜像源或预先烤好的基础镜像），否则构建仍会失败。\n'
-    printf '  在解决它之前，请改用 --load：镜像归档就在本包内，不需要任何外部依赖。\n'
+    if [[ "${MODE}" == "load" ]]; then
+        printf '\n  补上镜像归档即可（有外网的机器上 release.sh 默认就会带）。\n'
+        printf '  或者改用 ./check-deps.sh --build，看现场构建要补什么。\n'
+    else
+        printf '\n  注意：只补齐基础镜像并不够。dnf/microdnf 在基础镜像内部访问 Red Hat CDN，\n'
+        printf '  还需要一个 rpm 源方案（内网镜像源或预先烤好的基础镜像），否则构建仍会失败。\n'
+        printf '  在解决它之前，请改用 --load：镜像归档就在本包内，不需要任何外部依赖。\n'
+    fi
     printf '%s\n' "---------------------------------------------------------------"
 }
 

@@ -242,6 +242,12 @@ install_readme() {
     RD_SUBJECT="${SUBJECT}" \
     RD_BUILT_AT="${BUILD_DATE}" \
     RD_IMAGE_REF="${IMAGE_REF}" \
+    RD_DEPS_CMD="${DEPS_CMD}" \
+    RD_DEPS_EXPECT="${DEPS_EXPECT}" \
+    RD_DEPS_FALLBACK="${DEPS_FALLBACK}" \
+    RD_PREFLIGHT_CMD="${PREFLIGHT_CMD}" \
+    RD_DEPLOY_DRY="${DEPLOY_DRY}" \
+    RD_DEPLOY_CMD="${DEPLOY_CMD}" \
     python3 - <<'PY'
 import os
 
@@ -254,6 +260,12 @@ for token, key in (
     ("@SUBJECT@", "RD_SUBJECT"),
     ("@BUILT_AT@", "RD_BUILT_AT"),
     ("@IMAGE_REF@", "RD_IMAGE_REF"),
+    ("@DEPS_CMD@", "RD_DEPS_CMD"),
+    ("@DEPS_EXPECT@", "RD_DEPS_EXPECT"),
+    ("@DEPS_FALLBACK@", "RD_DEPS_FALLBACK"),
+    ("@PREFLIGHT_CMD@", "RD_PREFLIGHT_CMD"),
+    ("@DEPLOY_DRY@", "RD_DEPLOY_DRY"),
+    ("@DEPLOY_CMD@", "RD_DEPLOY_CMD"),
 ):
     text = text.replace(token, os.environ[key])
 with open(os.environ["RD_OUT"], "w", encoding="utf-8") as handle:
@@ -324,6 +336,27 @@ main() {
     BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     OUT_DIR="${OUT_OVERRIDE:-${RELEASES_DIR}/${TAG_NAME}}"
 
+    # 说明文件与结尾提示里的命令必须与**这个包的实际形态**一致。纯源码包里写
+    # ./deploy.sh，操作的人照着敲，第一步就会撞上「本包没有镜像归档」——
+    # 隔离网里没有第二次机会，命令必须是能直接粘的。
+    if (( WITH_IMAGE )); then
+        DEPS_CMD="./check-deps.sh"
+        DEPS_EXPECT="  本包带镜像归档，部署全程不需要任何外部依赖 —— 输出里应当看到
+  「结论：--load 路径零依赖，可以直接部署」。"
+        DEPS_FALLBACK="  在依赖补齐之前，请继续使用 --load：镜像归档就在本包里，不需要它们。"
+        PREFLIGHT_CMD="./preflight-check.sh"
+        DEPLOY_CMD="./deploy.sh"
+    else
+        DEPS_CMD="./check-deps.sh --build"
+        DEPS_EXPECT="  本包不含镜像归档，没有 --load 这条路。这一步会逐项列出缺什么，
+  以及下一包该带什么 —— 依赖补齐之前不能部署。"
+        DEPS_FALLBACK="  本包不含镜像归档，所以在依赖补齐之前无法部署 ——
+  这正是要先把缺什么、下一包该带什么弄清楚的原因。"
+        PREFLIGHT_CMD="./preflight-check.sh --build"
+        DEPLOY_CMD="./deploy.sh --build"
+    fi
+    DEPLOY_DRY="${DEPLOY_CMD} --dry-run"
+
     info "仓库 ${REPO_ROOT}"
     info "  commit ${REVISION}（${SHORT}，分支 ${BRANCH}）"
     info "  ${SUBJECT}"
@@ -370,15 +403,8 @@ main() {
     install_readme
     verify_package
 
-    local size deploy_cmd preflight_cmd
+    local size
     size="$(du -sh "${OUT_DIR}" | awk '{print $1}')"
-    if (( WITH_IMAGE )); then
-        deploy_cmd="./deploy.sh"
-        preflight_cmd="./preflight-check.sh"
-    else
-        deploy_cmd="./deploy.sh --build"
-        preflight_cmd="./preflight-check.sh --build"
-    fi
 
     printf '\n交付包已就绪：%s（%s）\n' "${OUT_DIR}" "${size}"
     printf '  commit：%s  %s\n' "${SHORT}" "${SUBJECT}"
@@ -392,10 +418,10 @@ main() {
     printf '\n发到目标机后：\n'
     printf '  cd %s\n' "${OUT_DIR}"
     printf '  sha256sum --check SHA256SUMS      # 先验包\n'
-    printf '  ./check-deps.sh                   # 再确认依赖\n'
-    printf '  %s      # 前置检查\n' "${preflight_cmd}"
-    printf '  %s --dry-run     # 演练（会备份、快照，但不换容器）\n' "${deploy_cmd}"
-    printf '  %s               # 真正替换\n' "${deploy_cmd}"
+    printf '  %-34s # 再确认依赖\n' "${DEPS_CMD}"
+    printf '  %-34s # 前置检查\n' "${PREFLIGHT_CMD}"
+    printf '  %-34s # 演练（会备份、快照，但不换容器）\n' "${DEPLOY_DRY}"
+    printf '  %-34s # 真正替换\n' "${DEPLOY_CMD}"
     printf '\n隔离网里的那个人只需要看 README-DEPLOY.txt。\n'
 }
 
