@@ -43,12 +43,17 @@ usage() {
   ./deploy.sh help
 
 选项：
-  --env-file 路径      运行配置，默认来自 common.sh 的 ENV_FILE
+  --env-file 路径      运行配置；不给就用 common.sh 的 ENV_FILE，
+                       两者都读不到时改从现有容器提取（只报变量数量，不打印值）
   --force-no-volume    允许数据不在命名卷上（会丢数据，默认拒绝执行）
 
 环境变量（覆盖 common.sh 的默认拓扑）：
   CONTEXTFORGE_CONTAINER / CONTEXTFORGE_VOLUME / CONTEXTFORGE_ENV_FILE
   CONTEXTFORGE_PORT / CONTEXTFORGE_IMAGE_REPO / CONTEXTFORGE_HEALTH_TIMEOUT
+
+--build 之前请先跑 ./check-deps.sh --build：它逐项列出缺什么，以及下一包该带什么。
+靶机没外网时构建大概率过不去（基础镜像内部的 dnf/microdnf 要访问 Red Hat CDN），
+那种情况下请用默认的 --load —— 镜像归档就在本包内，不需要任何外部依赖。
 EOF
 }
 
@@ -344,9 +349,24 @@ deploy() {
 
     [[ -x "${PREFLIGHT}" ]] || die "找不到可执行的 ${PREFLIGHT}，交付包不完整"
 
+    # 运行配置：优先用指定的文件；读不到就从现有容器提取。
+    # 必须在 preflight 之前做，并且导出 —— preflight 是独立进程，自己 source 一份
+    # common.sh，不导出的话两边会看到不同的配置。
+    resolve_env_file "${STATE_DIR}" || true
+    export CONTEXTFORGE_ENV_FILE="${ENV_FILE}"
+
+    # 依赖闸门放在最前面：真构建一次要跑很久，不该等备份、快照都做完了才发现
+    # 缺东西。check-deps.sh 会把缺什么、下一包该带什么都列清楚。
+    if [[ "${MODE}" == "build" ]]; then
+        info "现场构建依赖体检"
+        "${SCRIPT_DIR}/check-deps.sh" --build --require \
+            || die "依赖不满足，拒绝现场构建。上面列出的就是下一包该带的东西。
+      在依赖补齐之前请改用 --load —— 镜像归档就在本包内，不需要任何外部依赖。"
+    fi
+
     info "运行配置"
     info "  容器 ${CONTAINER_NAME}  数据卷 ${VOLUME_NAME}  端口 ${HOST_PORT}"
-    info "  运行配置 ${ENV_FILE}"
+    info "  运行配置 $(env_file_description)"
     info "  包目录 ${SCRIPT_DIR}"
 
     preflight_args=("--${MODE}")

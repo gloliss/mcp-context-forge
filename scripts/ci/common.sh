@@ -52,6 +52,67 @@ container_run_args() {
         "${image}"
 }
 
+# ---------------------------------------------------------------------------
+# 运行配置从哪来：能读到 ENV_FILE 就用它；读不到就地从现有容器提取。
+#
+# ENV_FILE 默认值指向开发机。隔离网里的目标机没有那个路径，而上一轮发过去的
+# 那套交付是用 compose 起的、环境变量在本地生成的 runtime.env 里 —— 直接照搬
+# 会让 preflight 硬性失败，或者更糟：让新容器以空配置起来。
+#
+# 目标机的运行配置现值就在正在跑的那个容器里，那是唯一权威来源，而且不需要
+# 额外传文件。所以提取一份到 state/runtime.env（0600）再用。
+#
+# 只对外报告变量的**数量**，绝不打印值 —— 里面有 JWT / 加密密钥与管理员口令。
+ENV_FILE_SOURCE="configured"
+ENV_FILE_KEYS=""
+resolve_env_file() {
+    local dir="$1" extracted count
+    ENV_FILE_SOURCE="configured"
+    if [[ -r "${ENV_FILE}" ]]; then
+        return 0
+    fi
+    if ! container_exists "${CONTAINER_NAME}"; then
+        ENV_FILE_SOURCE="missing"
+        return 1
+    fi
+    mkdir -p -- "${dir}"
+    extracted="${dir}/runtime.env"
+    # docker inspect 输出的正是「每行一个 KEY=value」，与 --env-file 的格式一致。
+    if ! docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+        "${CONTAINER_NAME}" > "${extracted}" 2>/dev/null; then
+        rm -f -- "${extracted}"
+        ENV_FILE_SOURCE="missing"
+        return 1
+    fi
+    chmod 600 -- "${extracted}" 2>/dev/null || true
+    count="$(grep -c '=' -- "${extracted}" 2>/dev/null || true)"
+    if [[ -z "${count}" ]] || (( count == 0 )); then
+        rm -f -- "${extracted}"
+        ENV_FILE_SOURCE="missing"
+        return 1
+    fi
+    ENV_FILE="${extracted}"
+    ENV_FILE_KEYS="${count}"
+    ENV_FILE_SOURCE="container"
+    return 0
+}
+
+# 打印「运行配置从哪来」，供各脚本写日志用。不含任何变量值。
+env_file_description() {
+    case "${ENV_FILE_SOURCE}" in
+    container)
+        printf '从现有容器 %s 提取（%s 个变量）：%s' \
+            "${CONTAINER_NAME}" "${ENV_FILE_KEYS}" "${ENV_FILE}"
+        ;;
+    missing)
+        printf '既读不到 %s，也无法从现有容器提取' "${ENV_FILE}"
+        ;;
+    *)
+        printf '%s' "${ENV_FILE}"
+        ;;
+    esac
+}
+
 info() { printf '[INFO] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }

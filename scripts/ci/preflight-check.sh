@@ -110,10 +110,25 @@ check_port() {
 }
 
 check_env_file() {
+    local count
     if [[ -r "${ENV_FILE}" ]]; then
         pass "运行配置可读：${ENV_FILE}"
+        return
+    fi
+    # 这一项原来是硬性失败。但 ENV_FILE 的默认值指向开发机，隔离网里的目标机
+    # 通常没有这个路径 —— 而它的运行配置就在正在跑的那个容器里，取出来就能用。
+    # 这里只做只读探测（不改动任何东西），真正的提取由 deploy.sh 完成。
+    if ! container_exists "${CONTAINER_NAME}"; then
+        fail "运行配置不存在或不可读：${ENV_FILE}（可用 CONTEXTFORGE_ENV_FILE 指定）"
+        return
+    fi
+    count="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+        "${CONTAINER_NAME}" 2>/dev/null | grep -c '=' || true)"
+    if [[ -n "${count}" ]] && (( count > 0 )); then
+        pass "${ENV_FILE} 不可读，但现有容器带着 ${count} 个环境变量；
+      deploy.sh 会提取到 state/runtime.env 后沿用（只报数量，不打印值）"
     else
-        fail "运行配置不存在或不可读：${ENV_FILE}（可读用 CONTEXTFORGE_ENV_FILE 指定）"
+        fail "运行配置不存在，且读不到现有容器的环境变量：${ENV_FILE}"
     fi
 }
 
@@ -162,8 +177,14 @@ check_build_prerequisites() {
     local cores mem_kib
     info "现场构建前提（--build）"
     check_reachable "UBI 基础镜像仓库 registry.access.redhat.com" "https://registry.access.redhat.com/v2/"
+    check_reachable "Red Hat CDN（基础镜像内部的 dnf/microdnf 要用）" "https://cdn-ubi.redhat.com/"
     check_reachable "npm registry.npmjs.org" "https://registry.npmjs.org/"
     check_reachable "PyPI pypi.org" "https://pypi.org/simple/"
+
+    # 逐项清单与「下一包该带什么」在 check-deps.sh 里；这里只做能不能构建的判断。
+    printf '  提示：逐项依赖清单用 ./check-deps.sh --build 看。\n'
+    printf '        把基础镜像 docker load 进来并不能绕过 CDN 那一条 ——\n'
+    printf '        它发生在基础镜像内部，与基础镜像在不在本机是两回事。\n'
 
     cores="$(nproc 2>/dev/null || echo 0)"
     if (( cores >= 4 )); then

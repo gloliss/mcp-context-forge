@@ -38,8 +38,9 @@ usage() {
   ./scripts/ci/release.sh --list         列出已产出的交付包
 
 输出目录：${RELEASES_DIR}/<tag>/（可用 CONTEXTFORGE_RELEASES_DIR 覆盖）
-包内容：manifest.json、SHA256SUMS、image/、source/、
-        deploy.sh、rollback.sh、preflight-check.sh、common.sh
+包内容：manifest.json、SHA256SUMS、image/、source/、README-DEPLOY.txt、
+        deploy.sh、rollback.sh、preflight-check.sh、check-deps.sh、
+        bootstrap-inner-repo.sh、common.sh
 
 --no-image 产出的包不含镜像，因此不需要 docker：构建、身份校验与冒烟测试都留给
 目标机的 deploy.sh --build 去做（它会带 GIT_REVISION 构建参数并回校 revision 标签，
@@ -223,20 +224,58 @@ install_scripts() {
     install -m 0755 "${SCRIPT_DIR}/deploy.sh" "${OUT_DIR}/deploy.sh"
     install -m 0755 "${SCRIPT_DIR}/rollback.sh" "${OUT_DIR}/rollback.sh"
     install -m 0755 "${SCRIPT_DIR}/preflight-check.sh" "${OUT_DIR}/preflight-check.sh"
+    install -m 0755 "${SCRIPT_DIR}/check-deps.sh" "${OUT_DIR}/check-deps.sh"
+    install -m 0755 "${SCRIPT_DIR}/bootstrap-inner-repo.sh" "${OUT_DIR}/bootstrap-inner-repo.sh"
     install -m 0644 "${SCRIPT_DIR}/common.sh" "${OUT_DIR}/common.sh"
 }
 
+# 操作说明按这一包的实际标识生成。隔离网里的人只看这一个文件，里面的 commit
+# 必须是这一包的 —— 用 sed 替换会被提交说明里的 & 与 | 改坏，所以走 python。
+install_readme() {
+    local template="${SCRIPT_DIR}/README-DEPLOY.txt.in"
+    [[ -f "${template}" ]] || die "缺少说明模板：${template}"
+    RD_TEMPLATE="${template}" \
+    RD_OUT="${OUT_DIR}/README-DEPLOY.txt" \
+    RD_TAG="${TAG_NAME}" \
+    RD_SHORT="${SHORT}" \
+    RD_REVISION="${REVISION}" \
+    RD_SUBJECT="${SUBJECT}" \
+    RD_BUILT_AT="${BUILD_DATE}" \
+    RD_IMAGE_REF="${IMAGE_REF}" \
+    python3 - <<'PY'
+import os
+
+with open(os.environ["RD_TEMPLATE"], encoding="utf-8") as handle:
+    text = handle.read()
+for token, key in (
+    ("@TAG@", "RD_TAG"),
+    ("@SHORT@", "RD_SHORT"),
+    ("@REVISION@", "RD_REVISION"),
+    ("@SUBJECT@", "RD_SUBJECT"),
+    ("@BUILT_AT@", "RD_BUILT_AT"),
+    ("@IMAGE_REF@", "RD_IMAGE_REF"),
+):
+    text = text.replace(token, os.environ[key])
+with open(os.environ["RD_OUT"], "w", encoding="utf-8") as handle:
+    handle.write(text)
+PY
+    chmod 0644 "${OUT_DIR}/README-DEPLOY.txt"
+}
+
 verify_package() {
-    local junk crlf
+    local junk crlf leftover
     junk="$(find "${OUT_DIR}" \( -name '._*' -o -name '.DS_Store' \) -print -quit)"
     [[ -z "${junk}" ]] || die "交付包里出现了 macOS 垃圾文件：${junk}"
 
-    crlf="$(grep -rlU $'\r' "${OUT_DIR}"/*.sh 2>/dev/null || true)"
-    [[ -z "${crlf}" ]] || die "脚本里有 CRLF 行尾（目标机是 Linux）：${crlf}"
+    crlf="$(grep -rlU $'\r' "${OUT_DIR}"/*.sh "${OUT_DIR}"/*.txt 2>/dev/null || true)"
+    [[ -z "${crlf}" ]] || die "脚本或说明里有 CRLF 行尾（目标机是 Linux）：${crlf}"
+
+    leftover="$(grep -ohE '@[A-Z_]+@' "${OUT_DIR}/README-DEPLOY.txt" 2>/dev/null | sort -u | tr '\n' ' ' || true)"
+    [[ -z "${leftover}" ]] || die "说明文件里还有没替换掉的占位符：${leftover}"
 
     ( cd "${OUT_DIR}" && sha256sum --check --quiet SHA256SUMS ) \
         || die "自检失败：SHA256SUMS 对不上"
-    info "包自检通过：无 ._* / 无 CRLF / SHA256SUMS 一致"
+    info "包自检通过：无 ._* / 无 CRLF / 占位符已替换 / SHA256SUMS 一致"
 }
 
 main() {
@@ -328,6 +367,7 @@ main() {
     write_manifest
     write_checksums
     install_scripts
+    install_readme
     verify_package
 
     local size deploy_cmd preflight_cmd
@@ -347,13 +387,16 @@ main() {
         printf '  镜像 revision 标签与 commit 一致，目标机可以据此确认部署的是哪一版。\n'
     else
         printf '  镜像：不含。目标机现场构建 %s\n' "${IMAGE_REF}"
-        printf '  构建前提（UBI / npm / PyPI 可达）由 preflight-check.sh --build 先行确认。\n'
+        printf '  构建依赖请用 ./check-deps.sh --build 逐项确认，它只报告不拦。\n'
     fi
     printf '\n发到目标机后：\n'
     printf '  cd %s\n' "${OUT_DIR}"
-    printf '  %s      # 先体检\n' "${preflight_cmd}"
-    printf '  %s --dry-run     # 再演练（会备份、快照，但不换容器）\n' "${deploy_cmd}"
+    printf '  sha256sum --check SHA256SUMS      # 先验包\n'
+    printf '  ./check-deps.sh                   # 再确认依赖\n'
+    printf '  %s      # 前置检查\n' "${preflight_cmd}"
+    printf '  %s --dry-run     # 演练（会备份、快照，但不换容器）\n' "${deploy_cmd}"
     printf '  %s               # 真正替换\n' "${deploy_cmd}"
+    printf '\n隔离网里的那个人只需要看 README-DEPLOY.txt。\n'
 }
 
 main "$@"

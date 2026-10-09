@@ -281,6 +281,13 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 #    MySQL extra plus oracledb as a direct requirement, because oracledb is
 #    deliberately kept out of pyproject.toml/uv.lock (see
 #    experiments/oceanbase_driver_poc/requirements-poc.txt)
+#  - Both install branches must end up with the same runtime packages: the
+#    MySQL extra (PyMySQL) and oracledb are needed whichever branch runs, since
+#    the database-source feature uses them. The hermetic branch names
+#    `psycopg[c]` instead of taking the `postgres` extra because that extra is
+#    `psycopg[c,binary]`, and the `binary` half is a prebuilt wheel that does
+#    not exist for s390x/ppc64le — the very architectures the hermetic path
+#    serves, where the C speedup is compiled against system libpq instead.
 #  - Install local native extensions from pre-built wheels (if built)
 #  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
 #  - Remove build tools but keep runtime dist-info
@@ -299,7 +306,7 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --timeout 600 --retries 20 --upgrade pip setuptools wheel uv \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
-        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat,grpc,xml,soap]" "psycopg[c]>=3.3.3"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,mysql,observability,plugins,llmchat,grpc,xml,soap]" "psycopg[c]>=3.3.4" "oracledb>=26.0.0"; \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability,plugins,llmchat,grpc,xml,soap]" "oracledb>=26.0.0"; \
     fi \

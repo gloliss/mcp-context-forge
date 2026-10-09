@@ -1,0 +1,91 @@
+# ContextForge 内网 GitLab 的 CI/CD 骨架。
+#
+# 放在 scripts/ci/ 而不是仓库根，是刻意的：根部放了会同时在开发用的那台 GitLab
+# 上触发管线，而那个项目没有 runner，只会堆一串 pending。bootstrap-inner-repo.sh
+# 会把这个文件复制成内网仓库根的 .gitlab-ci.yml。
+#
+# 管线默认不启用：在内网项目的 CI/CD 变量里设置 CONTEXTFORGE_CI=1 才会跑。
+# 这样即使这个文件哪天被挪到别处，也不会在别处误触发。
+#
+# runner 用 shell executor、打在目标机宿主机上 —— 因为 deploy 作业要直接操作
+# 那台机器上的 docker。安装与注册只能在隔离网内手工做，见 README-DEPLOY.txt。
+
+workflow:
+  rules:
+    - if: '$CONTEXTFORGE_CI == "1"'
+    - when: never
+
+stages:
+  - verify
+  - deploy
+  - build
+
+default:
+  tags:
+    - contextforge
+
+variables:
+  # 交付包在目标机上的目录。必须设置，没有默认值 —— 猜错目录比不跑更危险。
+  CONTEXTFORGE_PACKAGE_DIR: ""
+  # 要部署/回滚的镜像引用，例如 mcpgateway:main-<short>-<date>。
+  CONTEXTFORGE_IMAGE: ""
+
+# 完整性自检。镜像身份（ID 与 revision 标签）不在这里重复校验：
+# deploy.sh 会按 manifest.json 自己核对，重复一遍只会增加两处漂移的机会。
+verify:package:
+  stage: verify
+  script:
+    - set -euo pipefail
+    - test -n "$CONTEXTFORGE_PACKAGE_DIR" || { echo "未设置 CONTEXTFORGE_PACKAGE_DIR"; exit 1; }
+    - cd "$CONTEXTFORGE_PACKAGE_DIR"
+    - sha256sum --check --quiet SHA256SUMS
+    - ./check-deps.sh
+    - docker image inspect "$CONTEXTFORGE_IMAGE" >/dev/null
+    - echo "包完整性与镜像存在性检查通过"
+
+# 依赖体检，只报告不拦。为下一轮的依赖包提供清单来源。
+verify:deps:
+  stage: verify
+  allow_failure: true
+  script:
+    - set -euo pipefail
+    - cd "$CONTEXTFORGE_PACKAGE_DIR"
+    - ./check-deps.sh --build
+
+# 正式替换。manual：生产永远不自动部署。
+deploy:replace:
+  stage: deploy
+  when: manual
+  environment:
+    name: prod
+  script:
+    - set -euo pipefail
+    - cd "$CONTEXTFORGE_PACKAGE_DIR"
+    - ./preflight-check.sh
+    - ./deploy.sh --dry-run
+    - ./deploy.sh
+
+deploy:rollback:
+  stage: deploy
+  when: manual
+  environment:
+    name: prod
+  script:
+    - set -euo pipefail
+    - cd "$CONTEXTFORGE_PACKAGE_DIR"
+    - ./rollback.sh
+
+# 现场重建镜像。
+#
+# 本轮**跑不了**：基础镜像内部的 dnf/microdnf 要访问 Red Hat CDN，PyPI 与 npm
+# 也一样，而这些正是下一轮依赖包要解决的东西。依赖不满足时 check-deps.sh
+# --require 会明确拒绝，而不是让管线跑一半再失败。
+build:image:
+  stage: build
+  when: manual
+  allow_failure: true
+  script:
+    - set -euo pipefail
+    - cd "$CONTEXTFORGE_PACKAGE_DIR"
+    - ./check-deps.sh --build --require
+    - ./deploy.sh --build

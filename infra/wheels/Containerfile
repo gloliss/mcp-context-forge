@@ -62,14 +62,24 @@ COPY uv.lock pyproject.toml /build/
 # Generate the full pinned runtime closure from uv.lock (--no-default-groups
 # excludes the dev group — bandit/black/mypy/pylint/pytest/ruff, ~364 pkgs
 # that would otherwise be source-compiled here for no reason), build every
-# wheel, then add psycopg[c] (pinned to the uv.lock version, since
-# Containerfile's extras don't include `postgres`) and the
-# setuptools/wheel pair the main build needs for PEP 517 isolation.
+# wheel, then add the packages the main Containerfile's hermetic branch asks
+# for that uv.lock cannot supply: psycopg[c] (pinned to the uv.lock version,
+# because the `postgres` extra is `psycopg[c,binary]` and psycopg-binary has no
+# wheel for these architectures) and oracledb (deliberately kept out of
+# pyproject.toml/uv.lock), plus the setuptools/wheel pair the main build needs
+# for PEP 517 isolation.
+#
+# The --extra list must stay in step with the extras the hermetic branch of the
+# main Containerfile installs: anything missing here turns into a
+# `--no-index --find-links` failure on s390x/ppc64le, where this closure is the
+# only source of wheels.
 RUN uv export --frozen --no-emit-project --no-default-groups \
-        --extra redis --extra observability \
+        --extra redis --extra mysql --extra observability \
         --extra plugins --extra llmchat \
+        --extra grpc --extra xml --extra soap \
         --format requirements-txt > /tmp/reqs.txt \
     && python3 -m pip wheel -r /tmp/reqs.txt --wheel-dir /wheels \
     && PSY=$(grep -A1 '^name = "psycopg-c"' uv.lock | grep version | sed 's/.*"\(.*\)".*/\1/') \
     && python3 -m pip wheel "psycopg[c]==${PSY}" --wheel-dir /wheels \
+    && python3 -m pip wheel "oracledb>=26.0.0" --wheel-dir /wheels \
     && python3 -m pip wheel setuptools wheel --wheel-dir /wheels
