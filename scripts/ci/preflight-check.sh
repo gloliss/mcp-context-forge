@@ -131,7 +131,16 @@ check_data_volume() {
     mounts="$(docker inspect --format "{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Destination}}|{{.RW}}{{println}}{{end}}" "${CONTAINER_NAME}")"
     volume_name="$(awk -F'|' -v dest="${DATA_MOUNT}" '$3 == dest && $1 == "volume" {print $2}' <<< "${mounts}")"
     if [[ -n "${volume_name}" ]]; then
-        pass "${DATA_MOUNT} 挂在命名卷 ${volume_name} 上，替换容器不会丢数据"
+        # 只确认「是命名卷」还不够：换容器是按 VOLUME_NAME 挂载的，卷名不一致就会挂上
+        # 一个全新的空卷 —— 部署看起来成功，数据却"不见了"（旧卷还在，只是没人挂它）。
+        if [[ "${volume_name}" == "${VOLUME_NAME}" ]]; then
+            pass "${DATA_MOUNT} 挂在命名卷 ${volume_name} 上，替换容器不会丢数据"
+        else
+            fail "现有容器的 ${DATA_MOUNT} 挂在卷 ${volume_name} 上，而本工具会挂 ${VOLUME_NAME}。
+      两者不是同一个卷，替换后新容器会挂上一个全新的空卷：部署看起来成功，数据却「不见了」
+      （数据还在 ${volume_name} 里，只是没有容器挂它）。
+      确认要保留的是 ${volume_name} 里的数据，就加 CONTEXTFORGE_VOLUME=${volume_name} 重跑。"
+        fi
         return
     fi
     if grep -qE "^bind\|.*\|${DATA_MOUNT}\|" <<< "${mounts}"; then
