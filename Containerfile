@@ -387,7 +387,7 @@ ARG ENABLE_PROFILING=false
 # ----------------------------------------------------------------------------
 # OCI image metadata
 # ----------------------------------------------------------------------------
-LABEL maintainer="Mihai Criveti" \
+LABEL maintainer="xin.feng <xin.feng@zetatech.com.cn>" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \

@@ -60,7 +60,7 @@ license-files = ["LICENSE"]
 
 # Maintainers
 maintainers = [
-    {name = "Mihai Criveti", email = "redacted@ibm.com"}
+    {name = "xin.feng", email = "xin.feng@zetatech.com.cn"}
 ]
 
 # ----------------------------------------------------------------
@@ -321,6 +321,12 @@ dev-all = [
 [[project.authors]]
 name = "Mihai Criveti"
 email = "redacted@ibm.com"
+
+# 二次开发部分的作者。上游原作者保留在上面 —— Apache-2.0 §4 要求保留原有署名，
+# 只能增加、不能替换。
+[[project.authors]]
+name = "xin.feng"
+email = "xin.feng@zetatech.com.cn"
 
 [project.urls]
 Homepage = "https://ibm.github.io/mcp-context-forge/"
