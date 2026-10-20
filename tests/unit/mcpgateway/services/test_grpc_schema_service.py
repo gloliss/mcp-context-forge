@@ -14,6 +14,16 @@ from mcpgateway.services.grpc_schema_service import GrpcSchemaService
 from mcpgateway.utils.grpc_validation import GrpcServiceError
 
 
+def _proto_zip(entries: dict[str, bytes], *, compressed: bool = False) -> bytes:
+    """Build an in-memory ZIP from a name-to-bytes mapping."""
+    payload = BytesIO()
+    compression = zipfile.ZIP_DEFLATED if compressed else zipfile.ZIP_STORED
+    with zipfile.ZipFile(payload, "w", compression=compression) as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return payload.getvalue()
+
+
 def _descriptor_set() -> bytes:
     file_proto = FileDescriptorProto(name="catalog.proto", package="example.catalog", syntax="proto3")
 
@@ -85,6 +95,84 @@ def test_compile_rejects_zip_traversal():
         GrpcSchemaService.compile_proto_artifact(payload.getvalue(), "schema.zip")
 
 
+def test_compile_zip_flat_with_import():
+    common = 'syntax = "proto3"; package flat.common; message Common {}'
+    api = 'syntax = "proto3"; package flat.api; import "common.proto"; ' "message Api { flat.common.Common common = 1; }"
+
+    normalized, _ = GrpcSchemaService.compile_proto_artifact(_proto_zip({"common.proto": common.encode(), "api.proto": api.encode()}), "flat.zip")
+
+    descriptor_set = FileDescriptorSet()
+    descriptor_set.ParseFromString(normalized)
+    assert {file_proto.name for file_proto in descriptor_set.file} == {"api.proto", "common.proto"}
+
+
+def test_compile_zip_uses_single_top_level_directory_as_root():
+    common = 'syntax = "proto3"; package nested.common; message Common {}'
+    api = 'syntax = "proto3"; package nested.api; import "common.proto"; ' "message Api { nested.common.Common common = 1; }"
+
+    normalized, _ = GrpcSchemaService.compile_proto_artifact(_proto_zip({"protos/common.proto": common.encode(), "protos/api.proto": api.encode()}), "nested.zip")
+
+    descriptor_set = FileDescriptorSet()
+    descriptor_set.ParseFromString(normalized)
+    assert {file_proto.name for file_proto in descriptor_set.file} == {"api.proto", "common.proto"}
+
+
+def test_compile_zip_ignores_macos_and_hidden_entries():
+    common = 'syntax = "proto3"; package clean.common; message Common {}'
+    api = 'syntax = "proto3"; package clean.api; import "common.proto"; ' "message Api { clean.common.Common common = 1; }"
+    junk = b"\x00\x05\x16\x07\x00\x02Mac OS X"
+    payload = _proto_zip(
+        {
+            "protos/common.proto": common.encode(),
+            "protos/api.proto": api.encode(),
+            "__MACOSX__/._api.proto": junk,
+            ".hidden/junk.proto": b'syntax = "proto3"; broken',
+        }
+    )
+
+    normalized, _ = GrpcSchemaService.compile_proto_artifact(payload, "macos.zip")
+
+    descriptor_set = FileDescriptorSet()
+    descriptor_set.ParseFromString(normalized)
+    assert {file_proto.name for file_proto in descriptor_set.file} == {"api.proto", "common.proto"}
+
+
+def test_compile_zip_cross_subdirectory_imports():
+    leaf = 'syntax = "proto3"; package cross.leaf; message Leaf {}'
+    root_proto = 'syntax = "proto3"; package cross.root; import "leaf/leaf.proto"; ' "message Root { cross.leaf.Leaf leaf = 1; }"
+
+    normalized, _ = GrpcSchemaService.compile_proto_artifact(_proto_zip({"protos/root.proto": root_proto.encode(), "protos/leaf/leaf.proto": leaf.encode()}), "cross.zip")
+
+    descriptor_set = FileDescriptorSet()
+    descriptor_set.ParseFromString(normalized)
+    assert {file_proto.name for file_proto in descriptor_set.file} == {"root.proto", "leaf/leaf.proto"}
+
+
+def test_compile_zip_allows_highly_compressible_small_proto():
+    small_proto = 'syntax = "proto3"; package compact; message Compact { string value = 1; }\n' + "".join("// " + "x" * 1024 + "\n" for _ in range(300))
+    payload = _proto_zip({"small.proto": small_proto.encode()}, compressed=True)
+
+    with zipfile.ZipFile(BytesIO(payload)) as archive:
+        member = archive.infolist()[0]
+        assert member.file_size < 1024 * 1024
+        assert member.file_size / member.compress_size > 100
+
+    normalized, _ = GrpcSchemaService.compile_proto_artifact(payload, "compact.zip")
+    assert normalized
+
+
+def test_compile_zip_includes_sanitized_protoc_diagnostics():
+    bad_proto = 'syntax = "proto3"; message Broken {'
+
+    with pytest.raises(GrpcServiceError) as exc_info:
+        GrpcSchemaService.compile_proto_artifact(_proto_zip({"broken.proto": bad_proto.encode()}), "broken.zip")
+
+    message = str(exc_info.value)
+    assert "Proto compilation failed:" in message
+    assert "contextforge-proto-" not in message
+    assert "broken.proto" in message
+
+
 def test_normalize_rejects_missing_import():
     file_proto = FileDescriptorProto(name="missing.proto", dependency=["not-present.proto"])
     descriptor_set = FileDescriptorSet()
@@ -97,8 +185,8 @@ def test_normalize_rejects_missing_import():
 def test_migrate_legacy_descriptors_creates_artifact_and_sets_active(test_db):
     import base64
     from mcpgateway.db import GrpcSchemaArtifact, GrpcService
-    import base64
     from google.protobuf.descriptor_pb2 import FileDescriptorSet
+
     descriptor_set_bytes = _descriptor_set()
     fds = FileDescriptorSet()
     fds.ParseFromString(descriptor_set_bytes)
@@ -131,9 +219,7 @@ def test_migrate_legacy_descriptors_creates_artifact_and_sets_active(test_db):
 
     artifact2 = GrpcSchemaService.descriptors_for_service(test_db, service)
     assert artifact2 == descriptors
-    assert test_db.query(GrpcSchemaArtifact).filter(
-        GrpcSchemaArtifact.grpc_service_id == service.id
-    ).count() == 1
+    assert test_db.query(GrpcSchemaArtifact).filter(GrpcSchemaArtifact.grpc_service_id == service.id).count() == 1
 
 
 def _new_service(test_db, name=None):
@@ -153,9 +239,7 @@ def test_import_artifact_as_candidate_sets_candidate_pointer(test_db):
     from mcpgateway.db import GrpcSchemaArtifact
 
     service = _new_service(test_db)
-    artifact = GrpcSchemaService.import_artifact(
-        test_db, service, _descriptor_set(), "candidate.protoset", created_by="system", activate=False, source_type="reflection"
-    )
+    artifact = GrpcSchemaService.import_artifact(test_db, service, _descriptor_set(), "candidate.protoset", created_by="system", activate=False, source_type="reflection")
     test_db.commit()
     test_db.refresh(service)
     assert artifact.is_active is False
@@ -173,17 +257,13 @@ def _empty_descriptor_set() -> bytes:
 
 def test_activate_artifact_refuses_empty_catalog_when_methods_exist(test_db):
     service = _new_service(test_db)
-    active = GrpcSchemaService.import_artifact(
-        test_db, service, _descriptor_set(), "active.protoset", created_by="system", activate=True
-    )
+    active = GrpcSchemaService.import_artifact(test_db, service, _descriptor_set(), "active.protoset", created_by="system", activate=True)
     test_db.commit()
     test_db.refresh(service)
     assert active.is_active is True
     assert service.method_count > 0
 
-    empty = GrpcSchemaService.import_artifact(
-        test_db, service, _empty_descriptor_set(), "empty.protoset", created_by="system", activate=False
-    )
+    empty = GrpcSchemaService.import_artifact(test_db, service, _empty_descriptor_set(), "empty.protoset", created_by="system", activate=False)
     test_db.commit()
     test_db.refresh(service)
     assert service.candidate_artifact_id == empty.id
@@ -209,17 +289,13 @@ def _variant_descriptor_set() -> bytes:
 
 def test_activate_artifact_promotes_candidate_and_clears_pointer(test_db):
     service = _new_service(test_db)
-    active = GrpcSchemaService.import_artifact(
-        test_db, service, _descriptor_set(), "active.protoset", created_by="system", activate=True
-    )
+    active = GrpcSchemaService.import_artifact(test_db, service, _descriptor_set(), "active.protoset", created_by="system", activate=True)
     test_db.commit()
     test_db.refresh(service)
     assert active.is_active is True
     assert service.active_artifact_id == active.id
 
-    candidate = GrpcSchemaService.import_artifact(
-        test_db, service, _variant_descriptor_set(), "candidate.protoset", created_by="system", activate=False
-    )
+    candidate = GrpcSchemaService.import_artifact(test_db, service, _variant_descriptor_set(), "candidate.protoset", created_by="system", activate=False)
     test_db.commit()
     test_db.refresh(service)
     assert candidate.id != active.id

@@ -14,6 +14,8 @@ from importlib import resources
 from io import BytesIO
 import json
 from pathlib import Path, PurePosixPath
+import subprocess
+import sys
 import tempfile
 from typing import Any, Iterable, Optional
 import zipfile
@@ -195,6 +197,7 @@ class GrpcSchemaService:
                 archive,
                 max_entries=settings.mcpgateway_proto_max_zip_entries,
                 max_uncompressed_bytes=settings.mcpgateway_proto_max_uncompressed_bytes,
+                skip_macos_junk=True,
                 label="Proto ZIP",
             )
         except ArtifactSecurityError as exc:
@@ -208,6 +211,7 @@ class GrpcSchemaService:
         with tempfile.TemporaryDirectory(prefix="contextforge-proto-") as temp_name:
             root = Path(temp_name)
             suffix = Path(filename).suffix.lower()
+            compile_root: Optional[Path] = None
             if suffix == ".zip":
                 with zipfile.ZipFile(BytesIO(payload)) as archive:
                     members = cls._safe_zip_members(archive)
@@ -215,36 +219,70 @@ class GrpcSchemaService:
                         destination = root.joinpath(*PurePosixPath(member.filename).parts)
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         destination.write_bytes(archive.read(member))
+                    compile_root = cls._zip_compile_root(root, members)
             elif suffix == ".proto":
                 root.joinpath(Path(filename).name).write_bytes(payload)
+                compile_root = root
             else:
                 return cls.normalize_descriptor_set(payload)
 
-            proto_files = sorted(path for path in root.rglob("*.proto") if path.is_file())
+            if compile_root is None:
+                compile_root = root
+            proto_files = sorted(path for path in compile_root.rglob("*.proto") if path.is_file())
             if not proto_files:
                 raise GrpcServiceError("Proto artifact contains no .proto files")
             output = root / "schema.protoset"
             try:
                 # Third-Party
-                from grpc_tools import protoc  # pylint: disable=import-outside-toplevel
+                import grpc_tools  # pylint: disable=import-outside-toplevel
 
-                include_root = resources.files("grpc_tools").joinpath("_proto")
+                include_root = resources.files(grpc_tools).joinpath("_proto")
+                user_include_roots = [compile_root, *dict.fromkeys(path.parent for path in proto_files)]
                 arguments = [
                     "grpc_tools.protoc",
-                    f"-I{root}",
+                    *[f"-I{path}" for path in user_include_roots],
                     f"-I{include_root}",
                     f"--descriptor_set_out={output}",
                     "--include_imports",
                     "--include_source_info",
-                    *[str(path.relative_to(root)) for path in proto_files],
+                    *[str(path.relative_to(compile_root)) for path in proto_files],
                 ]
-                result = protoc.main(arguments)
+                completed = subprocess.run(
+                    [sys.executable, "-m", "grpc_tools.protoc", *arguments[1:]],
+                    cwd=compile_root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                result = completed.returncode
+                stderr_text = completed.stderr
             except ImportError as exc:
                 raise GrpcServiceError("grpcio-tools is required to compile .proto files") from exc
             if result != 0 or not output.exists():
-                raise GrpcServiceError("Proto compilation failed; check imports and syntax")
+                detail = cls._protoc_error_detail(root, stderr_text)
+                raise GrpcServiceError(f"Proto compilation failed: {detail}")
             normalized, catalog = cls.normalize_descriptor_set(output.read_bytes())
             return normalized, catalog
+
+    @staticmethod
+    def _zip_compile_root(root: Path, members: list[zipfile.ZipInfo]) -> Path:
+        """Choose the include root shared by extracted ZIP members."""
+        paths = [PurePosixPath(member.filename) for member in members if member.filename]
+        if not paths:
+            return root
+        first_parts = {path.parts[0] for path in paths}
+        if len(first_parts) == 1 and all(len(path.parts) > 1 for path in paths):
+            return root / first_parts.pop()
+        return root
+
+    @staticmethod
+    def _protoc_error_detail(root: Path, stderr: str) -> str:
+        """Sanitize and truncate protoc stderr for the API error message."""
+        prefix = f"{root}/"
+        cleaned = stderr.replace(prefix, "")
+        lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+        return "; ".join(lines[:8]) or "no protoc output"
 
     @classmethod
     def import_artifact(

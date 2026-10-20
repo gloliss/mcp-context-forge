@@ -23,7 +23,11 @@ from typing import Any
 import zipfile
 
 # Default maximum file_size / compress_size ratio accepted from ZIP entries.
+# Small files commonly have a high ratio (comments, whitespace, or metadata),
+# so ratio checks are skipped below 1 MiB; the total expanded-size cap still
+# bounds aggregate expansion.
 MAX_ZIP_RATIO = 100
+_ZIP_RATIO_SMALL_FILE_BYTES = 1024 * 1024
 
 
 class ArtifactSecurityError(Exception):
@@ -36,6 +40,7 @@ def safe_zip_members(
     max_entries: int,
     max_uncompressed_bytes: int,
     max_ratio: float = MAX_ZIP_RATIO,
+    skip_macos_junk: bool = False,
     label: str = "Artifact ZIP",
 ) -> list[zipfile.ZipInfo]:
     """Validate ZIP paths, expansion size, entry count, and compression ratio.
@@ -43,13 +48,20 @@ def safe_zip_members(
     Rejects: absolute paths, ``..`` traversal, empty paths, symlink entries,
     more than ``max_entries`` members, more than ``max_uncompressed_bytes``
     of expanded data, zero-compressed entries carrying data (bombs), and
-    compression ratios above ``max_ratio``.
+    compression ratios above ``max_ratio`` for files of at least 1 MiB.
+
+    When ``skip_macos_junk`` is true, macOS metadata entries are ignored and
+    are not returned for extraction. They still participate in the entry count
+    and expanded-size checks so an archive cannot hide unbounded junk behind
+    harmless-looking names.
 
     Args:
         archive: The opened ZIP archive.
         max_entries: Maximum accepted member count.
         max_uncompressed_bytes: Maximum accepted total expanded size.
         max_ratio: Maximum accepted ``file_size / compress_size`` ratio.
+        skip_macos_junk: Ignore ``__MACOSX__``, ``._*``, ``.DS_Store``, and
+            hidden-directory entries instead of returning them.
         label: Human-readable artifact label embedded in error messages so
             each caller keeps its own wording (e.g. ``"Proto ZIP"``).
 
@@ -74,11 +86,25 @@ def safe_zip_members(
             raise ArtifactSecurityError(f"{label} expanded size exceeds the configured limit")
         if member.compress_size == 0 and member.file_size > 0:
             raise ArtifactSecurityError(f"{label} contains an invalid compressed entry")
-        if member.compress_size and member.file_size / member.compress_size > max_ratio:
+        if skip_macos_junk and _is_macos_junk_member(member.filename):
+            continue
+        if member.compress_size and member.file_size >= _ZIP_RATIO_SMALL_FILE_BYTES and member.file_size / member.compress_size > max_ratio:
             raise ArtifactSecurityError(f"{label} compression ratio exceeds the safety limit")
         if not member.is_dir():
             safe.append(member)
     return safe
+
+
+def _is_macos_junk_member(filename: str) -> bool:
+    """Return true for macOS metadata entries that should not be extracted."""
+    path = PurePosixPath(filename)
+    if not path.parts:
+        return False
+    if "__MACOSX__" in path.parts or any(part.startswith("._") for part in path.parts):
+        return True
+    if path.name == ".DS_Store":
+        return True
+    return any(part.startswith(".") for part in path.parts[:-1])
 
 
 def json_pointer_get(document: Any, pointer: str) -> Any:
