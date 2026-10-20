@@ -209,7 +209,7 @@ class GrpcSchemaService:
     def _proto_imports(path: Path) -> list[str]:
         """Return import names from non-comment lines in a .proto file."""
         imports: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             line = line.split("//", 1)[0]
             for match in _PROTO_IMPORT_RE.finditer(line):
                 imports.append(match.group(1))
