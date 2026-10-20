@@ -14,6 +14,7 @@ from importlib import resources
 from io import BytesIO
 import json
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,7 @@ from mcpgateway.utils.grpc_validation import GrpcServiceError
 
 _MAX_DESCRIPTOR_COUNT = 1024
 _MAX_DESCRIPTOR_BYTES = 8 * 1024 * 1024
+_PROTO_IMPORT_RE = re.compile(r'(?<![\w])import\s+(?:(?:public|weak)\s+)?"([^"]+)"\s*;')
 
 
 class GrpcSchemaService:
@@ -203,6 +205,47 @@ class GrpcSchemaService:
         except ArtifactSecurityError as exc:
             raise GrpcServiceError(str(exc)) from exc
 
+    @staticmethod
+    def _proto_imports(path: Path) -> list[str]:
+        """Return import names from non-comment lines in a .proto file."""
+        imports: list[str] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.split("//", 1)[0]
+            for match in _PROTO_IMPORT_RE.finditer(line):
+                imports.append(match.group(1))
+        return imports
+
+    @staticmethod
+    def _resolve_proto_import(import_name: str, include_roots: Iterable[Path]) -> Optional[Path]:
+        """Resolve an import name using the first include root that contains it."""
+        target = PurePosixPath(import_name)
+        if target.is_absolute():
+            return None
+        for include_root in include_roots:
+            candidate = include_root.joinpath(*target.parts)
+            if candidate.is_file():
+                return candidate
+        return None
+
+    @classmethod
+    def _entry_proto_files(cls, proto_files: list[Path], compile_root: Path) -> list[Path]:
+        """Select protos not imported by another archive proto.
+
+        protoc loads imported files by their import name, so passing them as
+        top-level inputs can define the same symbols twice.  If every file is
+        part of an import cycle, fall back to the previous all-files behaviour.
+        """
+        proto_set = set(proto_files)
+        include_roots = [compile_root, *dict.fromkeys(path.parent for path in proto_files)]
+        imported: set[Path] = set()
+        for path in proto_files:
+            for import_name in cls._proto_imports(path):
+                imported_path = cls._resolve_proto_import(import_name, include_roots)
+                if imported_path in proto_set:
+                    imported.add(imported_path)
+        entry_files = [path for path in proto_files if path not in imported]
+        return entry_files or list(proto_files)
+
     @classmethod
     def compile_proto_artifact(cls, payload: bytes, filename: str) -> tuple[bytes, dict[str, Any]]:
         """Compile a .proto or safe ZIP into a normalized FileDescriptorSet."""
@@ -238,6 +281,7 @@ class GrpcSchemaService:
 
                 include_root = resources.files(grpc_tools).joinpath("_proto")
                 user_include_roots = [compile_root, *dict.fromkeys(path.parent for path in proto_files)]
+                entry_files = cls._entry_proto_files(proto_files, compile_root)
                 arguments = [
                     "grpc_tools.protoc",
                     *[f"-I{path}" for path in user_include_roots],
@@ -245,7 +289,7 @@ class GrpcSchemaService:
                     f"--descriptor_set_out={output}",
                     "--include_imports",
                     "--include_source_info",
-                    *[str(path.relative_to(compile_root)) for path in proto_files],
+                    *[str(path.relative_to(compile_root)) for path in entry_files],
                 ]
                 completed = subprocess.run(
                     [sys.executable, "-m", "grpc_tools.protoc", *arguments[1:]],

@@ -137,6 +137,24 @@ def test_compile_zip_ignores_macos_and_hidden_entries():
     assert {file_proto.name for file_proto in descriptor_set.file} == {"api.proto", "common.proto"}
 
 
+def test_compile_zip_ignores_macos_directory_without_dot_underscore():
+    common = 'syntax = "proto3"; package clean.common; message Common {}'
+    api = 'syntax = "proto3"; package clean.api; import "common.proto"; ' "message Api { clean.common.Common common = 1; }"
+    payload = _proto_zip(
+        {
+            "protos/common.proto": common.encode(),
+            "protos/api.proto": api.encode(),
+            "__MACOSX/protos/foo.proto": b'syntax = "proto3"; broken',
+        }
+    )
+
+    normalized, _ = GrpcSchemaService.compile_proto_artifact(payload, "macos-dir.zip")
+
+    descriptor_set = FileDescriptorSet()
+    descriptor_set.ParseFromString(normalized)
+    assert {file_proto.name for file_proto in descriptor_set.file} == {"api.proto", "common.proto"}
+
+
 def test_compile_zip_cross_subdirectory_imports():
     leaf = 'syntax = "proto3"; package cross.leaf; message Leaf {}'
     root_proto = 'syntax = "proto3"; package cross.root; import "leaf/leaf.proto"; ' "message Root { cross.leaf.Leaf leaf = 1; }"
@@ -146,6 +164,42 @@ def test_compile_zip_cross_subdirectory_imports():
     descriptor_set = FileDescriptorSet()
     descriptor_set.ParseFromString(normalized)
     assert {file_proto.name for file_proto in descriptor_set.file} == {"root.proto", "leaf/leaf.proto"}
+
+
+def test_compile_zip_imported_subdirectory_service_is_included_once():
+    a_proto = 'syntax = "proto3"; package demo.a; import "common.proto"; ' "message A { demo.common.Common common = 1; }"
+    common = 'syntax = "proto3"; package demo.common; message Common {}'
+    b_proto = 'syntax = "proto3"; package demo.b; import "c.proto"; ' "message B { demo.c.C c = 1; }"
+    c_proto = (
+        'syntax = "proto3"; package demo.c; '
+        "message C { string name = 1; } "
+        'service CService { rpc Get(C) returns (C); }'
+    )
+
+    normalized, catalog = GrpcSchemaService.compile_proto_artifact(
+        _proto_zip(
+            {
+                "a.proto": a_proto.encode(),
+                "common.proto": common.encode(),
+                "sub/b.proto": b_proto.encode(),
+                "sub/c.proto": c_proto.encode(),
+            }
+        ),
+        "imported-service.zip",
+    )
+
+    descriptor_set = FileDescriptorSet()
+    descriptor_set.ParseFromString(normalized)
+    assert {file_proto.name for file_proto in descriptor_set.file} == {
+        "a.proto",
+        "common.proto",
+        "sub/b.proto",
+        "c.proto",
+    }
+    assert "demo.c.CService" in catalog
+    method = catalog["demo.c.CService"]["methods"][0]
+    assert method["input_type"] == ".demo.c.C"
+    assert method["output_type"] == ".demo.c.C"
 
 
 def test_compile_zip_allows_highly_compressible_small_proto():

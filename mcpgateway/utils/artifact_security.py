@@ -60,7 +60,7 @@ def safe_zip_members(
         max_entries: Maximum accepted member count.
         max_uncompressed_bytes: Maximum accepted total expanded size.
         max_ratio: Maximum accepted ``file_size / compress_size`` ratio.
-        skip_macos_junk: Ignore ``__MACOSX__``, ``._*``, ``.DS_Store``, and
+        skip_macos_junk: Ignore ``__MACOSX``, ``._*``, ``.DS_Store``, and
             hidden-directory entries instead of returning them.
         label: Human-readable artifact label embedded in error messages so
             each caller keeps its own wording (e.g. ``"Proto ZIP"``).
@@ -100,7 +100,7 @@ def _is_macos_junk_member(filename: str) -> bool:
     path = PurePosixPath(filename)
     if not path.parts:
         return False
-    if "__MACOSX__" in path.parts or any(part.startswith("._") for part in path.parts):
+    if "__MACOSX" in path.parts or any(part.startswith("._") for part in path.parts):
         return True
     if path.name == ".DS_Store":
         return True
