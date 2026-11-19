@@ -1,11 +1,12 @@
 <!-- htmlhint doctype-first:false -->
+{% macro utc_iso(dt) -%}{{ dt.isoformat() }}{% if dt.tzinfo is none %}Z{% endif %}{%- endmacro %}
 {% if traces %}
     {% for trace in traces %}
     <tr hx-get="{{ root_path }}/admin/observability/trace/{{ trace.trace_id }}" hx-swap="innerHTML"
         hx-target="#trace-detail-content"
         hx-trigger="click"
         @click="selectedTrace = '{{ trace.trace_id }}'">
-        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">{{ trace.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700"><span data-utc="{{ utc_iso(trace.start_time) }}">{{ trace.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</span></td>
         <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700"><strong>{{ trace.http_method or 'N/A' }}</strong></td>
         <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700"><code>{{ trace.name }}</code></td>
         <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">

@@ -1,6 +1,22 @@
 <!-- htmlhint doctype-first:false, tag-pair:false -->
 <!-- Advanced Metrics Dashboard -->
 <script defer nonce="{{ csp_nonce(request) }}">
+// Stored observability clocks are UTC. A value with no zone is that UTC
+// wall clock, not the browser's local time.
+function observabilityLocalTime(value) {
+  if (value == null || value === "") return "";
+  const text = String(value);
+  if (!/[T ]\d{2}:\d{2}/.test(text)) return text;
+  const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/.test(text);
+  const date = new Date(hasZone ? text : `${text.replace(" ", "T")}Z`);
+  if (Number.isNaN(date.getTime())) return text;
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 // Metrics Dashboard Controller Factory
 window.createMetricsController = function() {
   return {
@@ -225,7 +241,7 @@ window.createMetricsController = function() {
           const chart = new Chart(ctx, {
         type: 'line',
         data: {
-          labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString()),
+          labels: data.timestamps.map((t) => observabilityLocalTime(t)),
           datasets: [
             {
               label: 'p50 (median)',
@@ -358,7 +374,7 @@ window.createMetricsController = function() {
           const chart = new Chart(ctx, {
         type: 'line',
         data: {
-          labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString()),
+          labels: data.timestamps.map((t) => observabilityLocalTime(t)),
           datasets: [
             {
               label: 'Total Requests',
@@ -560,9 +576,10 @@ window.createMetricsController = function() {
                   label: 'Request Count',
                   data: heatmapData,
                   backgroundColor: function (context) {
-                    const value = context.raw.v;
-                    const maxValue = Math.max(...heatmapData.map((d) => d.v));
-                    const alpha = value / maxValue;
+                    // Chart.js resolves scriptable options once without a point.
+                    const value = context && context.raw ? Number(context.raw.v) || 0 : 0;
+                    const maxValue = heatmapData.reduce((max, point) => Math.max(max, point.v || 0), 0);
+                    const alpha = maxValue > 0 ? value / maxValue : 0;
                     return `rgba(239, 68, 68, ${alpha})`;
                   },
                   pointRadius: 10,
@@ -585,8 +602,10 @@ window.createMetricsController = function() {
                 tooltip: {
                   callbacks: {
                     title: function (context) {
-                      const timeLabel = data.time_labels[context[0].raw.x];
-                      const latencyLabel = data.latency_labels[context[0].raw.y];
+                      const raw = context && context[0] && context[0].raw;
+                      if (!raw) return '';
+                      const timeLabel = observabilityLocalTime(data.time_labels[raw.x]);
+                      const latencyLabel = data.latency_labels[raw.y];
                       return `${timeLabel} - ${latencyLabel}`;
                     },
                     label: function (context) {
@@ -603,7 +622,7 @@ window.createMetricsController = function() {
                     stepSize: 1,
                     color: defaults.tickColor,
                     callback: function (value) {
-                      return data.time_labels[value] || '';
+                      return observabilityLocalTime(data.time_labels[value]) || '';
                     },
                   },
                   title: {
@@ -641,6 +660,8 @@ window.createMetricsController = function() {
           this.charts.heatmap = chart;
         } catch (e) {
           console.error('Failed to create heatmap chart:', e);
+          const existing = typeof Chart !== 'undefined' && Chart.getChart ? Chart.getChart(canvas) : null;
+          if (existing) existing.destroy();
           this.error = 'Failed to render heatmap chart';
         }
       });

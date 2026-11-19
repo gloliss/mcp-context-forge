@@ -13,6 +13,41 @@ if (!window.getChartDefaults) {
     };
   };
 }
+
+// Trace rows are rendered with the UTC wall clock SQLite stores. Mark them
+// with data-utc (Z when the offset was dropped) and show the browser's local time.
+if (!window.formatObservabilityTimes) {
+  window.formatObservabilityTimes = function (root) {
+    if (!root || typeof root.querySelectorAll !== "function") return;
+    root.querySelectorAll("[data-utc]").forEach(function (node) {
+      const raw = node.getAttribute("data-utc");
+      if (!raw) return;
+      const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/.test(raw);
+      const date = new Date(hasZone ? raw : raw + "Z");
+      if (Number.isNaN(date.getTime())) return;
+      let text = date.toLocaleString(undefined, {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      if (node.getAttribute("data-utc-ms") === "1") {
+        text += "." + String(date.getMilliseconds()).padStart(3, "0");
+      }
+      node.textContent = text;
+    });
+  };
+  document.body.addEventListener("htmx:afterSwap", function (event) {
+    const target = event.detail && event.detail.target;
+    if (!target) return;
+    if (target.id === "traces-list" || target.id === "trace-detail-content") {
+      window.formatObservabilityTimes(target);
+    }
+  });
+}
 </script>
 <div class="observability-container" @observability:enter.document="startPolling()" @observability:leave.document="resetLoadedFlags()" x-data="observabilityDashboard">
     <style>

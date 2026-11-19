@@ -4338,6 +4338,29 @@ class GatewayImpactPreview(BaseModelWithConfigDict):
     servers: List[GatewayImpactServer] = Field(default_factory=list, description="Visible virtual servers associated through this gateway's tools, resources, or prompts")
 
 
+class GatewayFailureReason(BaseModelWithConfigDict):
+    """One distinct failure message recorded for a mounted MCP gateway."""
+
+    error_message: str = Field(..., description="Exact error_message stored on the invocation metric row")
+    count: int = Field(..., description="Number of retained raw failures that stored this message")
+
+
+class GatewayInvocationMetrics(BaseModelWithConfigDict):
+    """Cumulative invocation stats for one mounted MCP gateway.
+
+    Counts and total response time combine retained raw rows with hourly and
+    daily rollups. Failure reasons come only from raw rows that still store
+    ``error_message``; rolled-up failures whose raw rows were deleted stay in
+    ``failed_executions`` without a message.
+    """
+
+    gateway_id: str = Field(..., description="ID of the mounted MCP gateway")
+    total_executions: int = Field(..., description="Cumulative invocations of this gateway's tools, resources, and prompts")
+    total_response_time: float = Field(..., description="Cumulative response time in seconds")
+    failed_executions: int = Field(..., description="Cumulative failed invocations")
+    failure_reasons: List[GatewayFailureReason] = Field(default_factory=list, description="Distinct raw failure messages, highest count first")
+
+
 class FederatedTool(BaseModelWithConfigDict):
     """Schema for tools provided by federated gateways.
 
@@ -9789,6 +9812,37 @@ class CursorPaginatedUsersResponse(BaseModel):
 # ============================================================================
 
 
+def serialize_observability_datetime(dt: Optional[datetime]) -> Optional[str]:
+    """Serialize an observability timestamp as a UTC instant.
+
+    Rows are written with ``utc_now()``. SQLite then stores the UTC wall
+    clock and drops the offset, so a naive value is UTC, not the host's
+    local clock. Emitting it without a zone makes clients treat that UTC
+    clock as local time.
+
+    Args:
+        dt: Stored datetime, or None.
+
+    Returns:
+        ISO-8601 UTC string ending in ``Z``, or None.
+
+    Examples:
+        >>> serialize_observability_datetime(datetime(2026, 11, 18, 8, 23, 16))
+        '2026-11-18T08:23:16Z'
+        >>> serialize_observability_datetime(datetime(2026, 11, 18, 8, 23, 16, tzinfo=timezone.utc))
+        '2026-11-18T08:23:16Z'
+        >>> serialize_observability_datetime(None) is None
+        True
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
 class ObservabilityTraceBase(BaseModel):
     """Base schema for observability traces."""
 
@@ -9833,6 +9887,18 @@ class ObservabilityTraceRead(ObservabilityTraceBase):
 
     model_config = {"from_attributes": True}
 
+    @field_serializer("start_time", "end_time", "created_at")
+    def serialize_observability_timestamps(self, value: Optional[datetime]) -> Optional[str]:
+        """Serialize trace clocks as UTC instants.
+
+        Args:
+            value: Stored datetime. Naive values are UTC.
+
+        Returns:
+            UTC ISO-8601 string ending in ``Z``, or None.
+        """
+        return serialize_observability_datetime(value)
+
 
 class ObservabilitySpanBase(BaseModel):
     """Base schema for observability spans."""
@@ -9876,6 +9942,18 @@ class ObservabilitySpanRead(ObservabilitySpanBase):
 
     model_config = {"from_attributes": True}
 
+    @field_serializer("start_time", "end_time", "created_at")
+    def serialize_observability_timestamps(self, value: Optional[datetime]) -> Optional[str]:
+        """Serialize span clocks as UTC instants.
+
+        Args:
+            value: Stored datetime. Naive values are UTC.
+
+        Returns:
+            UTC ISO-8601 string ending in ``Z``, or None.
+        """
+        return serialize_observability_datetime(value)
+
 
 class ObservabilityEventBase(BaseModel):
     """Base schema for observability events."""
@@ -9903,6 +9981,18 @@ class ObservabilityEventRead(ObservabilityEventBase):
 
     model_config = {"from_attributes": True}
 
+    @field_serializer("timestamp", "created_at")
+    def serialize_observability_timestamps(self, value: Optional[datetime]) -> Optional[str]:
+        """Serialize event clocks as UTC instants.
+
+        Args:
+            value: Stored datetime. Naive values are UTC.
+
+        Returns:
+            UTC ISO-8601 string ending in ``Z``, or None.
+        """
+        return serialize_observability_datetime(value)
+
 
 class ObservabilityMetricBase(BaseModel):
     """Base schema for observability metrics."""
@@ -9929,6 +10019,18 @@ class ObservabilityMetricRead(ObservabilityMetricBase):
     created_at: datetime = Field(..., description="Creation timestamp")
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("timestamp", "created_at")
+    def serialize_observability_timestamps(self, value: Optional[datetime]) -> Optional[str]:
+        """Serialize metric clocks as UTC instants.
+
+        Args:
+            value: Stored datetime. Naive values are UTC.
+
+        Returns:
+            UTC ISO-8601 string ending in ``Z``, or None.
+        """
+        return serialize_observability_datetime(value)
 
 
 class ObservabilityTraceWithSpans(ObservabilityTraceRead):

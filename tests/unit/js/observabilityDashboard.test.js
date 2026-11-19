@@ -8,7 +8,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 import {
   executeObservabilityScriptsAndStrip,
+  formatObservabilityTimestamp,
   observabilityDashboard,
+  parseObservabilityTimestamp,
 } from "../../../mcpgateway/admin_ui/components/observability-dashboard.js";
 import {
   afterAll,
@@ -73,6 +75,20 @@ function buttonWithText(text) {
     (button) => button.textContent.trim() === text
   );
 }
+
+describe("Observability timestamps", () => {
+  it("reads a zone-less UTC wall clock as UTC", () => {
+    expect(parseObservabilityTimestamp("2026-11-18T08:23:16").toISOString()).toBe(
+      "2026-11-18T08:23:16.000Z"
+    );
+    expect(formatObservabilityTimestamp("2026-11-18T08:23:16")).toBe(
+      formatObservabilityTimestamp("2026-11-18T08:23:16Z")
+    );
+    expect(formatObservabilityTimestamp("2026-11-18T08:23:16.007Z", true)).toMatch(
+      /\.007$/
+    );
+  });
+});
 
 describe("Observability dashboard Alpine CSP integration", () => {
   let fetchMock;

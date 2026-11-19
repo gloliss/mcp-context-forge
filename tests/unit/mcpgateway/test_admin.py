@@ -22626,6 +22626,45 @@ class TestObservabilityTraces:
     """Tests for get_observability_traces endpoint (lines 14310-14400)."""
 
     @pytest.mark.asyncio
+    async def test_trace_window_uses_utc_not_host_local(self, allow_permission, monkeypatch):
+        """A non-UTC host must not shift the trace window onto the local clock."""
+        utc_now = datetime(2026, 11, 18, 8, 0, tzinfo=timezone.utc)
+
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                if tz is None:
+                    return datetime(2026, 11, 18, 16, 0)
+                return utc_now.astimezone(tz)
+
+        monkeypatch.setattr("mcpgateway.admin.datetime", _FrozenDateTime)
+
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app.state.templates.TemplateResponse.return_value = MagicMock()
+
+        await get_observability_traces(
+            request,
+            time_range="1h",
+            status_filter="all",
+            limit=50,
+            min_duration=None,
+            max_duration=None,
+            http_method=None,
+            user_email=None,
+            name_search=None,
+            attribute_search=None,
+            tool_name=None,
+            _user={"email": "admin@test.com"},
+            db=mock_session,
+        )
+
+        clause = mock_session.query.return_value.filter.call_args.args[0]
+        assert clause.right.value == datetime(2026, 11, 18, 7, 0, tzinfo=timezone.utc)
+
+    @pytest.mark.asyncio
     async def test_traces_default_empty(self, allow_permission):
         mock_session = MagicMock()
         mock_query = mock_session.query.return_value.filter.return_value

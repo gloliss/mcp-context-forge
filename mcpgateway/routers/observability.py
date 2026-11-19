@@ -423,7 +423,7 @@ async def cleanup_old_traces(
         5
     """
     service = ObservabilityService()
-    cutoff_time = datetime.now() - timedelta(days=days)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
     deleted = service.delete_old_traces(cutoff_time)
     return {"deleted": deleted, "cutoff_time": cutoff_time}
 
@@ -457,7 +457,7 @@ async def get_stats(
     from mcpgateway.db import ObservabilityTrace
 
     ObservabilityService()
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     # Get basic counts
     total_traces = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time).scalar()
@@ -738,7 +738,7 @@ async def get_query_performance(
     # First-Party
 
     ObservabilityService()
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
     dialect_name = db.get_bind().dialect.name

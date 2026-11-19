@@ -1478,6 +1478,27 @@ def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", fai
     pagination.page_items = rendered_count
 
 
+def _observability_comparison_cutoff(cutoff_time: datetime, dialect_name: str) -> datetime:
+    """Match a cutoff to the clock stored on observability timestamp columns.
+
+    Rows are written with ``utc_now()``. PostgreSQL keeps the offset, so the
+    aware UTC value compares as an instant. SQLite stores the UTC wall clock
+    and drops the offset, so the bound has to be that same naive UTC clock.
+    Comparing either dialect with the host's local ``datetime.now()`` shifts
+    the window by the local offset.
+
+    Args:
+        cutoff_time: Timezone-aware UTC lower bound.
+        dialect_name: SQLAlchemy dialect name for the current session.
+
+    Returns:
+        Cutoff that compares correctly with ``start_time`` on this dialect.
+    """
+    if dialect_name == "postgresql":
+        return cutoff_time
+    return cutoff_time.replace(tzinfo=None)
+
+
 def _get_span_entity_performance(
     db: Session,
     cutoff_time: datetime,
@@ -1565,8 +1586,8 @@ def _get_span_entity_performance(
 
     # Fallback: Python aggregation (SQLite or other DBs, or PostgreSQL with USE_POSTGRESDB_PERCENTILES=False)
     # Pass dialect_name to extract_json_field to ensure correct SQL syntax for the actual database
-    # Use timezone-aware cutoff for PostgreSQL to avoid timezone drift, naive for SQLite
-    effective_cutoff = cutoff_time if dialect_name == "postgresql" else cutoff_time_naive
+    # Aware UTC on PostgreSQL; naive UTC wall clock on SQLite, where the offset is dropped.
+    effective_cutoff = _observability_comparison_cutoff(cutoff_time, dialect_name)
     spans = (
         db.query(
             extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"', dialect_name=dialect_name).label("entity"),
@@ -19396,7 +19417,9 @@ async def get_observability_traces(
     # Parse time range
     time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
     hours = time_map.get(time_range, 24)
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    # Stored clocks are UTC. A naive local now() is ahead by the host offset,
+    # so windows shorter than that offset exclude every current trace.
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     query = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time >= cutoff_time)
 
@@ -20147,7 +20170,7 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
     time_labels = []
     for i in range(time_buckets):
         bucket_time = cutoff_time + timedelta(minutes=i * time_bucket_minutes)
-        time_labels.append(bucket_time.strftime("%H:%M"))
+        time_labels.append(bucket_time.astimezone(timezone.utc).isoformat())
 
     latency_labels = []
     for i in range(latency_buckets):
@@ -20216,7 +20239,7 @@ def _get_latency_heatmap_python(db: Session, cutoff_time: datetime, hours: int, 
     time_labels = []
     for i in range(time_buckets):
         bucket_time = cutoff_time + timedelta(minutes=i * time_bucket_minutes)
-        time_labels.append(bucket_time.strftime("%H:%M"))
+        time_labels.append(bucket_time.astimezone(timezone.utc).isoformat())
 
     latency_labels = []
     for i in range(latency_buckets):
@@ -20509,7 +20532,6 @@ async def get_tool_usage(
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
         dialect_name = db.get_bind().dialect.name
 
         # Query tool invocations from spans
@@ -20523,7 +20545,7 @@ async def get_tool_usage(
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
-                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.start_time >= _observability_comparison_cutoff(cutoff_time, dialect_name),
                 tool_name_expr.isnot(None),
             )
             .group_by(tool_name_expr)
@@ -20634,7 +20656,6 @@ async def get_tool_errors(
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
         dialect_name = db.get_bind().dialect.name
 
         # Query tool error rates
@@ -20648,7 +20669,7 @@ async def get_tool_errors(
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
-                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.start_time >= _observability_comparison_cutoff(cutoff_time, dialect_name),
                 tool_name_expr.isnot(None),
             )
             .group_by(tool_name_expr)
@@ -20706,7 +20727,6 @@ async def get_tool_chains(
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
         dialect_name = db.get_bind().dialect.name
 
         # Get all tool invocations grouped by trace_id
@@ -20720,7 +20740,7 @@ async def get_tool_chains(
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
-                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.start_time >= _observability_comparison_cutoff(cutoff_time, dialect_name),
                 tool_name_expr.isnot(None),
             )
             .order_by(ObservabilitySpan.trace_id, ObservabilitySpan.start_time)
@@ -20819,7 +20839,6 @@ async def get_prompt_usage(
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
         dialect_name = db.get_bind().dialect.name
 
         # Query prompt renders from spans (looking for prompts/get calls)
@@ -20833,7 +20852,7 @@ async def get_prompt_usage(
             )
             .filter(
                 ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
-                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.start_time >= _observability_comparison_cutoff(cutoff_time, dialect_name),
                 prompt_id_expr.isnot(None),
             )
             .group_by(prompt_id_expr)
@@ -20939,7 +20958,6 @@ async def get_prompts_errors(
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
         dialect_name = db.get_bind().dialect.name
 
         # Get all prompt spans with their status
@@ -20953,7 +20971,7 @@ async def get_prompts_errors(
             )
             .filter(
                 ObservabilitySpan.name == "prompt.render",
-                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.start_time >= _observability_comparison_cutoff(cutoff_time, dialect_name),
                 prompt_id_expr.isnot(None),
             )
             .group_by(prompt_id_expr)
@@ -21041,7 +21059,6 @@ async def get_resource_usage(
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
         dialect_name = db.get_bind().dialect.name
 
         # Query resource reads from spans (looking for resources/read calls)
@@ -21055,7 +21072,7 @@ async def get_resource_usage(
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
-                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.start_time >= _observability_comparison_cutoff(cutoff_time, dialect_name),
                 resource_uri_expr.isnot(None),
             )
             .group_by(resource_uri_expr)
@@ -21161,7 +21178,6 @@ async def get_resources_errors(
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
         dialect_name = db.get_bind().dialect.name
 
         # Get all resource spans with their status
@@ -21175,7 +21191,7 @@ async def get_resources_errors(
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
-                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.start_time >= _observability_comparison_cutoff(cutoff_time, dialect_name),
                 resource_uri_expr.isnot(None),
             )
             .group_by(resource_uri_expr)

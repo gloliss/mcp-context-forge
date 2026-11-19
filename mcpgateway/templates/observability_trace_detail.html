@@ -1,4 +1,5 @@
 <!-- htmlhint doctype-first:false -->
+{% macro utc_iso(dt) -%}{{ dt.isoformat() }}{% if dt.tzinfo is none %}Z{% endif %}{%- endmacro %}
 <div class="trace-detail-header">
     <div>
         <h2 style="margin: 0; font-size: 1.5rem; color: #1f2937;">Trace Details</h2>
@@ -24,8 +25,8 @@
         </div>
         <div>
             <h3 style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.5rem;">TIMING</h3>
-            <p style="margin: 0.25rem 0;"><strong>Start:</strong> {{ trace.start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] }}</p>
-            <p style="margin: 0.25rem 0;"><strong>End:</strong> {{ trace.end_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if trace.end_time else 'In Progress' }}</p>
+            <p style="margin: 0.25rem 0;"><strong>Start:</strong> <span data-utc="{{ utc_iso(trace.start_time) }}" data-utc-ms="1">{{ trace.start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] }}</span></p>
+            <p style="margin: 0.25rem 0;"><strong>End:</strong> {% if trace.end_time %}<span data-utc="{{ utc_iso(trace.end_time) }}" data-utc-ms="1">{{ trace.end_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] }}</span>{% else %}In Progress{% endif %}</p>
             <p style="margin: 0.25rem 0;"><strong>Duration:</strong>
                 <span class="duration-badge {% if trace.duration_ms < 100 %}duration-fast{% elif trace.duration_ms < 500 %}duration-medium{% else %}duration-slow{% endif %}">
                     {{ "%.2f"|format(trace.duration_ms) }} ms
@@ -124,8 +125,8 @@
                     const traceData = {
                         trace_id: "{{ trace.trace_id }}",
                         duration_ms: {{ trace.duration_ms or 0 }},
-                        start_time: "{{ trace.start_time.isoformat() }}",
-                        end_time: "{{ trace.end_time.isoformat() if trace.end_time else trace.start_time.isoformat() }}",
+                        start_time: "{{ utc_iso(trace.start_time) }}",
+                        end_time: "{{ utc_iso(trace.end_time) if trace.end_time else utc_iso(trace.start_time) }}",
                         spans: [
                             {% for span in trace.spans %}
                             {
@@ -133,8 +134,8 @@
                                 name: "{{ span.name|replace('"', '\\"') }}",
                                 kind: "{{ span.kind }}",
                                 status: "{{ span.status }}",
-                                start_time: "{{ span.start_time.isoformat() }}",
-                                end_time: "{{ span.end_time.isoformat() if span.end_time else span.start_time.isoformat() }}",
+                                start_time: "{{ utc_iso(span.start_time) }}",
+                                end_time: "{{ utc_iso(span.end_time) if span.end_time else utc_iso(span.start_time) }}",
                                 duration_ms: {{ span.duration_ms or 0 }},
                                 parent_span_id: {{ ('"%s"' % span.parent_span_id) if span.parent_span_id else 'null' }},
                                 attributes: {{ span.attributes|tojson if span.attributes else '{}' }}
@@ -166,8 +167,8 @@
                     const traceData = {
                         trace_id: "{{ trace.trace_id }}",
                         duration_ms: {{ trace.duration_ms or 0 }},
-                        start_time: "{{ trace.start_time.isoformat() }}",
-                        end_time: "{{ trace.end_time.isoformat() if trace.end_time else trace.start_time.isoformat() }}",
+                        start_time: "{{ utc_iso(trace.start_time) }}",
+                        end_time: "{{ utc_iso(trace.end_time) if trace.end_time else utc_iso(trace.start_time) }}",
                         spans: [
                             {% for span in trace.spans %}
                             {
@@ -175,8 +176,8 @@
                                 name: "{{ span.name|replace('"', '\\"') }}",
                                 kind: "{{ span.kind }}",
                                 status: "{{ span.status }}",
-                                start_time: "{{ span.start_time.isoformat() }}",
-                                end_time: "{{ span.end_time.isoformat() if span.end_time else span.start_time.isoformat() }}",
+                                start_time: "{{ utc_iso(span.start_time) }}",
+                                end_time: "{{ utc_iso(span.end_time) if span.end_time else utc_iso(span.start_time) }}",
                                 duration_ms: {{ span.duration_ms or 0 }},
                                 parent_span_id: {{ ('"%s"' % span.parent_span_id) if span.parent_span_id else 'null' }},
                                 attributes: {{ span.attributes|tojson if span.attributes else '{}' }}

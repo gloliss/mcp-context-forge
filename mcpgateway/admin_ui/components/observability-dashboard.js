@@ -41,6 +41,51 @@ function rootPath() {
   return window.ROOT_PATH || "";
 }
 
+const UTC_INSTANT = /(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Parse an observability timestamp. Values written by utc_now() are UTC even
+ * when SQLite returns them without an offset; a missing zone is UTC.
+ */
+export function parseObservabilityTimestamp(value) {
+  if (value == null || value === "") return null;
+  const text = String(value).trim();
+  const date = new Date(UTC_INSTANT.test(text) ? text : `${text}Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Format an observability timestamp in the browser's local timezone.
+ */
+export function formatObservabilityTimestamp(value, withMilliseconds = false) {
+  const date = parseObservabilityTimestamp(value);
+  if (!date) return "";
+  const formatted = date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  if (!withMilliseconds) return formatted;
+  return `${formatted}.${String(date.getMilliseconds()).padStart(3, "0")}`;
+}
+
+/**
+ * Replace server-rendered UTC wall clocks inside [data-utc] nodes.
+ */
+export function formatObservabilityTimes(root) {
+  if (!root || typeof root.querySelectorAll !== "function") return;
+  root.querySelectorAll("[data-utc]").forEach((node) => {
+    node.textContent = formatObservabilityTimestamp(
+      node.getAttribute("data-utc"),
+      node.getAttribute("data-utc-ms") === "1"
+    );
+  });
+}
+
 function showRequestError(targetId, message) {
   const target = document.getElementById(targetId);
   if (!target) return;
@@ -160,6 +205,14 @@ export function observabilityDashboard() {
     filterRefreshTimer: null,
 
     init() {
+      this._formatSwappedTimes = (event) => {
+        const target = event.detail && event.detail.target;
+        if (!target) return;
+        if (target.id === "traces-list" || target.id === "trace-detail-content") {
+          formatObservabilityTimes(target);
+        }
+      };
+      document.body.addEventListener("htmx:afterSwap", this._formatSwappedTimes);
       this.startPolling();
       this.loadSavedQueries();
 
@@ -172,6 +225,10 @@ export function observabilityDashboard() {
     },
 
     destroy() {
+      if (this._formatSwappedTimes) {
+        document.body.removeEventListener("htmx:afterSwap", this._formatSwappedTimes);
+        this._formatSwappedTimes = null;
+      }
       this.stopPolling();
       if (this.filterRefreshTimer) {
         window.clearTimeout(this.filterRefreshTimer);

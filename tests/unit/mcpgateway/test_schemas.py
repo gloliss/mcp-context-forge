@@ -2184,3 +2184,26 @@ class TestGatewayTransportValidation:
 
         with pytest.raises(ValidationError, match="Transport must be a string"):
             GatewayUpdate(transport=123)
+
+
+def test_observability_timestamps_serialize_naive_values_as_utc():
+    """SQLite drops the offset; the API must still label that clock as UTC."""
+    from datetime import datetime
+
+    # First-Party
+    from mcpgateway.schemas import ObservabilityTraceRead
+
+    trace = ObservabilityTraceRead.model_validate(
+        {
+            "trace_id": "t1",
+            "name": "GET /health",
+            "start_time": datetime(2026, 11, 18, 8, 23, 16),
+            "end_time": None,
+            "created_at": datetime(2026, 11, 18, 8, 23, 16, 12000),
+            "status": "ok",
+        }
+    )
+    payload = trace.model_dump(mode="json")
+    assert payload["start_time"] == "2026-11-18T08:23:16Z"
+    assert payload["end_time"] is None
+    assert payload["created_at"] == "2026-11-18T08:23:16.012000Z"

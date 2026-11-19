@@ -232,6 +232,7 @@ class TestLatencyHeatmapPostgresql:
         result = _get_latency_heatmap_postgresql(mock_db, cutoff_time, hours=1, time_buckets=10, latency_buckets=5)
 
         assert len(result["time_labels"]) == 10
+        assert result["time_labels"][0].endswith("+00:00")
         assert len(result["latency_labels"]) == 5
         assert len(result["data"]) == 5
         assert len(result["data"][0]) == 10
@@ -270,6 +271,7 @@ class TestLatencyHeatmapPython:
         result = _get_latency_heatmap_python(mock_db, cutoff_time, hours=1, time_buckets=10, latency_buckets=5)
 
         assert len(result["time_labels"]) == 10
+        assert result["time_labels"][0].endswith("+00:00")
         assert len(result["latency_labels"]) == 5
         assert len(result["data"]) == 5
         assert len(result["data"][0]) == 10
