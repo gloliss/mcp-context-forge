@@ -147,6 +147,7 @@ from mcpgateway.schemas import (
     GatewayCreate,
     GatewayHandshakeResponse,
     GatewayImpactPreview,
+    GatewayInvocationMetrics,
     GatewayRead,
     GatewayRefreshResponse,
     GatewayUpdate,
@@ -7793,6 +7794,49 @@ async def get_gateway_impact_preview(
         preview = await gateway_service.get_gateway_impact_preview(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{preview.gateway_id}")
         return preview
+    except GatewayLookupConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@gateway_router.get("/{gateway_id}/invocation-metrics", response_model=GatewayInvocationMetrics)
+@require_permission("gateways.read")
+async def get_gateway_invocation_metrics(
+    gateway_id: str,
+    request: Request,
+    failure_reason_limit: int = Query(100, ge=1, le=500, description="Maximum distinct raw failure messages to return"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> GatewayInvocationMetrics:
+    """Return cumulative invocation stats for one mounted MCP gateway.
+
+    Args:
+        gateway_id: Gateway ID, exact name, or slug.
+        request: Incoming request used for scoped access validation.
+        failure_reason_limit: Maximum number of distinct stored failure messages.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Cumulative call count, cumulative response time, failure count, and the
+        exact error messages still stored on raw metric rows.
+
+    Raises:
+        HTTPException: 404 if the gateway is missing or hidden; 409 for an ambiguous identifier.
+    """
+    # First-Party
+    from mcpgateway.services.metrics_query_service import aggregate_gateway_invocation_metrics  # pylint: disable=import-outside-toplevel
+
+    try:
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
+        resolved_gateway_id = gateway.id
+        if not resolved_gateway_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gateway not found")
+        _enforce_scoped_resource_access(request, db, user, f"/gateways/{resolved_gateway_id}")
+        metrics = aggregate_gateway_invocation_metrics(db, resolved_gateway_id, failure_reason_limit=failure_reason_limit)
+        return GatewayInvocationMetrics(**metrics)
     except GatewayLookupConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except GatewayNotFoundError as e:

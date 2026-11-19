@@ -2540,6 +2540,110 @@ class TestGatewayEndpoints:
         assert data["skippedTools"] == skipped
 
     @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
+    def test_get_gateway_invocation_metrics(self, path_prefix, test_client, auth_headers):
+        """Mounted MCP invocation stats are readable on both gateway path prefixes."""
+        gateway_id = "a" * 32
+        tool_id = "b" * 32
+        now = datetime.datetime.now(datetime.timezone.utc)
+        session = db_mod.SessionLocal()
+        try:
+            session.add(
+                db_mod.Gateway(
+                    id=gateway_id,
+                    name="metrics-gateway",
+                    slug="metrics-gateway",
+                    url="http://127.0.0.1:9/mcp",
+                    capabilities={},
+                    visibility="public",
+                )
+            )
+            session.add(
+                db_mod.Tool(
+                    id=tool_id,
+                    original_name="echo",
+                    custom_name="echo",
+                    custom_name_slug="echo-metrics",
+                    input_schema={},
+                    gateway_id=gateway_id,
+                )
+            )
+            session.add(db_mod.ToolMetric(tool_id=tool_id, response_time=1.25, is_success=True, timestamp=now))
+            session.add(
+                db_mod.ToolMetric(
+                    tool_id=tool_id,
+                    response_time=0.75,
+                    is_success=False,
+                    error_message="UNIQUE constraint failed: tools.original_name",
+                    timestamp=now,
+                )
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        response = test_client.get(f"{path_prefix}/{gateway_id}/invocation-metrics", headers=auth_headers)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["gatewayId"] == gateway_id
+        assert body["totalExecutions"] == 2
+        assert body["failedExecutions"] == 1
+        assert body["totalResponseTime"] == 2.0
+        assert body["failureReasons"] == [{"errorMessage": "UNIQUE constraint failed: tools.original_name", "count": 1}]
+
+        limited = test_client.get(f"{path_prefix}/{gateway_id}/invocation-metrics?failure_reason_limit=0", headers=auth_headers)
+        assert limited.status_code == 422
+
+    def test_get_gateway_invocation_metrics_missing_gateway(self, test_client, auth_headers):
+        """A hidden or unknown gateway id returns 404."""
+        response = test_client.get(f"/v1/gateways/{'c' * 32}/invocation-metrics", headers=auth_headers)
+        assert response.status_code == 404
+
+    def test_get_gateway_invocation_metrics_hides_private_gateway(self, test_client, auth_headers):
+        """Metrics for another user's private gateway stay hidden."""
+        gateway_id = "d" * 32
+        tool_id = "e" * 32
+        now = datetime.datetime.now(datetime.timezone.utc)
+        session = db_mod.SessionLocal()
+        try:
+            session.add(
+                db_mod.Gateway(
+                    id=gateway_id,
+                    name="private-metrics-gateway",
+                    slug="private-metrics-gateway",
+                    url="http://127.0.0.1:9/mcp",
+                    capabilities={},
+                    visibility="private",
+                    owner_email="owner@example.com",
+                )
+            )
+            session.add(
+                db_mod.Tool(
+                    id=tool_id,
+                    original_name="secret-echo",
+                    custom_name="secret-echo",
+                    custom_name_slug="secret-echo",
+                    input_schema={},
+                    gateway_id=gateway_id,
+                )
+            )
+            session.add(
+                db_mod.ToolMetric(
+                    tool_id=tool_id,
+                    response_time=4.0,
+                    is_success=False,
+                    error_message="secret driver error",
+                    timestamp=now,
+                )
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        response = test_client.get(f"/v1/gateways/{gateway_id}/invocation-metrics", headers=auth_headers)
+        assert response.status_code == 404
+        assert "secret driver error" not in response.text
+
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_get_gateway_endpoint(self, mock_get, path_prefix, test_client, auth_headers):
         """Test retrieving a gateway through old and new path prefixes."""

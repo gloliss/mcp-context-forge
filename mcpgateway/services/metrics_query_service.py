@@ -24,15 +24,18 @@ from mcpgateway.db import (
     A2AAgentMetric,
     A2AAgentMetricsDaily,
     A2AAgentMetricsHourly,
+    Prompt,
     PromptMetric,
     PromptMetricsDaily,
     PromptMetricsHourly,
+    Resource,
     ResourceMetric,
     ResourceMetricsDaily,
     ResourceMetricsHourly,
     ServerMetric,
     ServerMetricsDaily,
     ServerMetricsHourly,
+    Tool,
     ToolMetric,
     ToolMetricsDaily,
     ToolMetricsHourly,
@@ -496,6 +499,192 @@ def aggregate_metrics_combined(
         raw_count=raw_total + current_total,
         rollup_count=daily_total + rollup_total,
     )
+
+
+# Child entities that belong to a mounted MCP gateway and carry invocation metrics.
+_GATEWAY_CHILD_METRICS = (
+    ("tool", Tool, "tool_id"),
+    ("resource", Resource, "resource_id"),
+    ("prompt", Prompt, "prompt_id"),
+)
+
+
+def _sum_gateway_child_counts(
+    db: Session,
+    entity_model: Type,
+    raw_model: Type,
+    hourly_model: Type,
+    daily_model: Optional[Type],
+    id_column: str,
+    gateway_id: str,
+    cutoff: datetime,
+    daily_cutoff: Optional[datetime],
+) -> tuple[int, int, float]:
+    """Sum executions, failures, and response time for one gateway child type.
+
+    Raw rows at or after ``cutoff`` are counted directly. Older history comes
+    from hourly rollups, or from daily rollups when those are enabled, using
+    the same non-overlapping windows as ``aggregate_metrics_combined``.
+
+    Args:
+        db: Database session.
+        entity_model: Child ORM model (tool, resource, or prompt).
+        raw_model: Raw metric ORM model.
+        hourly_model: Hourly rollup ORM model.
+        daily_model: Daily rollup ORM model, or None when daily rollups are off.
+        id_column: Foreign-key column on the metric tables.
+        gateway_id: Mounted gateway whose children are included.
+        cutoff: Hour-aligned raw-retention boundary.
+        daily_cutoff: Day-aligned daily boundary, or None when unused.
+
+    Returns:
+        Tuple of total executions, failed executions, and summed response seconds.
+    """
+    child_ids = select(entity_model.id).where(entity_model.gateway_id == gateway_id)
+    metric_id = getattr(raw_model, id_column)
+
+    # pylint: disable=not-callable
+    raw_total, raw_failed, raw_time = db.execute(
+        select(
+            func.count(raw_model.id),
+            func.sum(case((raw_model.is_success.is_(False), 1), else_=0)),
+            func.sum(raw_model.response_time),
+        ).where(and_(raw_model.timestamp >= cutoff, metric_id.in_(child_ids)))
+    ).one()
+
+    total = int(raw_total or 0)
+    failed = int(raw_failed or 0)
+    response_time = float(raw_time or 0.0)
+
+    hourly_id = getattr(hourly_model, id_column)
+    hourly_filters = [hourly_model.hour_start < cutoff, hourly_id.in_(child_ids)]
+    if daily_cutoff is not None:
+        hourly_filters.append(hourly_model.hour_start >= daily_cutoff)
+    # pylint: disable=not-callable
+    hourly_total, hourly_failed, hourly_time = db.execute(
+        select(
+            func.sum(hourly_model.total_count),
+            func.sum(hourly_model.failure_count),
+            func.sum(hourly_model.avg_response_time * hourly_model.total_count),
+        ).where(and_(*hourly_filters))
+    ).one()
+    total += int(hourly_total or 0)
+    failed += int(hourly_failed or 0)
+    response_time += float(hourly_time or 0.0)
+
+    if daily_model is not None and daily_cutoff is not None:
+        daily_id = getattr(daily_model, id_column)
+        # pylint: disable=not-callable
+        daily_total, daily_failed, daily_time = db.execute(
+            select(
+                func.sum(daily_model.total_count),
+                func.sum(daily_model.failure_count),
+                func.sum(daily_model.avg_response_time * daily_model.total_count),
+            ).where(and_(daily_model.day_start < daily_cutoff, daily_id.in_(child_ids)))
+        ).one()
+        total += int(daily_total or 0)
+        failed += int(daily_failed or 0)
+        response_time += float(daily_time or 0.0)
+
+    return total, failed, response_time
+
+
+def _gateway_failure_reasons(
+    db: Session,
+    entity_model: Type,
+    raw_model: Type,
+    id_column: str,
+    gateway_id: str,
+) -> Dict[str, int]:
+    """Count exact raw failure messages for one gateway child type.
+
+    Args:
+        db: Database session.
+        entity_model: Child ORM model (tool, resource, or prompt).
+        raw_model: Raw metric ORM model.
+        id_column: Foreign-key column on the raw metric table.
+        gateway_id: Mounted gateway whose children are included.
+
+    Returns:
+        Mapping of stored error_message text to the number of failed rows.
+    """
+    child_ids = select(entity_model.id).where(entity_model.gateway_id == gateway_id)
+    metric_id = getattr(raw_model, id_column)
+    # pylint: disable=not-callable
+    rows = db.execute(
+        select(raw_model.error_message, func.count(raw_model.id))
+        .where(
+            and_(
+                metric_id.in_(child_ids),
+                raw_model.is_success.is_(False),
+                raw_model.error_message.is_not(None),
+                raw_model.error_message != "",
+            )
+        )
+        .group_by(raw_model.error_message)
+    ).all()
+    return {str(message): int(count) for message, count in rows if message}
+
+
+def aggregate_gateway_invocation_metrics(
+    db: Session,
+    gateway_id: str,
+    failure_reason_limit: int = 100,
+) -> Dict[str, Any]:
+    """Aggregate invocation stats for one mounted MCP gateway.
+
+    Sums tool, resource, and prompt invocations whose parent row belongs to
+    ``gateway_id``. Counts and cumulative response time follow the raw/hourly/daily
+    partition so rolled-up history is included once. Failure reasons are the
+    exact ``error_message`` strings still stored on raw metric rows.
+
+    Args:
+        db: Database session.
+        gateway_id: Primary key of the mounted gateway.
+        failure_reason_limit: Maximum number of distinct failure messages to return.
+
+    Returns:
+        Dict with gateway_id, total_executions, total_response_time, failed_executions,
+        and failure_reasons ordered by count descending.
+    """
+    cutoff = get_retention_cutoff()
+    daily_enabled = getattr(settings, "metrics_daily_rollup_enabled", True)
+    daily_cutoff = get_daily_retention_cutoff() if daily_enabled else None
+
+    total_executions = 0
+    failed_executions = 0
+    total_response_time = 0.0
+    reason_counts: Dict[str, int] = {}
+
+    for metric_type, entity_model, id_column in _GATEWAY_CHILD_METRICS:
+        raw_model, hourly_model, _, _ = METRIC_MODELS[metric_type]
+        daily_model = DAILY_MODELS[metric_type][0] if daily_cutoff is not None else None
+        child_total, child_failed, child_time = _sum_gateway_child_counts(
+            db,
+            entity_model,
+            raw_model,
+            hourly_model,
+            daily_model,
+            id_column,
+            gateway_id,
+            cutoff,
+            daily_cutoff,
+        )
+        total_executions += child_total
+        failed_executions += child_failed
+        total_response_time += child_time
+        for message, count in _gateway_failure_reasons(db, entity_model, raw_model, id_column, gateway_id).items():
+            reason_counts[message] = reason_counts.get(message, 0) + count
+
+    ranked_reasons = sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))
+    limited_reasons = ranked_reasons[: max(0, failure_reason_limit)]
+    return {
+        "gateway_id": gateway_id,
+        "total_executions": total_executions,
+        "total_response_time": total_response_time,
+        "failed_executions": failed_executions,
+        "failure_reasons": [{"error_message": message, "count": count} for message, count in limited_reasons],
+    }
 
 
 def get_top_entities_combined(
